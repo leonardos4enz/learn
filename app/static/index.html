@@ -273,7 +273,7 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .nodo .c svg{width:26px;height:26px}
 .nodo.ok .c{background:var(--acc);border-color:var(--acc);color:var(--on-acc);box-shadow:0 4px 0 var(--acc-ink)}
 .nodo.mision .c{background:var(--acc-soft);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 4px 0 var(--acc)}
-.nodo.now .c{background:var(--panel);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 4px 0 var(--acc),0 0 0 5px var(--acc-soft)}
+.nodo.now .c{background:var(--panel);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 4px 0 var(--acc)}
 .nodo.vacio .c{border-style:dashed;box-shadow:none}
 .nodo:not(:disabled):hover .c{filter:brightness(1.05);border-color:var(--acc)}
 .nodo .lt{flex:1;min-width:0}
@@ -296,10 +296,10 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .refcod .code{margin-top:6px;max-height:420px}
 .fin .falta{max-width:46ch;color:var(--warn);font-weight:600}
 .nodo.mision .c{box-shadow:0 6px 0 var(--acc)}
-.nodo.now{margin-top:34px}
-.nodo.now .c{background:var(--acc);border-color:var(--acc);color:var(--on-acc);box-shadow:0 6px 0 var(--acc-ink),0 0 0 7px var(--panel),0 0 0 12px var(--acc-soft)}
+.nodo.now{margin-top:40px}
+/* La lección actual se distingue por el verde lleno, la estrella y la burbuja (sin anillo, a pedido de Leo). */
+.nodo.now .c{background:var(--acc);border-color:var(--acc);color:var(--on-acc);box-shadow:0 6px 0 var(--acc-ink)}
 .nodo:not(:disabled):active .c{transform:translateY(6px);box-shadow:0 0 0 transparent}
-.nodo.now:not(:disabled):active .c{box-shadow:0 0 0 transparent,0 0 0 7px var(--panel),0 0 0 12px var(--acc-soft)}
 .burbuja{position:absolute;bottom:calc(100% + 16px);left:50%;transform:translateX(-50%);background:var(--panel);border:2px solid var(--line);border-radius:12px;
   padding:6px 12px;font:800 13px/1 var(--f-body);letter-spacing:.05em;text-transform:uppercase;color:var(--acc-ink);white-space:nowrap;animation:bob 1.6s ease-in-out infinite;pointer-events:none}
 .burbuja::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);border:8px solid transparent;border-top-color:var(--line)}
