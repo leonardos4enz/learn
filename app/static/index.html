@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutor LangGraph</title>
+<link rel="icon" href="/static/icono.png">
+<script src="/static/bloub-engine.js"></script>
+<script src="/static/bloub.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<!--
+  Decisiones de diseño (con evidencia, ver la skill tutor-langgraph):
+  - Modo claro por defecto: el texto oscuro sobre fondo claro se lee mejor (Piepenbrock 2013).
+  - Texto de 16-17 px, interlineado 1.6, líneas de máximo ~70 caracteres (Dyson; WCAG 1.4.8).
+  - Explicación al lado del diagrama o código: contigüidad espacial (Mayer).
+  - Sin adornos ni animaciones que no enseñan: coherencia y "seductive details".
+  - Avanzar a tu ritmo, un elemento a la vez: segmentación (Mayer).
+  - Resaltar la línea o el nodo clave: señalización (Mayer).
+  - Tarjetas "Predice" con respuesta oculta: práctica de recuerdo (Dunlosky 2013).
+-->
+<style>
+:root{
+  --bg:#F5F6F7; --panel:#FFFFFF; --panel2:#F3F5F6; --ink:#16191D; --muted:#59636E; --faint:#8A939C;
+  --line:#E2E5E9; --acc:#0B7D67; --acc-soft:#E2F2EE; --acc-ink:#095E4E;
+  --mark:#FFF1BF; --mark-line:#C98A00; --warn:#9A5B00; --warn-soft:#FFF3DC; --bad:#A8231B; --bad-soft:#FCEBE9;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.07);
+  --f-body: "Nunito", "Segoe UI", system-ui, sans-serif;
+  --f-head: "Nunito", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", Consolas, "Cascadia Mono", ui-monospace, monospace;
+  --sheet:#FFFFFF;
+  color-scheme: light;
+}
+:root[data-theme="dark"]{
+  --bg:#101417; --panel:#171C20; --panel2:#1D2328; --ink:#E6EBEE; --muted:#9BA6B0; --faint:#6E7983;
+  --line:#283037; --acc:#34C3A2; --acc-soft:#14322B; --acc-ink:#86E3CC;
+  --mark:#3A3115; --mark-line:#E0A92E; --warn:#F0A43A; --warn-soft:#33260F; --bad:#F07167; --bad-soft:#3A1A18;
+  --shadow:none; --sheet:#171C20; color-scheme: dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 var(--f-body);display:grid;grid-template-columns:232px 1fr;overflow:hidden}
+body.focus{grid-template-columns:0 1fr}
+body.focus aside{visibility:hidden}
+button{font:inherit;color:inherit}
+code,pre{font-family:var(--f-mono)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* ---------- Menú lateral ---------- */
+aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 12px;gap:2px;overflow:auto}
+.brand{display:flex;gap:10px;align-items:center;padding:0 8px 18px}
+.brand .pet{width:46px;height:46px;flex:none;display:flex;align-items:center;justify-content:center;margin:-4px 0}
+.brand .pet svg{display:block}
+.brand b{font:800 17px/1.1 var(--f-head);display:block}
+.brand span{font-size:12.5px;color:var(--muted)}
+.nav{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;color:var(--muted);font-size:15px}
+.nav:hover{background:var(--panel2);color:var(--ink)}
+.nav.on{background:var(--acc-soft);color:var(--acc-ink);font-weight:600}
+.nav svg{width:18px;height:18px;flex:none}
+.badge{margin-left:auto;font:600 11px var(--f-mono);background:var(--acc);color:#fff;border-radius:10px;padding:1px 7px;display:none}
+.badge.show{display:inline-block}
+.side-foot{margin-top:auto;padding:12px 8px 0;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:9px}
+.live{display:flex;align-items:center;gap:7px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.dot.ok{background:var(--acc)}
+.side-foot a,.linkbtn{color:var(--muted);background:none;border:0;padding:0;text-align:left;cursor:pointer;text-decoration:underline;text-underline-offset:2px;font-size:13px}
+
+/* ---------- Contenido ---------- */
+main{overflow:auto;padding:28px 32px 48px}
+.view{display:none;max-width:1120px;margin:0 auto}
+.view.on{display:block}
+h1{font:800 28px/1.2 var(--f-head);margin:0 0 6px}
+.sub{color:var(--muted);margin:0 0 22px;max-width:70ch}
+h2{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:28px 0 10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+.btn{border:1px solid var(--line);background:var(--panel);padding:7px 14px;border-radius:8px;cursor:pointer;font-size:14.5px;white-space:nowrap}
+.btn:hover{border-color:var(--acc);color:var(--acc-ink)}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.pri:hover{filter:brightness(1.07);color:#fff}
+.btn:disabled{opacity:.4;cursor:default}
+.chip{font:600 12.5px var(--f-mono);padding:2px 8px;border-radius:6px;white-space:nowrap}
+.chip.ok{background:var(--acc-soft);color:var(--acc-ink)}
+.chip.wait{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.off{background:var(--panel2);color:var(--faint)}
+.empty{padding:22px 18px;color:var(--muted);text-align:center}
+
+/* ---------- Hoy ---------- */
+.today{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
+.today .card{padding:20px 22px}
+.today .k{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.today .big{font:800 23px/1.25 var(--f-head);margin:6px 0 4px}
+.today .nb{font:14px var(--f-mono);color:var(--muted)}
+.today .how{margin:14px 0 0;padding:10px 12px;border-radius:8px;background:var(--panel2);font-size:15px}
+.today .how code{font-size:14px;background:var(--panel);padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
+.today .main{grid-row:span 3;border-left:4px solid var(--acc)}
+.qlist{margin:10px 0 0;padding-left:20px}
+.qlist li{margin-bottom:8px;max-width:70ch}
+.summary{display:flex;gap:28px;flex-wrap:wrap;margin-top:16px;color:var(--muted);font-size:15px}
+.summary b{color:var(--ink);font-size:17px}
+
+/* ---------- Pantalla en vivo ---------- */
+.stagebar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.stagebar .pos{font:14px var(--f-mono);color:var(--muted);min-width:70px;text-align:center}
+.stagebar select{font:inherit;font-size:14.5px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);max-width:340px;flex:1;min-width:0}
+.stagebar .sp{flex:1}
+.stage{padding:24px 28px;min-height:440px}
+.stage .st{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding-bottom:12px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.stage .st b{font:800 23px/1.25 var(--f-head)}
+.stage .st span{font:13px var(--f-mono);color:var(--muted);white-space:nowrap}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,34ch);gap:26px;align-items:start}
+.split.solo{grid-template-columns:minmax(0,1fr)}
+.notes{background:var(--panel2);border-left:3px solid var(--acc);border-radius:0 8px 8px 0;padding:14px 16px;font-size:16.5px;line-height:1.6;position:sticky;top:0}
+.notes .k{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:6px}
+.notes p{margin:0 0 8px}.notes p:last-child{margin:0}
+.mm{display:flex;justify-content:center;overflow:auto}
+.mm svg{max-width:100%;height:auto}
+.code{background:var(--panel2);border:1px solid var(--line);border-radius:8px;overflow:auto;font:15px/1.6 var(--f-mono);padding:10px 0}
+.code .ln{display:grid;grid-template-columns:44px 1fr;padding-right:16px}
+.code .ln i{font-style:normal;color:var(--faint);text-align:right;padding-right:14px;user-select:none}
+.code .ln span{white-space:pre}
+.code .ln.hl{background:var(--mark);box-shadow:inset 3px 0 0 var(--mark-line)}
+.code .ln.hl i{color:var(--ink);font-weight:700}
+.md{font-size:17px;line-height:1.6;max-width:70ch}
+.md h1,.md h2,.md h3{font-family:var(--f-head);text-transform:none;letter-spacing:0;color:var(--ink);line-height:1.25}
+.md h1{font-size:24px}.md h2{font-size:21px;margin:20px 0 8px}.md h3{font-size:18px}
+.md code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.88em}
+.md pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px 16px;overflow:auto;font-size:15px;line-height:1.55}
+.md pre code{background:none;padding:0;font-size:inherit}
+.md table{border-collapse:collapse;margin:12px 0;font-size:16px}
+.md th,.md td{border:1px solid var(--line);padding:7px 11px;text-align:left}
+.md mark{background:var(--mark);padding:0 3px;border-radius:3px;color:inherit}
+iframe.htmlbox{width:100%;min-height:500px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.predict textarea{width:100%;min-height:90px;margin:14px 0 10px;font:16px/1.5 var(--f-body);padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);resize:vertical;max-width:70ch;display:block}
+.predict .answer{margin-top:16px;border-top:1px dashed var(--line);padding-top:14px}
+.predict .answer .k{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:6px}
+.predict .mine{font-size:15px;color:var(--muted);margin-bottom:10px;max-width:70ch}
+.waiting{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:380px;color:var(--muted);text-align:center}
+.waiting b{color:var(--ink);font-size:18px}
+
+/* ---------- Progreso ---------- */
+.mods{display:flex;flex-direction:column;gap:8px}
+.mod{display:grid;grid-template-columns:150px 1fr 56px;align-items:center;gap:14px;padding:13px 18px}
+.mod .name{font-weight:600}
+.mod .name small{display:block;font-weight:400;color:var(--muted);font-size:13.5px}
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{font:600 13px var(--f-mono);padding:4px 9px;border-radius:7px;border:1.5px solid var(--line);color:var(--faint);background:var(--panel2)}
+.pill.done{background:var(--acc);border-color:var(--acc);color:#fff}
+.pill.now{border-color:var(--acc);color:var(--acc-ink);background:var(--acc-soft)}
+.pct{font:600 14px var(--f-mono);color:var(--muted);text-align:right}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);font-size:14px;padding:8px 11px;border-radius:8px;max-width:300px;z-index:20;display:none}
+.tip b{display:block}
+
+/* ---------- Listas ---------- */
+.list{display:flex;flex-direction:column}
+.row{display:flex;gap:14px;align-items:center;padding:13px 18px;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row .grow{flex:1;min-width:0}
+.row .t{font-weight:600}
+.row .d{color:var(--muted);font-size:14px}
+.meter{height:8px;background:var(--panel2);border-radius:4px;overflow:hidden;width:160px;position:relative;flex:none}
+.meter i{display:block;height:100%;background:var(--acc);border-radius:4px}
+.meter::after{content:"";position:absolute;left:70%;top:-2px;bottom:-2px;width:2px;background:var(--muted)}
+.when{font:13.5px var(--f-mono);color:var(--muted);width:100px;flex:none}
+
+/* ---------- Selector de curso y árbol de estudios ---------- */
+.curlabel{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:6px 10px 10px;margin-bottom:4px;cursor:pointer}
+.curlabel:hover{background:var(--panel2)}
+.curlabel span{font:600 11.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+.curlabel b{font-size:15.5px;font-weight:800;line-height:1.3;color:var(--ink);overflow-wrap:anywhere}
+.navsep{height:1px;background:var(--line);margin:8px 8px}
+.tree{display:flex;flex-direction:column;gap:14px}
+.branch{padding:16px 18px}
+.branch > .bh{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+.branch > .bh b{font:800 20px var(--f-head)}
+.branch > .bh span{color:var(--muted);font-size:14px}
+.sub-branch{border-left:2px solid var(--line);margin:6px 0 0 6px;padding:2px 0 2px 16px}
+.sub-branch > .sh{font-weight:700;color:var(--muted);font-size:14.5px;margin:4px 0 8px}
+.course{display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--panel2);border:1.5px solid transparent;border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:pointer}
+.course:hover{border-color:var(--acc)}
+.course.on{border-color:var(--acc);background:var(--acc-soft)}
+.course .grow{flex:1;min-width:0}
+.course .t{font-weight:700;font-size:16px}
+.course .d{color:var(--muted);font-size:13.5px}
+.course .meter{width:140px}
+.course .meter::after{display:none}
+.course .n{font:600 13.5px var(--f-mono);color:var(--muted);width:64px;text-align:right}
+
+/* ---------- Tarjetas ---------- */
+.tstats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.tstat{padding:12px 16px;min-width:130px}
+.tstat .k{font-size:13px;color:var(--muted)}
+.tstat .v{font-size:24px;font-weight:800;line-height:1.2}
+.scope{display:flex;gap:6px;margin:0 0 14px}
+.scope button{border:1px solid var(--line);background:var(--panel);border-radius:20px;padding:5px 13px;font-size:14px;cursor:pointer}
+.scope button.on{background:var(--acc-soft);border-color:var(--acc);color:var(--acc-ink);font-weight:700}
+.review{padding:26px 30px;min-height:380px;max-width:820px}
+.review .meta{display:flex;justify-content:space-between;gap:12px;font:13px var(--f-mono);color:var(--muted);margin-bottom:18px}
+.review .front{font-size:20px;line-height:1.5;font-weight:700;max-width:70ch}
+.review .front p{margin:0 0 8px}
+.review .back{margin-top:18px;padding-top:16px;border-top:1px dashed var(--line);font-size:17px;line-height:1.6;max-width:70ch}
+.review .back p{margin:0 0 8px}
+.review code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.88em}
+.review pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 14px;overflow:auto;font-size:14.5px}
+.review pre code{background:none;padding:0}
+.rate{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:22px}
+.rate button{border:1.5px solid var(--line);background:var(--panel);border-radius:10px;padding:10px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;font-weight:700}
+.rate button small{font:12.5px var(--f-mono);color:var(--muted);font-weight:400}
+.rate button:hover{border-color:var(--acc)}
+.rate .r1{color:var(--bad)} .rate .r2{color:var(--warn)} .rate .r3{color:var(--acc-ink)} .rate .r4{color:#2A6EE8}
+.rate kbd,.showbtn kbd{font:11px var(--f-mono);color:var(--faint)}
+.showbtn{margin-top:24px}
+.done{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;min-height:330px;color:var(--muted)}
+.done b{font-size:22px;color:var(--ink)}
+.done .bigpet{width:120px;height:120px}
+@media (max-width:900px){.rate{grid-template-columns:repeat(2,1fr)}.review{padding:20px 16px}}
+
+/* ---------- Ayuda: "¿por qué existe esta vista?" ---------- */
+.titlerow{display:flex;align-items:center;gap:10px;margin:0 0 6px}
+.titlerow h1{margin:0}
+.help{width:24px;height:24px;flex:none;border-radius:50%;border:1.5px solid var(--line);background:var(--panel);color:var(--faint);font:800 13px/1 var(--f-body);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}
+.help:hover,.help[aria-expanded="true"]{border-color:var(--acc);color:var(--acc-ink);background:var(--acc-soft)}
+.helpbox{background:var(--acc-soft);border-radius:10px;padding:14px 18px;margin:4px 0 20px;max-width:78ch;font-size:15.5px;line-height:1.6}
+.helpbox .k{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:6px}
+.helpbox ul{margin:0;padding-left:20px}.helpbox li{margin-bottom:5px}
+.helpbox .src{font-size:13px;color:var(--muted);margin-top:8px}
+.stagebar .help{order:99}
+
+.toast{position:fixed;right:20px;bottom:20px;background:var(--ink);color:var(--bg);padding:11px 15px;border-radius:10px;font-size:14.5px;opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s;pointer-events:none}
+.toast.show{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+
+@media (max-width:900px){
+  html,body{height:auto}
+  body{grid-template-columns:1fr;grid-template-rows:auto 1fr;overflow:auto;min-height:100vh}
+  body.focus{grid-template-columns:1fr}
+  aside{flex-direction:row;flex-wrap:wrap;align-items:center;align-content:start;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line)}
+  .brand{width:100%;padding:0 4px 8px}
+  .nav{width:auto;font-size:14px;padding:7px 9px}
+  .side-foot,.navsep{display:none}
+  .curlabel{margin:0 0 6px}
+  main{padding:20px 16px 32px;overflow:visible}
+  .today{grid-template-columns:1fr}.today .main{grid-row:auto}
+  .split{grid-template-columns:1fr}.notes{position:static}
+  .stage{padding:18px 16px}
+  .mod{grid-template-columns:1fr;gap:8px}.pct{text-align:left}
+  .row{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="brand"><span class="pet" id="pet" aria-hidden="true"></span><div><b>Mi Tutor</b><span>Estudios de Leo</span></div></div>
+  <button class="curlabel" id="curlabel" type="button" title="Cambiar de curso en Mis estudios"><span>Curso</span><b id="curname">…</b></button>
+  <button class="nav" data-v="estudios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v6M12 9H6v4M12 9h6v4M6 13v3M18 13v3"/><circle cx="12" cy="3" r="1.5"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>Mis estudios</button>
+  <div class="navsep"></div>
+  <button class="nav on" data-v="hoy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Hoy</button>
+  <button class="nav" data-v="tarjetas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/></svg>Tarjetas<span class="badge" id="tbadge"></span></button>
+  <button class="nav" data-v="pantalla"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Pantalla en vivo<span class="badge" id="badge">nuevo</span></button>
+  <button class="nav" data-v="hojas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7"/></svg>Hojas para imprimir</button>
+  <button class="nav" data-v="repaso"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Repaso y exámenes</button>
+  <button class="nav" data-v="progreso"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M7.3 11l9.4-5M7.3 13l9.4 5"/></svg>Progreso</button>
+  <button class="nav" data-v="proyecto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Proyecto</button>
+  <div class="side-foot">
+    <div class="live"><span class="dot" id="dot"></span><span id="live">Conectando…</span></div>
+    <button class="linkbtn" id="theme">Cambiar a modo oscuro</button>
+    <a href="/salir">Salir</a>
+  </div>
+</aside>
+
+<main>
+  <!-- MIS ESTUDIOS -->
+  <section class="view" id="v-estudios">
+    <h1>Mis estudios</h1>
+    <p class="sub">Todo lo que estás aprendiendo, en ramas. Elige un curso para trabajar con él.</p>
+    <div class="tree" id="tree"></div>
+  </section>
+
+  <!-- HOY -->
+  <section class="view on" id="v-hoy">
+    <h1 id="hello">Hoy</h1>
+    <p class="sub">Lo que te toca, nada más.</p>
+    <div class="today">
+      <div class="card main" id="t-next"></div>
+      <div class="card" id="t-hoja"></div>
+      <div class="card" id="t-tarj"></div>
+      <div class="card" id="t-banco"></div>
+    </div>
+    <div class="summary" id="t-sum"></div>
+  </section>
+
+  <!-- TARJETAS -->
+  <section class="view" id="v-tarjetas">
+    <h1>Tarjetas</h1>
+    <p class="sub">Unos minutos al día. Intenta recordar la respuesta antes de voltearla: ese esfuerzo es lo que la fija.</p>
+    <div class="scope" id="tscope"></div>
+    <div class="tstats" id="tstats"></div>
+    <div class="card review" id="review"></div>
+  </section>
+
+  <!-- PANTALLA -->
+  <section class="view" id="v-pantalla">
+    <div class="stagebar">
+      <button class="btn" id="prev" title="Anterior (←)">← Anterior</button>
+      <span class="pos" id="pos"></span>
+      <button class="btn" id="nextb" title="Siguiente (→)">Siguiente →</button>
+      <select id="pick" aria-label="Historial de la pantalla"></select>
+      <span class="sp"></span>
+      <button class="btn" id="focus" title="Ocultar el menú (F)">Modo enfoque</button>
+    </div>
+    <div class="card stage" id="stage"></div>
+  </section>
+
+  <!-- HOJAS -->
+  <section class="view" id="v-hojas">
+    <h1>Hojas para imprimir</h1>
+    <p class="sub">Imprime la hoja, resuélvela al día siguiente en papel y sin computadora, y revisa las respuestas aquí. Al empezar la siguiente sesión, dile al tutor qué preguntas fallaste.</p>
+    <div class="card list" id="hojas"></div>
+  </section>
+
+  <!-- REPASO -->
+  <section class="view" id="v-repaso">
+    <h1>Repaso y exámenes</h1>
+    <p class="sub">Las preguntas que fallaste vuelven en los calentamientos hasta que las aciertes dos veces seguidas.</p>
+    <h2>Banco de preguntas falladas</h2>
+    <div class="card list" id="banco"></div>
+    <h2>Exámenes de módulo</h2>
+    <div class="card list" id="examenes"></div>
+  </section>
+
+  <!-- PROGRESO -->
+  <section class="view" id="v-progreso">
+    <h1>Tu progreso</h1>
+    <p class="sub">Compárate solo con tu yo de antes.</p>
+    <h2>Mapa de misiones</h2>
+    <div class="mods" id="mods"></div>
+    <h2>Sesiones</h2>
+    <div class="card list" id="sesiones"></div>
+  </section>
+
+  <!-- PROYECTO -->
+  <section class="view" id="v-proyecto">
+    <h1>Proyecto</h1>
+    <p class="sub">Lo que construyes mientras aprendes, y los hilos que crecen a lo largo del curso.</p>
+    <h2>Tu proyecto</h2>
+    <div class="card list" id="proyecto"></div>
+    <div id="hilos"></div>
+  </section>
+</main>
+
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast" role="status"></div>
+<iframe id="printer" style="display:none" title="impresión"></iframe>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const md = s => window.marked ? marked.parse(String(s ?? "")) : `<p>${esc(s)}</p>`;
+const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+
+/* ---------- Tema (claro por defecto) ---------- */
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  $("#theme").textContent = t === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro";
+  if (window.mermaid) mermaid.initialize({startOnLoad:false, theme: t === "dark" ? "dark" : "default", securityLevel:"strict", fontFamily:"Nunito, Segoe UI, sans-serif", flowchart:{htmlLabels:true}});
+}
+applyTheme(store.get("tema") || "light");
+
+/* ---------- Ayuda por vista: la razón de ser de cada una ---------- */
+const HELP = {
+  estudios: `<ul><li>Todo lo que estás aprendiendo, organizado en <b>ramas</b> (por ejemplo IA › LangChain Academy › cursos).</li>
+    <li>Cada curso guarda su propio avance, sus hojas y su plan. Al elegir uno, las demás vistas muestran ese curso.</li>
+    <li>Para empezar algo nuevo, abre una sesión con <code>/tutor</code> y dile qué quieres aprender: el tutor arma el plan y lo agrega aquí.</li></ul>`,
+  hoy: `<ul><li>Te muestra <b>solo lo que te toca</b>, para que empieces rápido sin decidir entre mil opciones.</li>
+    <li>Las preguntas por repasar están aquí a propósito: intentar <b>recordar sin ayuda</b> es una de las dos técnicas de estudio con más evidencia.</li></ul>
+    <div class="src">Dunlosky et al. (2013): práctica de recuerdo y repaso espaciado, las únicas dos de "alta utilidad".</div>`,
+  pantalla: `<ul><li>Aquí el tutor te muestra diagramas, código o ejemplos <b>mientras estudian</b>.</li>
+    <li>La explicación va <b>al lado</b> de lo que explica: es el principio de diseño con mayor efecto en el aprendizaje.</li>
+    <li>Se resalta <b>solo lo clave</b> para que sepas dónde mirar.</li>
+    <li>Avanzas <b>a tu ritmo</b> con ← y →. La tecla F oculta el menú.</li>
+    <li>Las tarjetas <b>Predice</b> te piden adivinar antes de ver la respuesta: equivocarte al predecir es donde más aprendes.</li></ul>
+    <div class="src">Mayer: contigüidad, señalización y segmentación. Dunlosky et al. (2013): práctica de recuerdo.</div>`,
+  hojas: `<ul><li>Resolver la hoja <b>al día siguiente</b> junta las dos técnicas con más evidencia: recordar sin ayuda y repasar con días de por medio.</li>
+    <li>El papel ayuda porque <b>no puedes buscar la respuesta</b> y estás lejos de distracciones. Escribir a mano no memoriza más por sí solo: eso no se sostuvo en las réplicas.</li>
+    <li>Se imprime solo la página de preguntas. Las <b>respuestas</b> se revisan aquí, con el botón Respuestas.</li></ul>
+    <div class="src">Dunlosky et al. (2013); Delgado et al. (2018) sobre leer en papel; Morehead, Dunlosky y Rawson (2019) sobre escribir a mano.</div>`,
+  repaso: `<ul><li>Lo que fallas <b>vuelve</b> en los calentamientos hasta que lo aciertes dos veces seguidas: repasas justo lo débil, espaciado en el tiempo.</li>
+    <li>Los <b>exámenes sin IA</b> miden si de verdad aprendiste. Practicar con IA puede verse bien y aun así no dejar aprendizaje: en un estudio, quienes usaron un chatbot sin reglas sacaron 17% menos en el examen sin ayuda.</li>
+    <li>La línea del 70% marca cuándo conviene repasar antes de seguir.</li></ul>
+    <div class="src">Dunlosky et al. (2013); Bastani et al. (PNAS 2025).</div>`,
+  tarjetas: `<ul><li>Repaso espaciado: cada tarjeta vuelve justo cuando estás por olvidarla. Si la recuerdas, tarda más en volver; si fallas, vuelve pronto.</li>
+    <li>Primero <b>intenta recordar</b> y luego voltéala: recordar sin ayuda es lo que más fija lo aprendido.</li>
+    <li>Califícate con honestidad: <b>Otra vez</b> si no te salió, <b>Difícil</b> si te costó, <b>Bien</b> si salió, <b>Fácil</b> si fue inmediato.</li>
+    <li>Una tarjeta cuenta como <b>dominada</b> cuando ya aguanta 21 días o más sin repasar (como en Anki). El dominio de cada curso y módulo sale de ahí.</li></ul>
+    <div class="src">Cepeda et al. (2006): repaso espaciado; Dunlosky et al. (2013); algoritmo FSRS, el mismo que usa Anki.</div>`,
+  progreso: `<ul><li>Es tu registro: qué misiones llevas en cada módulo y qué hiciste en cada sesión.</li>
+    <li>Sirve para <b>compararte con tu yo de antes</b>, no con otras personas.</li></ul>
+    <div class="src">Consejo de Andrej Karpathy sobre cómo aprender.</div>`,
+  proyecto: `<ul><li>Cada concepto lo aplicas a <b>algo tuyo</b> cuando lo necesitas: aprender a fondo y "cuando se necesita", no todo por si acaso.</li>
+    <li>Los <b>hilos</b> son trabajos que crecen a lo largo del curso. En LangGraph, por ejemplo, <i>nanograph</i>: un mini-LangGraph por dentro, para quitarle la magia a la librería real.</li></ul>
+    <div class="src">Consejos de Karpathy y su estilo de enseñar (micrograd, nanoGPT).</div>`,
+};
+document.querySelectorAll(".view").forEach(sec => {
+  const key = sec.id.slice(2), html = HELP[key];
+  if (!html) return;
+  const btn = document.createElement("button");
+  btn.className = "help"; btn.type = "button"; btn.textContent = "?";
+  btn.title = "¿Por qué existe esta vista?"; btn.setAttribute("aria-label", btn.title); btn.setAttribute("aria-expanded", "false");
+  const box = document.createElement("div");
+  box.className = "helpbox"; box.hidden = true; box.innerHTML = `<div class="k">Por qué existe esta vista</div>${html}`;
+  const h1 = sec.querySelector("h1"), bar = sec.querySelector(".stagebar");
+  if (h1){ const row = document.createElement("div"); row.className = "titlerow"; h1.replaceWith(row); row.append(h1, btn); const sub = row.nextElementSibling; (sub && sub.classList.contains("sub") ? sub : row).after(box); }
+  else if (bar){ bar.append(btn); bar.after(box); }
+  btn.onclick = () => { box.hidden = !box.hidden; btn.setAttribute("aria-expanded", String(!box.hidden)); };
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") document.querySelectorAll(".helpbox").forEach(b => { b.hidden = true; b.previousElementSibling?.querySelector?.(".help")?.setAttribute("aria-expanded", "false"); });
+});
+$("#theme").onclick = () => { const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; store.set("tema", t); applyTheme(t); renderedKey = null; if (state) renderPantalla(); };
+
+/* ---------- Cursos ---------- */
+let arbol = [], cursos = [], curso = store.get("curso");
+function aplanar(nodos, ruta = []){
+  const out = [];
+  for (const n of nodos){
+    if (n.curso) out.push({...n, ruta});
+    if (n.hijos) out.push(...aplanar(n.hijos, [...ruta, n.nombre]));
+  }
+  return out;
+}
+function cursoActual(){ return cursos.find(c => c.id === curso); }
+function setCurso(id){
+  if (id === curso) return;
+  curso = id; store.set("curso", id); lastRaw = ""; first = true; renderedKey = null;
+  renderSelector(); renderArbol(); poll();
+}
+$("#curlabel").onclick = () => show("estudios");
+function renderSelector(){
+  const c = cursoActual();
+  $("#curname").textContent = c ? c.nombre : "Elige un curso";
+}
+function renderArbol(){
+  const nodo = (n, nivel) => {
+    if (n.curso){
+      const r = n.resumen || {}, pct = r.total ? Math.round(100 * r.hechas / r.total) : 0;
+      const tj = r.tarjetas || {};
+      const det = (r.tiene_plan ? `${r.hechas} de ${r.total} misiones${r.siguiente ? " · sigue " + esc(r.siguiente) : ""}` : esc(n.nota || "Sin plan todavía: se arma al empezarlo con el tutor."))
+        + (tj.total ? ` · ${tj.dominio}% dominado (${tj.dominadas} de ${tj.total} tarjetas)` : "");
+      const chip = n.estado === "actual" ? `<span class="chip ok">Actual</span>` : (n.estado ? `<span class="chip off">${esc(n.estado)}</span>` : "");
+      return `<button class="course ${n.id === curso ? "on" : ""}" data-curso="${esc(n.id)}"><div class="grow"><div class="t">${esc(n.nombre)}</div><div class="d">${det}</div></div>
+        ${r.tiene_plan ? `<div class="meter" title="${pct}%"><i style="width:${pct}%"></i></div><span class="n">${pct}%</span>` : ""}${chip}</button>`;
+    }
+    const hijos = (n.hijos || []).map(h => nodo(h, nivel + 1)).join("") || `<div class="d" style="color:var(--muted)">Vacío</div>`;
+    if (nivel === 0) return `<div class="card branch"><div class="bh"><b>${esc(n.nombre)}</b><span>${aplanar([n]).length} cursos</span></div>${hijos}</div>`;
+    return `<div class="sub-branch"><div class="sh">${esc(n.nombre)}</div>${hijos}</div>`;
+  };
+  $("#tree").innerHTML = arbol.length ? arbol.map(n => nodo(n, 0)).join("") : `<div class="card empty">Aún no hay cursos. Abre una sesión con <code>/tutor</code> y dile qué quieres aprender.</div>`;
+  $("#tree").querySelectorAll("[data-curso]").forEach(b => b.onclick = () => { setCurso(b.dataset.curso); show("hoy"); });
+}
+
+/* ---------- Navegación ---------- */
+let view = "hoy", lastRaw = "", lastTree = "", state = null, first = true, newestSeen = null, idx = -1;
+document.querySelectorAll(".nav").forEach(b => b.onclick = () => show(b.dataset.v));
+function show(v){
+  view = v;
+  document.querySelectorAll(".nav").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  document.querySelectorAll(".view").forEach(s => s.classList.toggle("on", s.id === "v-" + v));
+  if (v === "pantalla") $("#badge").classList.remove("show");
+  if (v !== "pantalla") document.body.classList.remove("focus");
+}
+function toast(msg){ const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove("show"), 3200); }
+
+async function poll(){
+  try{
+    const rc = await fetch("/api/cursos", {cache:"no-store"});
+    if (rc.status === 401){ location.href = "/login"; return; }
+    const rt = await rc.text();
+    if (rt !== lastTree){
+      lastTree = rt; arbol = JSON.parse(rt).arbol || []; cursos = aplanar(arbol);
+      if (!cursoActual()) curso = (cursos.find(c => c.estado === "actual") || cursos[0] || {}).id;
+      renderSelector(); renderArbol();
+      if (view === "tarjetas" && tActual) pintarTarjeta();
+    }
+    if (!curso){ $("#dot").classList.add("ok"); $("#live").textContent = "Conectado"; return; }
+    const raw = await (await fetch("/api/estado?curso=" + encodeURIComponent(curso), {cache:"no-store"})).text();
+    $("#dot").classList.add("ok"); $("#live").textContent = "Conectado";
+    if (raw !== lastRaw){ lastRaw = raw; state = JSON.parse(raw); render(); }
+  }catch(e){
+    $("#dot").classList.remove("ok"); $("#live").textContent = "Sin conexión al servidor";
+  }
+}
+
+function render(){
+  const todos = state.pantalla || [];
+  const newest = todos.length ? todos[todos.length - 1] : null;
+  if (!first && newest && newest.id !== newestSeen){
+    newestSeen = newest.id;
+    if (newest.curso && newest.curso !== curso && cursos.some(c => c.id === newest.curso)){
+      toast("Nuevo en pantalla (" + (cursos.find(c => c.id === newest.curso).nombre) + "): " + newest.titulo);
+      setCurso(newest.curso); pendingShow = true; return;
+    }
+    items = visibles(); idx = items.length - 1;
+    toast("Nuevo en pantalla: " + newest.titulo); petReaccion("nuevo");
+    if (view === "hoy" || view === "estudios") show("pantalla"); else if (view !== "pantalla") $("#badge").classList.add("show");
+  }
+  if (first){ newestSeen = newest ? newest.id : null; items = visibles(); idx = items.length - 1; first = false; if (pendingShow){ pendingShow = false; show("pantalla"); } }
+  items = visibles();
+  const d = state.datos || {};
+  const c = cursoActual();
+  document.title = c ? "Mi Tutor · " + c.nombre : "Mi Tutor";
+  renderHoy(d, state.hojas || []); renderTarjetasStats(); renderPantalla(); renderHojas(d, state.hojas || []); renderRepaso(d); renderProgreso(d); renderProyecto(d);
+}
+let items = [], pendingShow = false;
+const visibles = () => (state.pantalla || []).filter(it => !it.curso || it.curso === curso);
+const modNombre = (d, n) => ((d.modulos || []).find(m => m.n == n) || {}).nombre || "";
+const material = m => m.material || m.notebook || "";
+
+/* ---------- Hoy ---------- */
+function renderHoy(d, hojas){
+  const dias = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+  $("#hello").textContent = "Hoy, " + dias[new Date().getDay()];
+  const cmd = `<code>/tutor ${esc(curso || "")}</code>`;
+  if (!state.datos){
+    $("#t-next").innerHTML = `<div class="k">${esc(cursoActual()?.nombre || "Curso")}</div><div class="big">Este curso todavía no tiene plan</div>
+      <div class="how">Abre una <b>sesión nueva</b> de Claude en la carpeta del repo y escribe ${cmd}. El tutor armará contigo las misiones del curso.</div>`;
+    $("#t-hoja").innerHTML = `<div class="k">Hojas</div><div class="big" style="font-size:19px">Sin hojas todavía</div>`;
+    $("#t-banco").innerHTML = `<div class="k">Por repasar</div><div class="big" style="font-size:19px">Nada por ahora</div>`;
+    $("#t-sum").innerHTML = ""; return;
+  }
+  const ms = d.misiones || [], next = ms.find(m => m.id === d.siguiente);
+  $("#t-next").innerHTML = next
+    ? `<div class="k">Siguiente misión · ${esc(next.id)}</div><div class="big">${esc(next.titulo)}</div><div class="nb">${esc(material(next))}${material(next) ? " · " : ""}Módulo ${esc(next.modulo)}: ${esc(modNombre(d, next.modulo))}</div>
+       <div class="how">Abre una <b>sesión nueva</b> de Claude en la carpeta del repo y escribe ${cmd}. Una misión por sesión.</div>`
+    : `<div class="k">Curso</div><div class="big">¡Terminaste todas las misiones!</div>`;
+
+  const meta = d.hojas || {};
+  const pend = hojas.filter(h => (meta[h.archivo] || {}).estado !== "hecha");
+  const h = pend[pend.length - 1];
+  $("#t-hoja").innerHTML = h
+    ? `<div class="k">Hoja pendiente</div><div class="big" style="font-size:19px">${esc(h.titulo)}</div><p style="margin:4px 0 14px;color:var(--muted);font-size:15px">Resuélvela en papel, sin ver apuntes. Luego revisa las respuestas aquí.</p>
+       <button class="btn pri" onclick="imprimir('${encodeURIComponent(h.archivo)}')">Imprimir</button> <button class="btn" onclick="verRespuestas('${encodeURIComponent(h.archivo)}')">Respuestas</button>`
+    : `<div class="k">Hojas</div><div class="big" style="font-size:19px">Sin hojas pendientes</div><p style="margin:4px 0 0;color:var(--muted);font-size:15px">La siguiente llega al terminar tu próxima sesión.</p>`;
+
+  const tj = state.tarjetas || {};
+  $("#t-tarj").innerHTML = tj.para_hoy
+    ? `<div class="k">Tarjetas de hoy</div><div class="big" style="font-size:19px">${tj.para_hoy} por repasar</div><p style="margin:4px 0 14px;color:var(--muted);font-size:15px">Unos minutos. Dominio del curso: ${tj.dominio}%.</p><button class="btn pri" onclick="show('tarjetas')">Repasar</button>`
+    : `<div class="k">Tarjetas</div><div class="big" style="font-size:19px">${tj.total ? "Al día" : "Aún no hay tarjetas"}</div><p style="margin:4px 0 0;color:var(--muted);font-size:15px">${tj.total ? `Dominio del curso: ${tj.dominio}%.` : "El tutor crea tarjetas al cerrar cada sesión."}</p>`;
+
+  const b = d.banco || [];
+  $("#t-banco").innerHTML = b.length
+    ? `<div class="k">¿Puedes contestar estas de memoria?</div><ol class="qlist">${b.slice(0, 3).map(q => `<li>${esc(q.pregunta)}</li>`).join("")}</ol>${b.length > 3 ? `<p style="margin:0;color:var(--muted);font-size:14px">y ${b.length - 3} más en Repaso.</p>` : ""}`
+    : `<div class="k">Por repasar</div><div class="big" style="font-size:19px">Nada por ahora</div><p style="margin:4px 0 0;color:var(--muted);font-size:15px">Las preguntas que falles aparecerán aquí para que intentes contestarlas de memoria.</p>`;
+
+  const done = ms.filter(m => m.estado === "hecha").length, nm = (d.modulos || []).length;
+  const ex = (d.examenes || []).slice(-1)[0];
+  $("#t-sum").innerHTML = `<span><b>${done}</b> de ${ms.length} misiones</span>${nm ? `<span>Módulo <b>${next ? esc(next.modulo) : nm}</b> de ${nm}</span>` : ""}${ex ? `<span>Último examen: <b>${esc(ex.puntaje)}%</b></span>` : ""}`;
+}
+
+/* ---------- Pantalla en vivo ---------- */
+let renderedKey = null;
+$("#prev").onclick = () => step(-1);
+$("#nextb").onclick = () => step(1);
+$("#pick").onchange = e => { idx = Number(e.target.value); renderPantalla(); };
+$("#focus").onclick = () => document.body.classList.toggle("focus");
+document.addEventListener("keydown", e => {
+  if (view !== "pantalla" || /^(TEXTAREA|INPUT|SELECT)$/.test(document.activeElement.tagName)) return;
+  if (e.key === "ArrowLeft") step(-1);
+  if (e.key === "ArrowRight") step(1);
+  if (e.key === "f" || e.key === "F") document.body.classList.toggle("focus");
+});
+function step(n){ idx = Math.max(0, Math.min(items.length - 1, idx + n)); renderPantalla(); }
+
+async function renderPantalla(){
+  if (idx >= items.length) idx = items.length - 1;
+  $("#prev").disabled = idx <= 0; $("#nextb").disabled = idx >= items.length - 1;
+  $("#pos").textContent = items.length ? `${idx + 1} de ${items.length}` : "";
+  $("#pick").innerHTML = items.map((it, i) => `<option value="${i}" ${i === idx ? "selected" : ""}>${esc(it.ts.slice(5))} · ${esc(it.titulo)}</option>`).join("");
+  $("#pick").style.display = items.length ? "" : "none";
+
+  const it = items[idx], stage = $("#stage");
+  if (!it){
+    stage.innerHTML = `<div class="waiting"><b>Esperando al tutor</b><span>Abre una sesión con <code>/tutor ${esc(curso || "")}</code>.<br>Lo que te muestre aparecerá aquí.</span></div>`;
+    renderedKey = null; return;
+  }
+  const key = it.id + document.documentElement.dataset.theme;
+  if (renderedKey === key) return;
+  renderedKey = key;
+
+  const hasNotes = !!it.notas && it.tipo !== "predice";
+  stage.innerHTML = `<div class="st"><b>${esc(it.titulo)}</b><span>${esc(it.ts)}</span></div>
+    <div class="split ${hasNotes ? "" : "solo"}"><div id="visual"></div>${hasNotes ? `<div class="notes"><div class="k">Qué estás viendo</div>${md(it.notas)}</div>` : ""}</div>`;
+  const box = $("#visual");
+
+  if (it.tipo === "mermaid"){
+    let src = it.contenido;
+    if (/^\s*(graph|flowchart)\b/.test(src) && !/classDef\s+clave/.test(src)){
+      const dark = document.documentElement.dataset.theme === "dark";
+      src += `\nclassDef clave fill:${dark ? "#3A3115" : "#FFF1BF"},stroke:${dark ? "#E0A92E" : "#C98A00"},stroke-width:3px,color:${dark ? "#F3E6C4" : "#3B2A00"}`;
+    }
+    try{ const {svg} = await mermaid.render("mm" + it.id + Date.now(), src); box.className = "mm"; box.innerHTML = svg; }
+    catch(e){ box.innerHTML = `<pre class="code" style="padding:12px 16px">${esc(it.contenido)}</pre><p class="sub">No se pudo dibujar el diagrama: ${esc(e.message || e)}</p>`; }
+  } else if (it.tipo === "codigo"){
+    const hl = new Set(it.resaltar || []);
+    box.innerHTML = `<div class="code">${it.contenido.replace(/\n$/, "").split("\n").map((l, i) =>
+      `<div class="ln ${hl.has(i + 1) ? "hl" : ""}"><i>${i + 1}</i><span>${esc(l) || " "}</span></div>`).join("")}</div>`;
+  } else if (it.tipo === "markdown"){
+    box.className = "md"; box.innerHTML = md(it.contenido);
+  } else if (it.tipo === "html"){
+    const f = document.createElement("iframe"); f.className = "htmlbox"; f.setAttribute("sandbox", "allow-scripts"); f.srcdoc = it.contenido; box.appendChild(f);
+  } else if (it.tipo === "predice"){
+    box.className = "predict";
+    box.innerHTML = `<div class="md">${md(it.contenido)}</div>
+      <textarea id="guess" placeholder="Escribe tu predicción antes de ver la respuesta (opcional, no se guarda)"></textarea>
+      <button class="btn pri" id="reveal">Ver respuesta</button><div id="ans"></div>`;
+    $("#reveal").onclick = () => {
+      const g = $("#guess").value.trim();
+      $("#ans").innerHTML = `<div class="answer">${g ? `<div class="mine"><b>Tu predicción:</b> ${esc(g)}</div>` : ""}<div class="k">Respuesta</div><div class="md">${md(it.respuesta)}</div></div>`;
+      $("#reveal").remove(); $("#guess").readOnly = true;
+    };
+  } else {
+    box.innerHTML = `<pre class="code" style="padding:12px 16px">${esc(it.contenido)}</pre>`;
+  }
+}
+
+/* ---------- Hojas ---------- */
+const hojaUrl = f => `/hojas/${encodeURIComponent(curso)}/${f}`;
+function verRespuestas(f){ window.open(hojaUrl(f) + "#respuestas", "_blank"); }
+function renderHojas(d, hojas){
+  const meta = d.hojas || {};
+  $("#hojas").innerHTML = hojas.length ? hojas.slice().reverse().map(h => {
+    const m = meta[h.archivo] || {}, hecha = m.estado === "hecha";
+    const res = hecha && m.total ? ` · ${m.total - (m.falladas || []).length} de ${m.total} bien` : "";
+    return `<div class="row"><div class="grow"><div class="t">${esc(h.titulo)}</div><div class="d">${esc(h.archivo)}${res}</div></div>
+      <span class="chip ${hecha ? "ok" : "wait"}">${hecha ? "✓ Resuelta" : "Pendiente"}</span>
+      <button class="btn" onclick="verRespuestas('${encodeURIComponent(h.archivo)}')">Respuestas</button>
+      <button class="btn pri" onclick="imprimir('${encodeURIComponent(h.archivo)}')">Imprimir</button></div>`;
+  }).join("") : `<div class="empty">Todavía no hay hojas en este curso.</div>`;
+}
+function imprimir(f){
+  const fr = $("#printer");
+  fr.onload = () => { try{ fr.contentWindow.focus(); fr.contentWindow.print(); }catch(e){ window.open(hojaUrl(f), "_blank"); } };
+  fr.src = hojaUrl(f) + "?t=" + Date.now();
+}
+
+/* ---------- Repaso ---------- */
+function renderRepaso(d){
+  const b = d.banco || [];
+  $("#banco").innerHTML = b.length ? b.map(q => `<div class="row"><div class="grow"><div class="t">${esc(q.pregunta)}</div><div class="d">De: ${esc(q.origen || "")}</div></div>
+    <span class="chip ${q.aciertos_seguidos ? "wait" : "bad"}">${q.aciertos_seguidos ? "1 de 2 aciertos" : "Por repasar"}</span></div>`).join("")
+    : `<div class="empty">Vacío por ahora. Cuando falles una pregunta, aparecerá aquí.</div>`;
+  const ex = d.examenes || [];
+  $("#examenes").innerHTML = ex.length ? ex.map(e => {
+    const ok = e.puntaje >= 70;
+    return `<div class="row"><div class="grow"><div class="t">Módulo ${esc(e.modulo)} · ${esc(e.fecha)}</div><div class="d">${e.debiles ? "Puntos débiles: " + esc(e.debiles) : ""}</div></div>
+      <div class="meter" title="${e.puntaje}% (la línea marca 70%)"><i style="width:${Math.max(0, Math.min(100, e.puntaje))}%"></i></div>
+      <b style="width:52px;text-align:right">${esc(e.puntaje)}%</b><span class="chip ${ok ? "ok" : "wait"}">${ok ? "✓ Listo" : "↻ Repasar"}</span></div>`;
+  }).join("") : `<div class="empty">Al terminar cada módulo harás un examen impreso. Las notas quedan aquí.</div>`;
+}
+
+/* ---------- Progreso ---------- */
+function renderProgreso(d){
+  const ms = d.misiones || [];
+  const mods = (d.modulos || []).length ? d.modulos : [...new Set(ms.map(m => m.modulo))].map(n => ({n, nombre: ""}));
+  $("#mods").innerHTML = mods.length ? mods.map(({n, nombre}) => {
+    const list = ms.filter(m => m.modulo == n), k = list.filter(m => m.estado === "hecha").length;
+    const pills = list.map(m => `<span class="pill ${m.estado === "hecha" ? "done" : (m.id === d.siguiente ? "now" : "")}" data-tip="${esc(m.id)}|${esc(m.titulo)}|${esc(material(m))}|${esc(m.nota || "")}">${esc(m.id)}</span>`).join("");
+    const tm = ((state.tarjetas || {}).por_modulo || {})[String(n)];
+    const dom = tm && tm.total ? `<small>${Math.round(100 * tm.dominadas / tm.total)}% dominado</small>` : "";
+    return `<div class="card mod"><div class="name">M${esc(n)}<small>${esc(nombre)}</small>${dom}</div><div class="pills">${pills}</div><div class="pct">${list.length ? Math.round(100 * k / list.length) : 0}%</div></div>`;
+  }).join("") : `<div class="card empty">Este curso todavía no tiene misiones.</div>`;
+  const ses = (d.sesiones || []).slice().reverse();
+  $("#sesiones").innerHTML = ses.length ? ses.map(s => `<div class="row"><span class="when">${esc(s.fecha)}</span><div class="grow"><div class="t">${esc(s.titulo)}</div><div class="d">${esc(s.nota)}</div></div></div>`).join("") : `<div class="empty">Sin sesiones todavía.</div>`;
+}
+const tip = $("#tip");
+document.addEventListener("mouseover", e => {
+  const p = e.target.closest("[data-tip]");
+  if (!p){ tip.style.display = "none"; return; }
+  const [id, t, nb, nota] = p.dataset.tip.split("|");
+  tip.innerHTML = `<b>${esc(id)} · ${esc(t)}</b>${esc(nb)}${nota ? "<br>" + esc(nota) : ""}`;
+  tip.style.display = "block";
+});
+document.addEventListener("mousemove", e => { tip.style.left = Math.min(e.clientX + 14, innerWidth - 320) + "px"; tip.style.top = (e.clientY + 16) + "px"; });
+
+/* ---------- Proyecto e hilos ---------- */
+function renderProyecto(d){
+  const p = d.proyecto;
+  $("#proyecto").innerHTML = p
+    ? `<div class="row"><div class="grow"><div class="t" style="font-size:18px">${esc(p.nombre)}</div><div class="d">${esc(p.descripcion || "")}</div></div></div>` +
+      (p.features || []).map(f => `<div class="row"><span class="chip ${f.hecha ? "ok" : "off"}">M${esc(f.modulo)}</span><div class="grow">${esc(f.titulo)}</div><span class="chip ${f.hecha ? "ok" : "off"}">${f.hecha ? "✓ Hecha" : "Pendiente"}</span></div>`).join("")
+    : `<div class="empty">${state.datos ? "Lo eliges con el tutor: algo tuyo donde aplicar lo que aprendes." : "Este curso todavía no tiene plan."}</div>`;
+  $("#hilos").innerHTML = (d.hilos || []).map(h => `<h2>${esc(h.nombre)}</h2><div class="card list">
+    ${h.descripcion ? `<div class="row"><div class="grow d">${esc(h.descripcion)}</div></div>` : ""}
+    ${(h.etapas || []).map(e => {
+      const st = e.n <= (h.etapa || 0) ? "ok" : (e.n === (h.etapa || 0) + 1 ? "wait" : "off");
+      return `<div class="row"><span class="chip ${st}">Etapa ${esc(e.n)}</span><div class="grow"><div class="t">${esc(e.titulo)}</div>${e.modulo ? `<div class="d">Con el Módulo ${esc(e.modulo)}</div>` : ""}</div><span class="chip ${st}">${st === "ok" ? "✓ Hecha" : (st === "wait" ? "Siguiente" : "Más adelante")}</span></div>`;
+    }).join("")}</div>`).join("");
+}
+
+/* ---------- Tarjetas (repaso espaciado) ---------- */
+let tScope = "todos", tCola = [], tActual = null, tVolteada = false, tCargando = false, tHechas = 0;
+function renderTarjetasStats(){
+  const tj = state.tarjetas || {}, c = cursoActual();
+  $("#tbadge").textContent = tj.para_hoy || ""; $("#tbadge").classList.toggle("show", !!tj.para_hoy);
+  $("#tscope").innerHTML = `<button data-s="todos" class="${tScope === "todos" ? "on" : ""}">Todos los cursos</button>` +
+    (c ? `<button data-s="${esc(c.id)}" class="${tScope === c.id ? "on" : ""}">${esc(c.nombre)}</button>` : "");
+  $("#tscope").querySelectorAll("button").forEach(b => b.onclick = () => { tScope = b.dataset.s; cargarCola(); renderTarjetasStats(); });
+  $("#tstats").innerHTML = [["Para hoy (este curso)", tj.para_hoy || 0], ["Nuevas", tj.nuevas || 0], ["Repasadas hoy", tj.repasadas_hoy || 0], ["Dominio del curso", (tj.dominio || 0) + "%"]]
+    .map(([k, v]) => `<div class="card tstat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+async function cargarCola(){
+  if (tCargando) return; tCargando = true;
+  try{
+    const r = await fetch("/api/cola?curso=" + encodeURIComponent(tScope), {cache:"no-store"});
+    if (r.status === 401){ location.href = "/login"; return; }
+    tCola = (await r.json()).cola || [];
+  } finally { tCargando = false; }
+  siguienteTarjeta();
+}
+function siguienteTarjeta(){
+  const ahora = new Date(Date.now() + 60000).toISOString();
+  const listas = tCola.filter(t => t.due <= ahora || t.nueva);
+  tActual = listas[0] || null; tVolteada = false;
+  pintarTarjeta();
+}
+function pintarTarjeta(){
+  const box = $("#review");
+  if (!tActual){
+    const luego = tCola.filter(t => !t.nueva).sort((a, b) => a.due.localeCompare(b.due))[0];
+    const min = luego ? Math.max(1, Math.round((new Date(luego.due) - Date.now()) / 60000)) : 0;
+    box.innerHTML = `<div class="done"><span class="bigpet" id="petdone"></span><b>${tHechas ? "¡Listo por hoy!" : "No hay tarjetas pendientes"}</b>
+      <span>${luego ? `Quedan ${tCola.length} que vuelven en ~${min} min (las que fallaste).` : (tHechas ? `Repasaste ${tHechas} tarjetas. Mañana vuelven las que tocan.` : "Cuando el tutor cree tarjetas, aparecerán aquí.")}</span></div>`;
+    if (window.BloubBot){ const p = new BloubBot.Bot($("#petdone"), {size: 120, state: tHechas ? "burst" : "idle", expr: tHechas ? "heureux" : "neutre"}); centrar(p); }
+    if (luego) setTimeout(() => { if (view === "tarjetas" && !tActual) cargarCola(); }, Math.min(min, 10) * 60000);
+    return;
+  }
+  const t = tActual, nombre = (cursos.find(c => c.id === t.curso) || {}).nombre || t.curso;
+  const pend = tCola.filter(x => x.due <= new Date(Date.now() + 60000).toISOString() || x.nueva).length;
+  box.innerHTML = `<div class="meta"><span>${esc(nombre)}${t.modulo ? " · M" + esc(t.modulo) : ""}${t.mision ? " · " + esc(t.mision) : ""}${t.nueva ? " · nueva" : ""}</span><span>${pend} pendientes</span></div>
+    <div class="front">${md(t.frente)}</div>
+    ${tVolteada ? `<div class="back">${md(t.reverso)}</div>
+      <div class="rate">${[[1,"Otra vez"],[2,"Difícil"],[3,"Bien"],[4,"Fácil"]].map(([n, l]) => `<button class="r${n}" data-r="${n}">${l}<small>${esc(t.intervalos[n])}</small><kbd>${n}</kbd></button>`).join("")}</div>`
+      : `<button class="btn pri showbtn" id="voltear">Mostrar respuesta <kbd>espacio</kbd></button>`}`;
+  if (!tVolteada) $("#voltear").onclick = voltear;
+  else box.querySelectorAll("[data-r]").forEach(b => b.onclick = () => calificar(Number(b.dataset.r)));
+}
+function voltear(){ if (tActual && !tVolteada){ tVolteada = true; pintarTarjeta(); } }
+async function calificar(n){
+  if (!tActual || !tVolteada) return;
+  const t = tActual; tActual = null;
+  petReaccion(n === 1 ? "mal" : (n >= 3 ? "bien" : "neutro"));
+  const r = await fetch(`/api/tarjetas/${t.id}/repaso`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({rating: n})});
+  if (r.status === 401){ location.href = "/login"; return; }
+  tHechas++;
+  lastRaw = ""; poll();
+  await cargarCola();
+}
+document.addEventListener("keydown", e => {
+  if (view !== "tarjetas" || /^(TEXTAREA|INPUT|SELECT)$/.test(document.activeElement.tagName)) return;
+  if (e.key === " " || e.key === "Enter"){ e.preventDefault(); voltear(); }
+  if (["1","2","3","4"].includes(e.key)) calificar(Number(e.key));
+});
+
+/* ---------- Grokpet: el ícono vivo de la app ---------- */
+let pet = null;
+function centrar(bot){ const r = bot.el.getBoundingClientRect(); if (r.width) bot.aim(r.left + r.width / 2, r.top + r.height / 2); }
+function petReaccion(tipo){
+  if (!pet) return;
+  const R = {bien: ["burst", "heureux", 1600], mal: ["idle", "triste", 2200], nuevo: ["notify", "attentif", 2600], neutro: ["wink", null, 1200]}[tipo];
+  if (!R) return;
+  pet.set(R[0], R[1]);
+  clearTimeout(petReaccion.t);
+  petReaccion.t = setTimeout(() => { pet.set("idle", "neutre"); setTimeout(() => centrar(pet), 50); }, R[2]);
+}
+function vidaDelPet(){
+  // Reacciones naturales: casi siempre mira al centro; a ratos echa un vistazo, guiña o sonríe, y vuelve.
+  if (!pet || pet.state !== "idle"){ setTimeout(vidaDelPet, 4000); return; }
+  const r = pet.el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const dado = Math.random();
+  if (dado < 0.45){ pet.aim(cx + (Math.random() < 0.5 ? -1 : 1) * innerWidth * (0.15 + Math.random() * 0.25), cy + (Math.random() - 0.5) * innerHeight * 0.3); setTimeout(() => centrar(pet), 900 + Math.random() * 900); }
+  else if (dado < 0.62){ pet.set("wink"); setTimeout(() => { pet.set("idle", "neutre"); centrar(pet); }, 1100); }
+  else if (dado < 0.75){ pet.set("idle", "heureux"); setTimeout(() => pet.set("idle", "neutre"), 2200); }
+  else if (dado < 0.82){ pet.set("thinking"); setTimeout(() => { pet.set("idle", "neutre"); centrar(pet); }, 2000); }
+  setTimeout(vidaDelPet, 5000 + Math.random() * 7000);
+}
+if (window.BloubBot){
+  pet = new BloubBot.Bot($("#pet"), {size: 46, state: "idle", expr: "neutre"});
+  requestAnimationFrame(() => centrar(pet));
+  setTimeout(vidaDelPet, 3000);
+}
+const _theme = $("#theme").onclick;
+$("#theme").onclick = () => { _theme(); if (window.BloubBot) BloubBot.readTheme(); };
+
+/* ---------- Vista inicial (los links de Telegram traen #tarjetas, #hoy…) ---------- */
+const _show = show;
+show = function(v){ _show(v); if (v === "tarjetas") cargarCola(); if (location.hash.slice(1) !== v) history.replaceState(null, "", "#" + v); };
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (document.getElementById("v-" + h) && h !== view) show(h); });
+{ const h = location.hash.slice(1); if (document.getElementById("v-" + h)) show(h); }
+
+poll(); setInterval(poll, 2000);
+</script>
+</body>
+</html>

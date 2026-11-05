@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mi Tutor · Entrar</title>
+<link rel="icon" href="/static/icono.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
+<script src="/static/bloub-engine.js"></script>
+<script src="/static/bloub.js"></script>
+<style>
+:root{--bg:#F5F6F7;--panel:#fff;--ink:#16191D;--muted:#59636E;--line:#E2E5E9;--acc:#0B7D67;--sheet:#fff;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#101417;--panel:#171C20;--ink:#E6EBEE;--muted:#9BA6B0;--line:#283037;--acc:#34C3A2;--sheet:#171C20;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--ink);font:16px/1.55 "Nunito","Segoe UI",system-ui,sans-serif;padding:16px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:32px 28px;max-width:380px;width:100%;text-align:center}
+#pet{display:inline-block;width:110px;height:110px}
+h1{font-size:26px;font-weight:800;margin:8px 0 4px}
+p{color:var(--muted);margin:0 0 18px}
+.msg{color:#C0392B;font-weight:700}
+form{display:flex;flex-direction:column;gap:10px}
+input{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+button{font:inherit;font-weight:800;padding:10px;border-radius:10px;border:0;background:var(--acc);color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="box">
+  <span id="pet"></span>
+  <h1>Mi Tutor</h1>
+  <p>Entra con el link que te manda el bot de Telegram (escríbele <b>/link</b>).</p>
+  <p class="msg">{{MSG}}</p>
+  {{FORM}}
+</div>
+<script>
+if (window.BloubBot){ const b = new BloubBot.Bot(document.getElementById("pet"), {size: 110, state: "idle", expr: "neutre"});
+  requestAnimationFrame(() => { const r = b.el.getBoundingClientRect(); b.aim(r.left + r.width / 2, r.top + r.height / 2); }); }
+</script>
+</body>
+</html>
