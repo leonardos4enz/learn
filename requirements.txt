@@ -2,3 +2,4 @@ mcp>=1.12,<2
 fsrs>=6,<7
 uvicorn>=0.30
 tzdata
+pillow>=10,<13

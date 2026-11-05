@@ -9,6 +9,8 @@ Tablas
   repasos   cada respuesta a una tarjeta
   lecciones una lección por misión (pasos JSON); su avance (completada, predicciones) no se pisa al reescribirla
   mejoras   errores y propuestas que registran Leo o el tutor
+  tiempo    cada rato de estudio (lección, misión con el tutor, tarjetas, hoja): inicio, fin y minutos
+El tiempo hábil de estudio (semana tipo + excepciones) vive en kv['tiempo_habil'].
 Las imágenes de las lecciones viven como archivos en DATA_DIR/imagenes/<curso>/.
 """
 import json
@@ -63,6 +65,9 @@ CREATE TABLE IF NOT EXISTS lecciones (curso TEXT, mision_id TEXT, modulo TEXT, t
   tarjetas TEXT, actualizado TEXT, completada TEXT, predicciones TEXT, PRIMARY KEY (curso, mision_id));
 CREATE TABLE IF NOT EXISTS mejoras (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, reporta TEXT, curso TEXT,
   descripcion TEXT, estado TEXT DEFAULT 'nueva', nota TEXT, actualizado TEXT);
+CREATE TABLE IF NOT EXISTS tiempo (id INTEGER PRIMARY KEY AUTOINCREMENT, curso TEXT, mision TEXT, tipo TEXT,
+  inicio TEXT, fin TEXT, minutos REAL, origen TEXT, nota TEXT, creada TEXT, actualizada TEXT);
+CREATE INDEX IF NOT EXISTS tiempo_inicio ON tiempo (inicio);
 """)
 # migración: los tipos interactivos de la pantalla guardan su estructura en 'datos'
 _cols_pan = {r["name"] for r in _con.execute("PRAGMA table_info(pantalla)")}
@@ -763,6 +768,310 @@ def actualizar_mejora(mid, estado=None, nota=None):
         _x("UPDATE mejoras SET nota=?, actualizado=? WHERE id=?", (str(nota)[:2000], now_utc().isoformat(), mid))
 
 
+# ---------- tiempo de estudio ----------
+TIPOS_TIEMPO = ("leccion", "tutor", "tarjetas", "hoja", "otro")
+ORIGENES_TIEMPO = ("app", "tutor", "manual")
+HUECO_PING = timedelta(minutes=3)       # sin ping por más de esto, el rato se cierra y el siguiente empieza otro
+SIN_CERRAR = timedelta(hours=4)         # un rato abierto por más de esto se marca "sin cerrar" para corregirlo
+MIN_VISIBLE = 0.5                       # los ratos automáticos de menos de 30 s no se muestran
+
+DIAS_SEMANA = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+HABIL_VACIO = {"semana": {str(i): [] for i in range(7)}, "excepciones": []}
+
+
+def _ts(v, campo="fecha"):
+    """Acepta ISO con zona (se respeta) o sin zona / 'YYYY-MM-DD HH:MM' (hora local de Leo). Devuelve datetime en UTC."""
+    if isinstance(v, datetime):
+        dt = v
+    else:
+        s = str(v or "").strip().replace("T", " ").replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            raise ValueError(f"'{campo}' debe ser una fecha y hora como '2026-11-05 19:30' (hora local) o ISO 8601.")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=TZ)
+    return dt.astimezone(timezone.utc)
+
+
+def _local(ts):
+    return datetime.fromisoformat(ts).astimezone(TZ)
+
+
+def _validar_tiempo(curso, tipo, mision=None):
+    if tipo not in TIPOS_TIEMPO:
+        raise ValueError("tipo debe ser uno de: " + ", ".join(TIPOS_TIEMPO) + ".")
+    if curso and not curso_existe(curso):
+        raise ValueError(f"No hay un curso '{curso}' en el árbol.")
+    return _validar_mision(curso, mision) if curso else (str(mision).strip() or None if mision else None)
+
+
+def _rato(r, ahora=None):
+    ahora = ahora or now_utc()
+    d = dict(r)
+    ini = datetime.fromisoformat(d["inicio"])
+    if d["fin"]:
+        d["estado"] = "cerrada"
+    elif ahora - ini > SIN_CERRAR:
+        d["estado"], d["minutos"] = "sin_cerrar", None
+    else:
+        d["estado"], d["minutos"] = "abierta", round((ahora - ini).total_seconds() / 60, 1)
+    li = ini.astimezone(TZ)
+    d["fecha"], d["hora_inicio"] = li.date().isoformat(), li.strftime("%H:%M")
+    d["hora_fin"] = _local(d["fin"]).strftime("%H:%M") if d["fin"] else None
+    if d["minutos"] is not None:
+        d["minutos"] = round(d["minutos"], 1)
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def ping_tiempo(tipo, curso, mision=None):
+    """La app manda un ping cada ~30 s mientras Leo está activo en una lección o en las tarjetas.
+    Cada ping alarga el rato abierto; si pasaron más de 3 min desde el último, empieza un rato nuevo.
+    Así se cuenta el tiempo activo, no el que la pestaña estuvo abierta."""
+    try:
+        mision = _validar_tiempo(curso, tipo, mision)
+    except ValueError:
+        if tipo not in TIPOS_TIEMPO or (curso and not curso_existe(curso)):
+            raise
+        mision = str(mision)[:20] if mision else None  # una lección suelta (fuera del mapa de misiones) también cuenta
+    ahora = now_utc()
+    r = _q("""SELECT * FROM tiempo WHERE origen='app' AND tipo=? AND coalesce(curso,'')=? AND coalesce(mision,'')=?
+              AND fin>=? ORDER BY id DESC LIMIT 1""",
+           (tipo, curso or "", mision or "", (ahora - HUECO_PING).isoformat()), one=True)
+    if r:
+        mins = (ahora - datetime.fromisoformat(r["inicio"])).total_seconds() / 60
+        _x("UPDATE tiempo SET fin=?, minutos=?, actualizada=? WHERE id=?", (ahora.isoformat(), mins, ahora.isoformat(), r["id"]))
+        return {"id": r["id"], "minutos": round(mins, 1)}
+    # los ratos de un solo ping (abrir y cerrar) no aportan: se limpian
+    _x("DELETE FROM tiempo WHERE origen='app' AND minutos<? AND fin<?", (MIN_VISIBLE, (ahora - HUECO_PING).isoformat()))
+    tid = _x("""INSERT INTO tiempo (curso, mision, tipo, inicio, fin, minutos, origen, creada, actualizada)
+                VALUES (?, ?, ?, ?, ?, 0, 'app', ?, ?)""",
+             (curso, mision, tipo, ahora.isoformat(), ahora.isoformat(), ahora.isoformat(), ahora.isoformat()))
+    return {"id": tid, "minutos": 0}
+
+
+def iniciar_tiempo(curso, mision=None, tipo="tutor", nota=None, origen="tutor"):
+    """Abre un rato (el tutor al empezar una misión). Si ya hay uno abierto igual, devuelve ese."""
+    mision = _validar_tiempo(curso, tipo, mision)
+    ahora = now_utc()
+    ya = _q("""SELECT * FROM tiempo WHERE fin IS NULL AND tipo=? AND coalesce(curso,'')=? AND coalesce(mision,'')=?
+               AND inicio>=? ORDER BY id DESC LIMIT 1""",
+            (tipo, curso or "", mision or "", (ahora - SIN_CERRAR).isoformat()), one=True)
+    if ya:
+        return {**_rato(ya), "ya_estaba_abierta": True}
+    tid = _x("""INSERT INTO tiempo (curso, mision, tipo, inicio, fin, minutos, origen, nota, creada, actualizada)
+                VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)""",
+             (curso, mision, tipo, ahora.isoformat(), origen, nota, ahora.isoformat(), ahora.isoformat()))
+    return _rato(_q("SELECT * FROM tiempo WHERE id=?", (tid,), one=True))
+
+
+def terminar_tiempo(tid, nota=None, fin=None):
+    r = _q("SELECT * FROM tiempo WHERE id=?", (tid,), one=True)
+    if not r:
+        raise ValueError("No existe ese rato de estudio.")
+    f = _ts(fin, "fin") if fin else now_utc()
+    ini = datetime.fromisoformat(r["inicio"])
+    if f < ini:
+        raise ValueError("El fin no puede ser antes del inicio.")
+    _x("UPDATE tiempo SET fin=?, minutos=?, nota=coalesce(?, nota), actualizada=? WHERE id=?",
+       (f.isoformat(), (f - ini).total_seconds() / 60, nota, now_utc().isoformat(), tid))
+    return _rato(_q("SELECT * FROM tiempo WHERE id=?", (tid,), one=True))
+
+
+def registrar_tiempo(curso, tipo, inicio, fin=None, minutos=None, mision=None, nota=None, origen="manual"):
+    """Un rato ya pasado: con inicio y fin, o con inicio y minutos."""
+    if origen not in ORIGENES_TIEMPO:
+        raise ValueError("origen debe ser app, tutor o manual.")
+    mision = _validar_tiempo(curso, tipo, mision)
+    ini = _ts(inicio, "inicio")
+    if fin:
+        f = _ts(fin, "fin")
+    elif minutos not in (None, ""):
+        f = ini + timedelta(minutes=float(minutos))
+    else:
+        raise ValueError("Pasa 'fin' o 'minutos'.")
+    if f <= ini:
+        raise ValueError("El fin debe ser después del inicio.")
+    if (f - ini) > timedelta(hours=16):
+        raise ValueError("Un rato de más de 16 h no parece real; revísalo.")
+    ahora = now_utc().isoformat()
+    tid = _x("""INSERT INTO tiempo (curso, mision, tipo, inicio, fin, minutos, origen, nota, creada, actualizada)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             (curso, mision, tipo, ini.isoformat(), f.isoformat(), (f - ini).total_seconds() / 60, origen, nota, ahora, ahora))
+    return _rato(_q("SELECT * FROM tiempo WHERE id=?", (tid,), one=True))
+
+
+def editar_tiempo(tid, curso=None, mision=None, tipo=None, inicio=None, fin=None, minutos=None, nota=None):
+    r = _q("SELECT * FROM tiempo WHERE id=?", (tid,), one=True)
+    if not r:
+        raise ValueError("No existe ese rato de estudio.")
+    d = dict(r)
+    if curso is not None:
+        d["curso"] = curso or None
+    if tipo is not None:
+        d["tipo"] = tipo
+    if mision is not None:
+        d["mision"] = mision or None
+    d["mision"] = _validar_tiempo(d["curso"], d["tipo"], d["mision"])
+    if inicio:
+        d["inicio"] = _ts(inicio, "inicio").isoformat()
+    ini = datetime.fromisoformat(d["inicio"])
+    if fin:
+        d["fin"] = _ts(fin, "fin").isoformat()
+    elif minutos not in (None, ""):
+        d["fin"] = (ini + timedelta(minutes=float(minutos))).isoformat()
+    if d["fin"]:
+        f = datetime.fromisoformat(d["fin"])
+        if f <= ini:
+            raise ValueError("El fin debe ser después del inicio.")
+        d["minutos"] = (f - ini).total_seconds() / 60
+    if nota is not None:
+        d["nota"] = nota or None
+    # al corregirlo a mano deja de ser un rato automático: los pings ya no lo alargan
+    origen = "manual" if d["origen"] == "app" else d["origen"]
+    _x("""UPDATE tiempo SET curso=?, mision=?, tipo=?, inicio=?, fin=?, minutos=?, nota=?, origen=?, actualizada=? WHERE id=?""",
+       (d["curso"], d["mision"], d["tipo"], d["inicio"], d["fin"], d["minutos"], d["nota"], origen, now_utc().isoformat(), tid))
+    return _rato(_q("SELECT * FROM tiempo WHERE id=?", (tid,), one=True))
+
+
+def borrar_tiempo(tid):
+    if not _q("SELECT 1 FROM tiempo WHERE id=?", (tid,), one=True):
+        raise ValueError("No existe ese rato de estudio.")
+    _x("DELETE FROM tiempo WHERE id=?", (tid,))
+
+
+def _rango_utc(desde, hasta):
+    """[desde, hasta] son fechas locales (incluidas)."""
+    d0 = datetime.combine(desde, datetime.min.time(), TZ).astimezone(timezone.utc)
+    d1 = datetime.combine(hasta + timedelta(days=1), datetime.min.time(), TZ).astimezone(timezone.utc)
+    return d0.isoformat(), d1.isoformat()
+
+
+def _fecha(v, default):
+    if v in (None, ""):
+        return default
+    if hasattr(v, "isoformat") and not isinstance(v, str):
+        return v
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("Las fechas van como 'YYYY-MM-DD'.")
+
+
+def listar_tiempo(desde=None, hasta=None, curso=None):
+    hoy = hoy_local()
+    desde, hasta = _fecha(desde, hoy - timedelta(days=30)), _fecha(hasta, hoy)
+    a, b = _rango_utc(desde, hasta)
+    sql, args = "SELECT * FROM tiempo WHERE inicio>=? AND inicio<?", [a, b]
+    if curso:
+        sql += " AND curso=?"
+        args.append(curso)
+    ahora = now_utc()
+    out = []
+    for r in _q(sql + " ORDER BY inicio", args):
+        if r["origen"] == "app" and r["fin"] and (r["minutos"] or 0) < MIN_VISIBLE:
+            continue
+        out.append(_rato(r, ahora))
+    return out
+
+
+def minutos_por_dia(desde=None, hasta=None):
+    """{fecha: {curso: minutos}} con los ratos cerrados o abiertos (los 'sin cerrar' no cuentan hasta corregirlos)."""
+    out = {}
+    for r in listar_tiempo(desde, hasta):
+        if r.get("minutos") is None:
+            continue
+        dia = out.setdefault(r["fecha"], {})
+        k = r.get("curso") or "general"
+        dia[k] = round(dia.get(k, 0) + r["minutos"], 1)
+    return out
+
+
+def tiempo_habil():
+    h = kv_get("tiempo_habil") or {}
+    sem = {str(i): (h.get("semana") or {}).get(str(i), []) for i in range(7)}
+    return {"semana": sem, "excepciones": sorted(h.get("excepciones") or [], key=lambda e: e["fecha"])}
+
+
+def _hhmm(s):
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d|24:00", str(s or "")):
+        raise ValueError(f"'{s}' no es una hora válida (HH:MM).")
+    h, m = map(int, s.split(":"))
+    return h * 60 + m
+
+
+def guardar_tiempo_habil(semana=None, excepciones=None):
+    """semana: {"0".."6" (0 = lunes): [["19:00", "21:00"], ...]}. excepciones: [{"fecha", "minutos" (0 = libre), "nota"?}]."""
+    actual = tiempo_habil()
+    if semana is not None:
+        if not isinstance(semana, dict):
+            raise ValueError("'semana' debe ser {\"0\": [[\"19:00\", \"21:00\"]], ...} con 0 = lunes.")
+        limpia = {}
+        for i in range(7):
+            franjas = semana.get(str(i), semana.get(i, [])) or []
+            out = []
+            for f in franjas:
+                if not (isinstance(f, (list, tuple)) and len(f) == 2):
+                    raise ValueError("Cada franja es [\"HH:MM\", \"HH:MM\"].")
+                a, b = _hhmm(f[0]), _hhmm(f[1])
+                if b <= a:
+                    raise ValueError(f"La franja {f[0]}–{f[1]} ({DIAS_SEMANA[i]}) termina antes de empezar.")
+                out.append([f[0], f[1]])
+            out.sort(key=lambda f: f[0])
+            for x, y in zip(out, out[1:]):
+                if _hhmm(y[0]) < _hhmm(x[1]):
+                    raise ValueError(f"Las franjas del {DIAS_SEMANA[i]} se enciman.")
+            limpia[str(i)] = out
+        actual["semana"] = limpia
+    if excepciones is not None:
+        ex, vistas = [], set()
+        for e in excepciones:
+            f = _fecha(e.get("fecha"), None)
+            if not f:
+                raise ValueError("Cada excepción necesita 'fecha'.")
+            if f.isoformat() in vistas:
+                raise ValueError(f"La fecha {f} está repetida en las excepciones.")
+            vistas.add(f.isoformat())
+            mins = int(e.get("minutos") or 0)
+            if not 0 <= mins <= 1440:
+                raise ValueError("'minutos' de una excepción va de 0 (día libre) a 1440.")
+            ex.append({"fecha": f.isoformat(), "minutos": mins, "nota": str(e.get("nota") or "")[:200]})
+        actual["excepciones"] = sorted(ex, key=lambda e: e["fecha"])
+    kv_set("tiempo_habil", actual)
+    return actual
+
+
+def minutos_habiles(fecha, habil=None):
+    habil = habil or tiempo_habil()
+    for e in habil["excepciones"]:
+        if e["fecha"] == fecha.isoformat():
+            return e["minutos"]
+    return sum(_hhmm(b) - _hhmm(a) for a, b in habil["semana"][str(fecha.weekday())])
+
+
+# ---------- plan de hoy (el mismo que la app muestra en Hoy; lo usa la imagen de Telegram) ----------
+def plan_de_hoy(cid):
+    d = leer_datos(cid) or {}
+    ms = d.get("misiones", [])
+    sig = next((m for m in ms if m.get("id") == d.get("siguiente")), None)
+    tj = stats_tarjetas(cid)
+    pasos = []
+    if tj["total"]:
+        pasos.append({"hecho": not tj["para_hoy"], "titulo": f"Repasa tus tarjetas ({tj['para_hoy']})" if tj["para_hoy"] else "Tarjetas al día",
+                      "detalle": "Primero recordar: unos minutos." if tj["para_hoy"] else f"Repasaste {tj['repasadas_hoy']} hoy."})
+    lec = leer_leccion(cid, sig["id"]) if sig else None
+    if lec:
+        pasos.append({"hecho": bool(lec["completada"]), "titulo": f"Lee la lección {sig['id']}",
+                      "detalle": f"{sig.get('titulo', '')} · {lec['n_pasos']} pasos"})
+    if sig:
+        pasos.append({"hecho": False, "titulo": f"Practica {sig['id']} con el tutor", "detalle": f"/tutor {cid}"})
+    pend = [a for a, m in (d.get("hojas") or {}).items() if m.get("estado") != "hecha"]
+    if pend:
+        pasos.append({"hecho": False, "titulo": "Resuelve la hoja en papel", "detalle": f"{pend[0]} · sin computadora"
+                      + (f" (+{len(pend) - 1} más)" if len(pend) > 1 else "")})
+    return {"curso": cid, "siguiente": sig, "pasos": pasos, "tarjetas": tj}
+
+
 # ---------- exportar / importar ----------
 def exportar():
     return {
@@ -773,4 +1082,6 @@ def exportar():
         "repasos": [dict(r) for r in _q("SELECT * FROM repasos")],
         "lecciones": [dict(r) for r in _q("SELECT * FROM lecciones")],
         "mejoras": [dict(r) for r in _q("SELECT * FROM mejoras")],
+        "tiempo": [dict(r) for r in _q("SELECT * FROM tiempo")],
+        "tiempo_habil": tiempo_habil(),
     }

@@ -34,7 +34,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import store
+from . import store, tiempo
 
 STATIC = Path(__file__).resolve().parent / "static"
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "")
@@ -147,7 +147,12 @@ async def api_estado(req: Request):
         return JSONResponse({"curso": None, "datos": None, "hojas": [], "pantalla": store.pantalla()})
     return JSONResponse({"curso": cid, "datos": store.leer_datos(cid), "hojas": store.listar_hojas(cid),
                          "pantalla": store.pantalla(), "tarjetas": store.stats_tarjetas(cid),
-                         "lecciones": store.listar_lecciones(cid)})
+                         "lecciones": store.listar_lecciones(cid), "tiempo_hoy": _minutos_hoy()})
+
+
+def _minutos_hoy():
+    hoy = store.hoy_local()
+    return round(sum(store.minutos_por_dia(hoy, hoy).get(hoy.isoformat(), {}).values()))
 
 
 @_privado
@@ -222,6 +227,69 @@ async def api_mejora(req: Request):
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
+def _err(fn):
+    async def wrap(req: Request):
+        try:
+            return await fn(req)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+    return wrap
+
+
+@_privado
+@_err
+async def api_tiempo(req: Request):
+    """GET: ratos y minutos por día entre desde y hasta (fechas locales). POST: agrega un rato a mano."""
+    if req.method == "POST":
+        b = await req.json()
+        return JSONResponse(store.registrar_tiempo(b.get("curso") or None, b.get("tipo", "otro"), b.get("inicio"), b.get("fin"),
+                                                   b.get("minutos"), b.get("mision"), b.get("nota"), "manual"))
+    q = req.query_params
+    return JSONResponse({"ratos": store.listar_tiempo(q.get("desde"), q.get("hasta")),
+                         "dias": store.minutos_por_dia(q.get("desde"), q.get("hasta")),
+                         "habil": store.tiempo_habil()})
+
+
+@_privado
+@_err
+async def api_tiempo_uno(req: Request):
+    tid = int(req.path_params["tid"])
+    if req.method == "DELETE":
+        store.borrar_tiempo(tid)
+        return JSONResponse({"ok": True})
+    b = await req.json()
+    return JSONResponse(store.editar_tiempo(tid, b.get("curso"), b.get("mision"), b.get("tipo"), b.get("inicio"),
+                                            b.get("fin"), b.get("minutos"), b.get("nota")))
+
+
+@_privado
+@_err
+async def api_tiempo_ping(req: Request):
+    b = await req.json()
+    return JSONResponse(store.ping_tiempo(b.get("tipo"), b.get("curso") or None, b.get("mision")))
+
+
+@_privado
+@_err
+async def api_tiempo_habil(req: Request):
+    if req.method == "POST":
+        b = await req.json()
+        return JSONResponse(store.guardar_tiempo_habil(b.get("semana"), b.get("excepciones")))
+    return JSONResponse(store.tiempo_habil())
+
+
+@_privado
+async def api_prediccion(req: Request):
+    return JSONResponse(tiempo.prediccion())
+
+
+@_privado
+async def api_plan_png(req: Request):
+    from . import imagen as img
+    png = await asyncio.to_thread(img.plan_de_hoy_png, req.query_params.get("curso") or None)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @_privado
 async def imagen(req: Request):
     p = store.ruta_imagen(req.path_params["curso"], req.path_params["archivo"])
@@ -245,7 +313,8 @@ mcp = FastMCP(
     instructions=("Mi Tutor: la app de estudio de Leo. Usa estas herramientas siguiendo la skill 'tutor' del repo "
                   "AI Engineer Courses: leer el curso, sus mejoras abiertas y la lección de la misión al empezar; enseñar "
                   "desde la lección (explicar primero, practicar después); mostrar cosas en vivo; y al cerrar guardar datos, "
-                  "hoja y tarjetas y registrar las mejoras que notaste. Las lecciones se escriben con la skill 'ingestar'."),
+                  "hoja y tarjetas y registrar las mejoras que notaste. Registra el tiempo de cada misión: iniciar_sesion al empezar "
+                  "y terminar_sesion al cerrar (vista Tiempo). Las lecciones se escriben con la skill 'ingestar'."),
     stateless_http=True,
     json_response=True,
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
@@ -476,9 +545,76 @@ def actualizar_mejora(id: int, estado: str | None = None, nota: str | None = Non
 
 
 @mcp.tool()
+def iniciar_sesion(curso: str, mision: str | None = None, tipo: str = "tutor", nota: str | None = None) -> dict:
+    """Marca el INICIO de un rato de estudio (vista Tiempo). Llámalo al empezar cada misión con Leo, antes del
+    calentamiento: iniciar_sesion(curso, mision="2.C"). Devuelve el 'id' que necesitas para terminar_sesion.
+    tipo: 'tutor' (misión con el tutor, por defecto), 'leccion', 'tarjetas', 'hoja' u 'otro'.
+    Si ya hay uno abierto igual (mismo curso, misión y tipo), devuelve ese en vez de duplicarlo.
+    Las lecciones y tarjetas de la app se registran solas; no las abras tú."""
+    if not store.curso_existe(curso):
+        raise ValueError(f"No hay un curso '{curso}' en el árbol.")
+    return store.iniciar_tiempo(curso, mision, tipo, nota, "tutor")
+
+
+@mcp.tool()
+def terminar_sesion(id: int, nota: str | None = None, fin: str | None = None) -> dict:
+    """Marca el FIN de un rato que abriste con iniciar_sesion (al cerrar la misión, después de guardar datos y tarjetas).
+    fin: opcional, 'YYYY-MM-DD HH:MM' en hora local de Leo (por defecto, ahora). Si Leo se fue a mitad de la sesión y
+    volvió mucho después, pon el fin real o divide en dos con registrar_sesion. Un rato abierto más de 4 h queda
+    'sin cerrar' y no cuenta hasta corregirlo."""
+    return store.terminar_tiempo(id, nota, fin)
+
+
+@mcp.tool()
+def registrar_sesion(curso: str, tipo: str, inicio: str, fin: str | None = None, minutos: float | None = None,
+                     mision: str | None = None, nota: str | None = None) -> dict:
+    """Registra un rato de estudio ya pasado, con inicio y fin o con inicio y minutos. Úsalo para lo que no se mide solo:
+    la hoja en papel ("me tomó 20 min"), una sesión que se te olvidó abrir o algo que Leo estudió fuera de la app.
+    inicio/fin: 'YYYY-MM-DD HH:MM' en hora local de Leo (America/Mexico_City) o ISO 8601 con zona.
+    tipo: 'tutor', 'leccion', 'tarjetas', 'hoja' u 'otro'. mision: el id de la misión, si aplica."""
+    if not store.curso_existe(curso):
+        raise ValueError(f"No hay un curso '{curso}' en el árbol.")
+    return store.registrar_tiempo(curso, tipo, inicio, fin, minutos, mision, nota, "tutor")
+
+
+@mcp.tool()
+def editar_sesion(id: int, curso: str | None = None, mision: str | None = None, tipo: str | None = None,
+                  inicio: str | None = None, fin: str | None = None, minutos: float | None = None,
+                  nota: str | None = None, borrar: bool = False) -> dict:
+    """Corrige o borra un rato de estudio (los ids salen de ver_tiempo). Solo cambia los campos que pases.
+    minutos: recalcula el fin desde el inicio. borrar=true lo elimina."""
+    if borrar:
+        store.borrar_tiempo(id)
+        return {"borrado": id}
+    return store.editar_tiempo(id, curso, mision, tipo, inicio, fin, minutos, nota)
+
+
+@mcp.tool()
+def ver_tiempo(curso: str | None = None, desde: str | None = None, hasta: str | None = None) -> dict:
+    """Cuánto estudió Leo y cuándo termina. desde/hasta: 'YYYY-MM-DD' (por defecto, los últimos 30 días).
+    Devuelve: los ratos (con id, tipo, misión, minutos y estado abierta/cerrada/sin_cerrar), minutos por tipo y por
+    curso, esta semana contra su tiempo hábil, el tiempo hábil configurado y la predicción de fin por curso y total
+    (ritmo real con rango del 80 % y la fecha según su tiempo hábil). Úsalo al empezar para ver si quedó algo
+    'sin cerrar' y al cerrar para decirle a Leo cuánto le tomó la misión."""
+    r = tiempo.resumen_tiempo(desde, hasta, curso)
+    p = tiempo.prediccion()
+    if curso:
+        p["cursos"] = [c for c in p["cursos"] if c["id"] == curso]
+    return {**r, "habil": store.tiempo_habil(), "prediccion": p}
+
+
+@mcp.tool()
+def guardar_tiempo_habil(semana: dict | None = None, excepciones: list[dict] | None = None) -> dict:
+    """Define el tiempo hábil de estudio de Leo (normalmente lo edita él en la app → Tiempo).
+    semana: {"0": [["19:00", "21:00"]], ..., "6": []} con 0 = lunes; varias franjas por día.
+    excepciones: lista COMPLETA [{"fecha": "YYYY-MM-DD", "minutos": 0 (libre) o los minutos de ese día, "nota"?}]."""
+    return store.guardar_tiempo_habil(semana, excepciones)
+
+
+@mcp.tool()
 def dar_link(vista: str = "hoy") -> str:
     """Link de acceso a la app (válido 36 h) para dárselo a Leo. vista: hoy, lecciones, tarjetas, pantalla, hojas, repaso,
-    progreso, proyecto, mejoras, estudios."""
+    progreso, proyecto, mejoras, estudios, tiempo."""
     return link_de_acceso(vista)
 
 
@@ -519,6 +655,35 @@ async def tg_send(chat, text, html=True):
         await asyncio.to_thread(_tg_call, "sendMessage", data)
     except Exception as e:
         print("telegram sendMessage:", e)
+
+
+def _tg_foto(chat, png, caption):
+    """sendPhoto con multipart/form-data (Telegram no acepta SVG: la imagen va en PNG)."""
+    limite = "----mitutor" + os.urandom(8).hex()
+    partes = []
+    for k, v in (("chat_id", str(chat)), ("caption", caption[:1024]), ("parse_mode", "HTML")):
+        partes.append(f'--{limite}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
+    partes.append(f'--{limite}\r\nContent-Disposition: form-data; name="photo"; filename="plan-de-hoy.png"\r\n'
+                  f"Content-Type: image/png\r\n\r\n".encode() + png + b"\r\n")
+    partes.append(f"--{limite}--\r\n".encode())
+    req = urllib.request.Request(f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto", data=b"".join(partes),
+                                 headers={"Content-Type": f"multipart/form-data; boundary={limite}"})
+    with urllib.request.urlopen(req, timeout=70) as r:
+        return json.loads(r.read())
+
+
+async def tg_plan(chat, saludo=True):
+    """El plan de hoy como imagen (plan, racha, tiempo y predicción) con el resumen de texto como pie. Si la imagen
+    falla por algo, manda solo el texto."""
+    texto, total = resumen_del_dia(saludo)
+    try:
+        from . import imagen as img
+        png = await asyncio.to_thread(img.plan_de_hoy_png)
+        await asyncio.to_thread(_tg_foto, chat, png, texto)
+    except Exception as e:
+        print("telegram sendPhoto:", e)
+        await tg_send(chat, texto)
+    return total
 
 
 def _esc(s):
@@ -571,14 +736,15 @@ async def telegram_loop():
                 if chat != TG_CHAT:
                     continue  # lista blanca: solo Leo
                 if text in ("/start", "/hoy"):
-                    msg_txt, _ = resumen_del_dia(saludo=False)
-                    await tg_send(chat, msg_txt)
+                    await tg_plan(chat, saludo=False)
                 elif text == "/tarjetas":
                     await tg_send(chat, f'<a href="{link_de_acceso("tarjetas")}">Repasar tarjetas</a>')
                 elif text == "/link":
                     await tg_send(chat, f'<a href="{link_de_acceso("hoy")}">Abrir Mi Tutor</a> (válido 36 h)')
+                elif text == "/tiempo":
+                    await tg_send(chat, f'<a href="{link_de_acceso("tiempo")}">Tu calendario y la predicción</a>')
                 else:
-                    await tg_send(chat, "Comandos: /hoy (resumen), /tarjetas (repasar), /link (abrir la app).")
+                    await tg_send(chat, "Comandos: /hoy (plan de hoy con tu gráfica), /tarjetas (repasar), /tiempo (calendario), /link (abrir la app).")
         except Exception as e:
             print("telegram getUpdates:", e)
             await asyncio.sleep(10)
@@ -596,8 +762,7 @@ async def avisos_loop():
             hoy = store.hoy_local().isoformat()
             if _ya_paso(AVISO_HORA) and store.kv_get("aviso_manana") != hoy:
                 store.kv_set("aviso_manana", hoy)
-                texto, _ = resumen_del_dia()
-                await tg_send(TG_CHAT, texto)
+                await tg_plan(TG_CHAT)
             if _ya_paso(RECORDATORIO_HORA) and store.kv_get("aviso_tarde") != hoy:
                 store.kv_set("aviso_tarde", hoy)
                 texto, total = resumen_del_dia(saludo=False)
@@ -647,6 +812,12 @@ routes = [
     Route("/api/lecciones/{curso}/{mision}/completar", api_completar, methods=["POST"]),
     Route("/api/mejoras", api_mejoras, methods=["GET", "POST"]),
     Route("/api/mejoras/{mid:int}", api_mejora, methods=["POST"]),
+    Route("/api/tiempo", api_tiempo, methods=["GET", "POST"]),
+    Route("/api/tiempo/ping", api_tiempo_ping, methods=["POST"]),
+    Route("/api/tiempo/habil", api_tiempo_habil, methods=["GET", "POST"]),
+    Route("/api/tiempo/prediccion", api_prediccion),
+    Route("/api/tiempo/plan.png", api_plan_png),
+    Route("/api/tiempo/{tid:int}", api_tiempo_uno, methods=["POST", "DELETE"]),
     Route("/imagenes/{curso}/{archivo}", imagen),
     Route("/hojas/{curso}/{archivo}", hoja),
     Mount("/static", StaticFiles(directory=STATIC)),

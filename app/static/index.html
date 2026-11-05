@@ -443,6 +443,78 @@ ol.plan .pb{display:flex;gap:6px;flex:none}
 .row select{font:inherit;font-size:14px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .row .desc{white-space:pre-wrap}
 
+/* ---------- Tiempo: calendario, tiempo hábil y predicción ---------- */
+.tbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+.tbar .scope{margin:0}
+.tbar .sp{flex:1}
+.tbar .mes{font:800 19px var(--f-head);min-width:170px;text-align:center}
+.tresumen{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.cal .dn{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:center;padding:2px 0}
+.dia{background:var(--panel);border:1.5px solid var(--line);border-radius:10px;min-height:92px;padding:7px 8px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:4px;font:inherit;color:inherit}
+.dia:hover{border-color:var(--acc)}
+.dia.fuera{opacity:.45}
+.dia.hoy{border-color:var(--ink)}
+.dia.sel{border-color:var(--acc);background:var(--acc-soft)}
+.dia .n{font:700 13px var(--f-mono);color:var(--muted);display:flex;justify-content:space-between;gap:4px}
+.dia .n small{font-weight:600;color:var(--faint)}
+.dia .m{font:800 17px var(--f-head);line-height:1.1;margin-top:auto}
+.dia .m.cero{color:var(--faint);font-weight:600;font-size:14px}
+.pila-c{display:flex;height:7px;border-radius:4px;overflow:hidden;background:var(--panel2)}
+.pila-c i{display:block;height:100%}
+.leyenda{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--muted);margin:10px 0 0}
+.leyenda span{display:inline-flex;align-items:center;gap:6px}
+.leyenda i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.semgrid{display:grid;grid-template-columns:44px repeat(7,minmax(0,1fr));gap:0 6px}
+.semgrid .dh{font:700 13px var(--f-mono);color:var(--muted);text-align:center;padding:4px 0 8px;cursor:pointer}
+.semgrid .dh b{display:block;color:var(--ink);font:800 16px var(--f-head)}
+.semgrid .dh.hoy b{color:var(--acc-ink)}
+.horas{position:relative}
+.horas span{position:absolute;right:6px;font:12px var(--f-mono);color:var(--faint);transform:translateY(-50%)}
+.colsem{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.colsem .hl{position:absolute;left:0;right:0;border-top:1px solid var(--line)}
+.colsem .hab{position:absolute;left:0;right:0;background:var(--acc-soft);opacity:.75}
+.colsem .rato{position:absolute;left:4px;right:4px;border-radius:6px;padding:2px 5px;font:700 11.5px/1.25 var(--f-body);color:#fff;overflow:hidden;cursor:pointer;min-height:6px}
+.colsem .rato small{display:block;font-weight:600;opacity:.9}
+.detalle{margin-top:16px;padding:16px 18px}
+.detalle h3{margin:0 0 10px;font:800 19px var(--f-head)}
+.rform{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;align-items:end;margin-top:10px;padding:12px;border-radius:10px;background:var(--panel2)}
+.rform label{display:flex;flex-direction:column;gap:3px;font-size:13px;color:var(--muted)}
+.rform input,.rform select,.hab-dia input,.exc input{font:inherit;font-size:14.5px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-width:0}
+.rform .acts{display:flex;gap:8px;grid-column:1/-1;justify-content:flex-end}
+.chip.tutor{background:#E3ECFC;color:#1F4FA8}.chip.leccion{background:var(--acc-soft);color:var(--acc-ink)}.chip.tarjetas{background:var(--warn-soft);color:var(--warn)}
+.chip.hoja{background:#F6E6F6;color:#7E1F7C}.chip.otro{background:var(--panel2);color:var(--muted)}
+:root[data-theme="dark"] .chip.tutor{background:#17284A;color:#9DBBF5}:root[data-theme="dark"] .chip.hoja{background:#33193A;color:#E2A8E0}
+.habil{padding:8px 18px 16px}
+.hab-dia{display:grid;grid-template-columns:110px 1fr 80px;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.hab-dia:first-child{border-top:0}
+.hab-dia b{font-weight:700}
+.hab-dia .fr{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.franja{display:inline-flex;gap:4px;align-items:center;background:var(--panel2);padding:4px 6px;border-radius:8px}
+.franja input{width:122px;padding:3px 6px}
+.franja button,.exc button.x{border:0;background:none;color:var(--muted);cursor:pointer;font-size:17px;line-height:1;padding:2px 5px;border-radius:6px}
+.franja button:hover,.exc button.x:hover{background:var(--bad-soft);color:var(--bad)}
+.hab-dia .tot{font:600 14px var(--f-mono);color:var(--muted);text-align:right}
+.exc{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
+.exc:first-child{border-top:0}
+.pred{padding:18px 20px;margin-bottom:14px}
+.pred .ph{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.pred .ph .grow{flex:1;min-width:220px}
+.pred .ph b.t{font:800 20px var(--f-head);display:block}
+.pred .ph .d{color:var(--muted);font-size:14.5px}
+.pred .fecha{text-align:right}
+.pred .fecha b{font:800 30px/1.1 var(--f-head);color:var(--acc-ink);display:block}
+.pred .fecha span{color:var(--muted);font-size:14px}
+.pred .nums{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 6px}
+.pred .nums .tstat{padding:9px 13px;min-width:120px}
+.pred .nums .tstat .v{font-size:19px}
+.pred svg{width:100%;height:auto;display:block;margin-top:6px}
+.pred svg text{font-family:var(--f-body);font-size:12px;fill:var(--muted)}
+.pred .aviso{color:var(--warn);font-size:14.5px;margin:8px 0 0}
+.metodo{font-size:14px;color:var(--muted);max-width:90ch;margin-top:6px}
+@media (max-width:900px){.dia{min-height:64px;padding:5px}.dia .m{font-size:14px}.semgrid{grid-template-columns:30px repeat(7,minmax(0,1fr));gap:0 2px}.colsem .rato small{display:none}
+  .hab-dia{grid-template-columns:1fr}.hab-dia .tot{text-align:left}.pred .fecha{text-align:left}}
+
 /* ---------- Ayuda: "¿por qué existe esta vista?" ---------- */
 .titlerow{display:flex;align-items:center;gap:10px;margin:0 0 6px}
 .titlerow h1{margin:0}
@@ -492,6 +564,7 @@ ol.plan .pb{display:flex;gap:6px;flex:none}
   <button class="nav" data-v="hojas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7"/></svg>Hojas para imprimir</button>
   <button class="nav" data-v="repaso"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Repaso y exámenes</button>
   <button class="nav" data-v="progreso"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M7.3 11l9.4-5M7.3 13l9.4 5"/></svg>Progreso</button>
+  <button class="nav" data-v="tiempo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M12 14v3l2 1"/></svg>Tiempo</button>
   <button class="nav" data-v="proyecto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Proyecto</button>
   <button class="nav" data-v="mejoras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Mejoras<span class="badge" id="mbadge"></span></button>
   <div class="side-foot">
@@ -584,6 +657,14 @@ ol.plan .pb{display:flex;gap:6px;flex:none}
     <div class="mods" id="mods"></div>
     <h2>Sesiones</h2>
     <div class="card list" id="sesiones"></div>
+  </section>
+
+  <!-- TIEMPO -->
+  <section class="view" id="v-tiempo">
+    <h1>Tiempo</h1>
+    <p class="sub">Cuánto estudias, cuándo, y cuándo terminas cada curso a tu ritmo real. Las lecciones y las tarjetas se registran solas; las misiones, el tutor; las hojas en papel, tú.</p>
+    <div class="tbar"><div class="scope" id="ttabs"></div><span class="sp"></span><div id="tnav" class="tbar" style="margin:0"></div></div>
+    <div id="tcuerpo"></div>
   </section>
 
   <!-- PROYECTO -->
@@ -679,6 +760,12 @@ const HELP = {
   proyecto: `<ul><li>Cada concepto lo aplicas a <b>algo tuyo</b> cuando lo necesitas: aprender a fondo y "cuando se necesita", no todo por si acaso.</li>
     <li>Los <b>hilos</b> son trabajos que crecen a lo largo del curso. En LangGraph, por ejemplo, <i>nanograph</i>: un mini-LangGraph por dentro, para quitarle la magia a la librería real.</li></ul>
     <div class="src">Consejos de Karpathy y su estilo de enseñar (micrograd, nanoGPT).</div>`,
+  tiempo: `<ul><li><b>Calendario:</b> cuánto estudiaste cada día y en qué curso. Las lecciones y las tarjetas se miden solas mientras estás <b>activo</b> (si te vas más de 3 minutos, ese rato se cierra). Las misiones las abre y cierra el tutor; las hojas en papel las agregas tú (o se lo dices al tutor). Todo se puede corregir a mano.</li>
+    <li><b>Tiempo hábil:</b> tus días y horas de estudio. Decidir de antemano <b>cuándo</b> vas a estudiar hace mucho más probable que lo hagas.</li>
+    <li><b>Predicción:</b> la fecha principal sale de tu <b>ritmo real</b> (misiones por día en las últimas 4 semanas), no de lo que planeas: casi todos subestimamos cuánto tardamos, aunque sepamos que antes nos tardamos. Usar tu propio historial corrige ese sesgo.</li>
+    <li>El <b>rango</b> (optimista–pesimista) es ancho cuando hay pocas misiones medidas y se angosta solo. La línea <b>según tu tiempo hábil</b> es tu plan: si va muy por delante de tu ritmo real, el plan es más optimista que lo que pasa.</li>
+    <li>Terminar rápido no es la meta: es entender y recordar. Las tarjetas y las hojas siguen espaciadas aunque hagas muchas misiones en un día.</li></ul>
+    <div class="src">Buehler, Griffin y Ross (1994): falacia de la planificación. Kahneman y Lovallo (1993); Flyvbjerg (2006): predecir con el historial propio. Gollwitzer y Sheeran (2006): intenciones de implementación. Cepeda et al. (2006): repaso espaciado. El rango del 80 % (ritmo × 1 ± 1.28/√n) es un modelo simple, decisión nuestra.</div>`,
 };
 document.querySelectorAll(".view").forEach(sec => {
   const key = sec.id.slice(2), html = HELP[key];
@@ -765,6 +852,7 @@ async function poll(){
       if (!cursoActual()) curso = (cursos.find(c => c.estado === "actual") || cursos[0] || {}).id;
       renderSelector(); renderArbol(); pintarRacha(); if (state && state.datos) pintarScoreHoy();
       if (view === "tarjetas" && tActual) pintarTarjeta();
+      if (view === "tiempo" && !($("#tform") && $("#tform").children.length)) pintarTiempo();  // colores y nombres de cursos salen del árbol
     }
     if (!curso){ $("#dot").classList.add("ok"); $("#live").textContent = "Conectado"; return; }
     const raw = await (await fetch("/api/estado?curso=" + encodeURIComponent(curso), {cache:"no-store"})).text();
@@ -873,7 +961,7 @@ function renderHoy(d, hojas){
 
   const done = ms.filter(m => m.estado === "hecha").length, nm = (d.modulos || []).length;
   const ex = (d.examenes || []).slice(-1)[0];
-  $("#t-sum").innerHTML = `<span><b>${done}</b> de ${ms.length} misiones</span>${nm ? `<span>Módulo <b>${next ? esc(next.modulo) : nm}</b> de ${nm}</span>` : ""}${ex ? `<span>Último examen: <b>${esc(ex.puntaje)}%</b></span>` : ""}`;
+  $("#t-sum").innerHTML = `<span><b>${done}</b> de ${ms.length} misiones</span>${nm ? `<span>Módulo <b>${next ? esc(next.modulo) : nm}</b> de ${nm}</span>` : ""}${ex ? `<span>Último examen: <b>${esc(ex.puntaje)}%</b></span>` : ""}<span>Hoy llevas <b>${dur(state.tiempo_hoy || 0)}</b> <button class="linkbtn" onclick="show('tiempo')">ver tiempo</button></span>`;
 }
 
 /* ---------- Score (Hoy y Mis estudios) ---------- */
@@ -1351,7 +1439,7 @@ async function calificar(n){
     const r = await guardado;
     if (r.status === 401){ location.href = "/login"; return; }
     if (!r.ok) throw new Error(r.status);
-    tHechas++;
+    tHechas++; pingTiempo();
     lastRaw = ""; poll();
     await cargarCola();
   }catch(e){
@@ -1441,7 +1529,7 @@ async function abrirLeccion(id){
   }
   $("#lec-camino").hidden = true; $("#lec-visor").hidden = false;
   if (view !== "lecciones") show("lecciones");
-  pintarPaso();
+  pintarPaso(); ultimaActividad = Date.now(); pingTiempo();
 }
 function cerrarLeccion(){
   lec = null; lecFin = null;
@@ -1569,6 +1657,275 @@ $("#menviar").onclick = async () => {
   else toast("No se pudo registrar.");
 };
 
+/* ---------- Tiempo: calendario (mes/semana), tiempo hábil y predicción ---------- */
+const TIPOS_T = {leccion: "Lección", tutor: "Misión con el tutor", tarjetas: "Tarjetas", hoja: "Hoja en papel", otro: "Otro"};
+const COLORES_C = ["#0B7D67", "#2F6BE0", "#B07700", "#A626A4", "#C2410C", "#59636E"];
+const DIAS_C = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"], DIAS_L = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+const MESES_C = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const MESES_L = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+let tTab = store.get("ttab") || "calendario", tModo = store.get("tmodo") || "mes", tRef = new Date(), tSel = null, tDatos = null, tPred = null, tHabil = null, tEdit = null;
+const isoD = d => d.toLocaleDateString("sv-SE");
+const deISO = s => { const [y, m, d] = s.slice(0, 10).split("-").map(Number); return new Date(y, m - 1, d); };
+const sumaD = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const lunesDe = d => sumaD(d, -((d.getDay() + 6) % 7));
+const dur = m => { m = Math.round(m || 0); if (m < 60) return `${m} min`; const h = Math.floor(m / 60), r = m % 60; return r ? `${h} h ${String(r).padStart(2, "0")}` : `${h} h`; };
+const fCorta = s => { if (!s) return "—"; const d = deISO(s); return `${d.getDate()} ${MESES_C[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? " " + d.getFullYear() : ""}`; };
+const colorCurso = id => { const i = cursos.findIndex(c => c.id === id); return i < 0 ? COLORES_C[COLORES_C.length - 1] : COLORES_C[i % (COLORES_C.length - 1)]; };
+const nombreCurso = id => id ? ((cursos.find(c => c.id === id) || {}).nombre || id) : "General";
+const hm = s => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+function habilDe(d){
+  if (!tHabil) return 0;
+  const e = (tHabil.excepciones || []).find(x => x.fecha === isoD(d));
+  if (e) return e.minutos;
+  return (tHabil.semana[String((d.getDay() + 6) % 7)] || []).reduce((a, [x, y]) => a + hm(y) - hm(x), 0);
+}
+async function jget(url){ const r = await fetch(url, {cache: "no-store"}); if (r.status === 401){ location.href = "/login"; throw new Error("401"); } const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; }
+async function jsend(url, metodo, body){
+  const r = await fetch(url, {method: metodo, headers: {"Content-Type": "application/json"}, body: body ? JSON.stringify(body) : undefined});
+  if (r.status === 401){ location.href = "/login"; throw new Error("401"); }
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "No se pudo guardar."); return j;
+}
+function rangoVista(){
+  if (tModo === "semana"){ const a = lunesDe(tRef); return [a, sumaD(a, 6)]; }
+  const p = new Date(tRef.getFullYear(), tRef.getMonth(), 1), a = lunesDe(p);
+  const u = new Date(tRef.getFullYear(), tRef.getMonth() + 1, 0);
+  return [a, sumaD(lunesDe(u), 6)];
+}
+async function cargarTiempo(){
+  try{
+    if (tTab === "calendario"){ const [a, b] = rangoVista(); tDatos = await jget(`/api/tiempo?desde=${isoD(a)}&hasta=${isoD(b)}`); tHabil = tDatos.habil; }
+    else if (tTab === "habil"){ if (!tEdit){ tHabil = await jget("/api/tiempo/habil"); tEdit = JSON.parse(JSON.stringify(tHabil)); } }
+    else { tPred = await jget("/api/tiempo/prediccion"); if (!tHabil) tHabil = await jget("/api/tiempo/habil"); }
+  }catch(e){ if (e.message !== "401") toast("No se pudo cargar el tiempo: " + e.message); return; }
+  pintarTiempo();
+}
+function pintarTiempo(){
+  $("#ttabs").innerHTML = [["calendario", "Calendario"], ["habil", "Tiempo hábil"], ["prediccion", "Predicción"]]
+    .map(([k, l]) => `<button data-t="${k}" class="${tTab === k ? "on" : ""}">${l}</button>`).join("");
+  $("#ttabs").querySelectorAll("button").forEach(b => b.onclick = () => { tTab = b.dataset.t; store.set("ttab", tTab); tEdit = null; cargarTiempo(); pintarTiempo(); });
+  if (tTab === "calendario") pintarCalendario(); else if (tTab === "habil") pintarHabil(); else pintarPrediccion();
+}
+
+/* --- Calendario --- */
+function pintarCalendario(){
+  const [a, b] = rangoVista();
+  const titulo = tModo === "mes" ? `${MESES_L[tRef.getMonth()]} ${tRef.getFullYear()}` : `${a.getDate()} ${MESES_C[a.getMonth()]} – ${b.getDate()} ${MESES_C[b.getMonth()]}`;
+  $("#tnav").innerHTML = `<div class="scope" style="margin:0"><button data-m="mes" class="${tModo === "mes" ? "on" : ""}">Mes</button><button data-m="semana" class="${tModo === "semana" ? "on" : ""}">Semana</button></div>
+    <button class="btn" id="tprev" aria-label="Anterior">←</button><span class="mes">${titulo}</span><button class="btn" id="tnext" aria-label="Siguiente">→</button><button class="btn" id="thoy">Hoy</button>`;
+  $("#tnav").querySelectorAll("[data-m]").forEach(x => x.onclick = () => { tModo = x.dataset.m; store.set("tmodo", tModo); cargarTiempo(); });
+  const mover = n => { tRef = tModo === "mes" ? new Date(tRef.getFullYear(), tRef.getMonth() + n, 1) : sumaD(tRef, 7 * n); cargarTiempo(); };
+  $("#tprev").onclick = () => mover(-1); $("#tnext").onclick = () => mover(1);
+  $("#thoy").onclick = () => { tRef = new Date(); tSel = isoD(new Date()); cargarTiempo(); };
+  if (!tDatos){ $("#tcuerpo").innerHTML = `<div class="card empty">Cargando…</div>`; return; }
+  const dias = tDatos.dias || {}, hoy = isoD(new Date());
+  const total = (k) => Object.values(dias[k] || {}).reduce((x, y) => x + y, 0);
+  // resumen del periodo visible
+  let mins = 0, hab = 0, activos = 0;
+  for (let d = new Date(a); d <= b; d = sumaD(d, 1)){
+    if (tModo === "mes" && d.getMonth() !== tRef.getMonth()) continue;
+    const t = total(isoD(d)); mins += t; activos += t > 0; if (isoD(d) <= hoy) hab += habilDe(d);
+  }
+  const sinCerrar = (tDatos.ratos || []).filter(r => r.estado === "sin_cerrar");
+  let html = `<div class="tresumen">${[["Estudiado", dur(mins)], ["Días con estudio", activos], ["Hábil hasta hoy", hab ? dur(hab) : "sin definir"], ["Uso del tiempo hábil", hab ? Math.round(100 * mins / hab) + "%" : "—"]]
+    .map(([k, v]) => `<div class="card tstat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>`;
+  if (sinCerrar.length) html += `<p class="pred aviso card" style="padding:10px 14px">${sinCerrar.length === 1 ? "Hay un rato" : `Hay ${sinCerrar.length} ratos`} sin cerrar (más de 4 h abierto): no cuenta hasta que le pongas el fin. ${sinCerrar.map(r => `<button class="linkbtn" data-dia="${r.fecha}">${fCorta(r.fecha)} ${r.hora_inicio}</button>`).join(" ")}</p>`;
+  html += tModo === "mes" ? calMes(a, b, dias) : calSemana(a);
+  const enUso = [...new Set(Object.values(dias).flatMap(o => Object.keys(o)))];
+  if (enUso.length) html += `<div class="leyenda">${enUso.map(c => `<span><i style="background:${colorCurso(c)}"></i>${esc(nombreCurso(c))}</span>`).join("")}</div>`;
+  html += `<div id="tdet"></div>`;
+  $("#tcuerpo").innerHTML = html;
+  $("#tcuerpo").querySelectorAll("[data-dia]").forEach(x => x.onclick = () => { tSel = x.dataset.dia; pintarCalendario(); $("#tdet").scrollIntoView({block: "nearest"}); });
+  $("#tcuerpo").querySelectorAll("[data-rato]").forEach(x => x.onclick = e => { e.stopPropagation(); const r = tDatos.ratos.find(q => q.id == x.dataset.rato); if (r){ tSel = r.fecha; pintarCalendario(); editarRato(r); } });
+  pintarDetalle();
+}
+function calMes(a, b, dias){
+  let h = `<div class="cal">${DIAS_C.map(d => `<div class="dn">${d}</div>`).join("")}`;
+  const hoy = isoD(new Date());
+  for (let d = new Date(a); d <= b; d = sumaD(d, 1)){
+    const k = isoD(d), o = dias[k] || {}, t = Object.values(o).reduce((x, y) => x + y, 0), hb = habilDe(d);
+    const barras = t ? `<div class="pila-c">${Object.entries(o).map(([c, m]) => `<i style="width:${100 * m / Math.max(t, hb || t)}%;background:${colorCurso(c)}" title="${esc(nombreCurso(c))}: ${dur(m)}"></i>`).join("")}</div>` : (hb ? `<div class="pila-c"></div>` : "");
+    h += `<button class="dia ${d.getMonth() !== tRef.getMonth() ? "fuera" : ""} ${k === hoy ? "hoy" : ""} ${k === tSel ? "sel" : ""}" data-dia="${k}">
+      <span class="n">${d.getDate()}${hb ? `<small title="Tiempo hábil">${dur(hb)}</small>` : ""}</span>${barras}<span class="m ${t ? "" : "cero"}">${t ? dur(t) : (k <= hoy ? "—" : "")}</span></button>`;
+  }
+  return h + `</div>`;
+}
+function calSemana(a){
+  const ratos = tDatos.ratos || [], hoy = isoD(new Date());
+  let h0 = 24 * 60, h1 = 0;
+  const ext = (x, y) => { h0 = Math.min(h0, x); h1 = Math.max(h1, y); };
+  for (let i = 0; i < 7; i++) (tHabil.semana[String(i)] || []).forEach(([x, y]) => ext(hm(x), hm(y)));
+  ratos.forEach(r => { const x = hm(r.hora_inicio); ext(x, x + Math.max(15, r.minutos || 0)); });
+  if (h1 <= h0){ h0 = 8 * 60; h1 = 22 * 60; }
+  h0 = Math.max(0, Math.floor(h0 / 60) * 60 - 60); h1 = Math.min(24 * 60, Math.ceil(h1 / 60) * 60 + 60);
+  const PX = 0.9, alto = (h1 - h0) * PX, Y = m => (m - h0) * PX;
+  let h = `<div class="semgrid"><div></div>`;
+  for (let i = 0; i < 7; i++){ const d = sumaD(a, i), k = isoD(d); h += `<div class="dh ${k === hoy ? "hoy" : ""}" data-dia="${k}">${DIAS_C[i]}<b>${d.getDate()}</b></div>`; }
+  h += `<div class="horas" style="height:${alto}px">${Array.from({length: (h1 - h0) / 60 + 1}, (_, j) => `<span style="top:${j * 60 * PX}px">${String(h0 / 60 + j).padStart(2, "0")}</span>`).join("")}</div>`;
+  for (let i = 0; i < 7; i++){
+    const d = sumaD(a, i), k = isoD(d);
+    const ex = (tHabil.excepciones || []).find(e => e.fecha === k);
+    const fr = ex ? [] : (tHabil.semana[String(i)] || []);
+    h += `<div class="colsem" style="height:${alto}px" data-dia="${k}">
+      ${Array.from({length: (h1 - h0) / 60}, (_, j) => `<div class="hl" style="top:${j * 60 * PX}px"></div>`).join("")}
+      ${fr.map(([x, y]) => `<div class="hab" style="top:${Y(hm(x))}px;height:${(hm(y) - hm(x)) * PX}px" title="Tiempo hábil ${x}–${y}"></div>`).join("")}
+      ${ratos.filter(r => r.fecha === k).map(r => `<div class="rato" data-rato="${r.id}" style="top:${Y(hm(r.hora_inicio))}px;height:${Math.max(6, (r.minutos || 15) * PX)}px;background:${colorCurso(r.curso)}${r.estado !== "cerrada" ? ";opacity:.6" : ""}" title="${esc(TIPOS_T[r.tipo] || r.tipo)}${r.mision ? " " + esc(r.mision) : ""} · ${r.hora_inicio}–${r.hora_fin || "…"} · ${dur(r.minutos)}">${esc(r.mision || TIPOS_T[r.tipo] || "")}<small>${dur(r.minutos)}</small></div>`).join("")}</div>`;
+  }
+  return h + `</div><p class="chathint" style="font-size:14px">Sombreado: tu tiempo hábil. Toca un rato para corregirlo.</p>`;
+}
+function pintarDetalle(){
+  const box = $("#tdet");
+  if (!box || !tSel){ if (box) box.innerHTML = ""; return; }
+  const ratos = (tDatos.ratos || []).filter(r => r.fecha === tSel), d = deISO(tSel);
+  const t = ratos.reduce((x, r) => x + (r.minutos || 0), 0), hb = habilDe(d);
+  box.innerHTML = `<div class="card detalle"><h3>${DIAS_L[(d.getDay() + 6) % 7]} ${d.getDate()} de ${MESES_L[d.getMonth()]}</h3>
+    <div class="d" style="color:var(--muted);margin-bottom:8px">${dur(t)} estudiados${hb ? ` · ${dur(hb)} hábiles` : ""}</div>
+    <div class="list">${ratos.length ? ratos.map(r => `<div class="row" style="padding:10px 4px">
+      <span class="when" style="width:110px">${r.hora_inicio}–${r.hora_fin || (r.estado === "abierta" ? "ahora" : "¿?")}</span>
+      <span class="chip ${r.tipo}">${esc(TIPOS_T[r.tipo] || r.tipo)}</span>
+      <div class="grow"><div class="t">${esc(nombreCurso(r.curso))}${r.mision ? " · " + esc(r.mision) : ""}</div><div class="d">${r.estado === "sin_cerrar" ? `<b style="color:var(--warn)">Sin cerrar: ponle el fin</b> · ` : ""}${{app: "automático", tutor: "lo registró el tutor", manual: "a mano"}[r.origen] || ""}${r.nota ? " · " + esc(r.nota) : ""}</div></div>
+      <b style="font-family:var(--f-mono);font-size:14px">${r.minutos != null ? dur(r.minutos) : "—"}</b>
+      <button class="btn" data-ed="${r.id}">Editar</button></div>`).join("") : `<div class="empty" style="padding:10px">Nada registrado este día.</div>`}</div>
+    <div id="tform"></div>${tSel <= isoD(new Date()) ? `<button class="btn pri" id="tnuevo" style="margin-top:12px">Agregar un rato</button>` : ""}</div>`;
+  box.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => editarRato(ratos.find(r => r.id == b.dataset.ed)));
+  if ($("#tnuevo")) $("#tnuevo").onclick = () => editarRato(null);
+}
+function editarRato(r){
+  const f = $("#tform"); if (!f) return;
+  const opc = cursos.map(c => `<option value="${esc(c.id)}" ${(r ? r.curso : curso) === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("");
+  const ahora = new Date(), hh = `${String(ahora.getHours()).padStart(2, "0")}:${String(ahora.getMinutes()).padStart(2, "0")}`;
+  f.innerHTML = `<div class="rform">
+    <label>Curso<select id="rf-c">${opc}<option value="" ${r && !r.curso ? "selected" : ""}>General</option></select></label>
+    <label>Actividad<select id="rf-t">${Object.entries(TIPOS_T).map(([k, l]) => `<option value="${k}" ${(r ? r.tipo : "hoja") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <label>Misión<input id="rf-m" placeholder="p. ej. 2.C" value="${esc(r ? r.mision || "" : "")}"></label>
+    <label>Fecha<input id="rf-f" type="date" value="${r ? r.fecha : tSel}"></label>
+    <label>Inicio<input id="rf-i" type="time" value="${r ? r.hora_inicio : hh}"></label>
+    <label>Fin<input id="rf-x" type="time" value="${r && r.hora_fin ? r.hora_fin : ""}"></label>
+    <label>o minutos<input id="rf-n" type="number" min="1" max="960" placeholder="20"></label>
+    <label style="grid-column:span 2">Nota<input id="rf-o" value="${esc(r ? r.nota || "" : "")}"></label>
+    <div class="acts">${r ? `<button class="btn" id="rf-del" style="color:var(--bad)">Borrar</button>` : ""}<button class="btn" id="rf-no">Cancelar</button><button class="btn pri" id="rf-ok">Guardar</button></div></div>`;
+  $("#rf-no").onclick = () => { f.innerHTML = ""; };
+  if (r) $("#rf-del").onclick = async () => { if (!confirm("¿Borrar este rato?")) return; try{ await jsend(`/api/tiempo/${r.id}`, "DELETE"); toast("Borrado."); cargarTiempo(); }catch(e){ toast(e.message); } };
+  $("#rf-ok").onclick = async () => {
+    const fecha = $("#rf-f").value, ini = $("#rf-i").value, fin = $("#rf-x").value, n = $("#rf-n").value;
+    if (!fecha || !ini){ toast("Pon la fecha y la hora de inicio."); return; }
+    let finTxt = null;
+    if (fin){ finTxt = `${fecha} ${fin}`; if (hm(fin) <= hm(ini)) finTxt = `${isoD(sumaD(deISO(fecha), 1))} ${fin}`; }  // pasó de la medianoche
+    if (!finTxt && !n){ toast("Pon la hora de fin o los minutos."); return; }
+    const body = {curso: $("#rf-c").value, tipo: $("#rf-t").value, mision: $("#rf-m").value.trim(), inicio: `${fecha} ${ini}`, fin: finTxt, minutos: finTxt ? null : Number(n), nota: $("#rf-o").value.trim()};
+    try{ await jsend(r ? `/api/tiempo/${r.id}` : "/api/tiempo", "POST", body); toast("Guardado."); tSel = fecha; cargarTiempo(); }catch(e){ toast(e.message); }
+  };
+  $("#rf-i").focus();
+}
+
+/* --- Tiempo hábil --- */
+function pintarHabil(){
+  $("#tnav").innerHTML = "";
+  if (!tEdit){ $("#tcuerpo").innerHTML = `<div class="card empty">Cargando…</div>`; return; }
+  const sem = tEdit.semana, totDia = i => (sem[String(i)] || []).reduce((a, [x, y]) => a + Math.max(0, hm(y) - hm(x)), 0);
+  const totSem = [0, 1, 2, 3, 4, 5, 6].reduce((a, i) => a + totDia(i), 0);
+  $("#tcuerpo").innerHTML = `<p class="sub" style="margin-bottom:10px">Tus franjas de estudio de cada semana. Total: <b>${dur(totSem)}</b> por semana. Con esto se calcula la línea «según tu tiempo hábil» de la predicción.</p>
+    <div class="card habil">${DIAS_L.map((n, i) => `<div class="hab-dia"><b>${n}</b><div class="fr">${(sem[String(i)] || []).map(([x, y], j) =>
+      `<span class="franja"><input type="time" value="${x}" data-d="${i}" data-j="${j}" data-k="0" aria-label="Inicio"> – <input type="time" value="${y}" data-d="${i}" data-j="${j}" data-k="1" aria-label="Fin"><button data-q="${i}:${j}" title="Quitar">×</button></span>`).join("")}
+      <button class="btn" data-add="${i}">+ franja</button></div><span class="tot">${totDia(i) ? dur(totDia(i)) : "libre"}</span></div>`).join("")}</div>
+    <h2>Excepciones</h2><p class="sub" style="margin-bottom:10px">Días libres o con otro tiempo (viajes, exámenes, fiestas). 0 minutos = día libre.</p>
+    <div class="card habil" id="excs">${(tEdit.excepciones || []).map((e, j) => `<div class="exc"><input type="date" value="${e.fecha}" data-e="${j}" data-k="fecha">
+      <input type="number" min="0" max="1440" value="${e.minutos}" data-e="${j}" data-k="minutos" style="width:90px" aria-label="Minutos"> min
+      <input value="${esc(e.nota || "")}" data-e="${j}" data-k="nota" placeholder="nota" style="flex:1;min-width:120px"><button class="x" data-qe="${j}" title="Quitar">×</button></div>`).join("") || `<div class="empty" style="padding:10px">Sin excepciones.</div>`}</div>
+    <div style="display:flex;gap:10px;margin-top:12px"><button class="btn" id="exadd">+ excepción</button><span style="flex:1"></span><button class="btn" id="habdes">Descartar cambios</button><button class="btn pri" id="habok">Guardar</button></div>`;
+  const c = $("#tcuerpo");
+  c.querySelectorAll("input[data-d]").forEach(x => x.onchange = () => { sem[x.dataset.d][x.dataset.j][x.dataset.k] = x.value; pintarHabil(); });
+  c.querySelectorAll("[data-q]").forEach(x => x.onclick = () => { const [i, j] = x.dataset.q.split(":"); sem[i].splice(j, 1); pintarHabil(); });
+  c.querySelectorAll("[data-add]").forEach(x => x.onclick = () => { const l = sem[x.dataset.add] = sem[x.dataset.add] || []; const u = l[l.length - 1]; l.push(u ? [u[1], `${String(Math.min(23, Math.floor(hm(u[1]) / 60) + 1)).padStart(2, "0")}:${u[1].slice(3)}`] : ["19:00", "21:00"]); pintarHabil(); });
+  c.querySelectorAll("input[data-e]").forEach(x => x.onchange = () => { tEdit.excepciones[x.dataset.e][x.dataset.k] = x.dataset.k === "minutos" ? Number(x.value) : x.value; });
+  c.querySelectorAll("[data-qe]").forEach(x => x.onclick = () => { tEdit.excepciones.splice(x.dataset.qe, 1); pintarHabil(); });
+  $("#exadd").onclick = () => { (tEdit.excepciones = tEdit.excepciones || []).push({fecha: isoD(sumaD(new Date(), 1)), minutos: 0, nota: ""}); pintarHabil(); };
+  $("#habdes").onclick = () => { tEdit = null; cargarTiempo(); };
+  $("#habok").onclick = async () => {
+    try{ tHabil = await jsend("/api/tiempo/habil", "POST", {semana: tEdit.semana, excepciones: tEdit.excepciones}); tEdit = JSON.parse(JSON.stringify(tHabil)); toast("Tiempo hábil guardado. La predicción ya lo usa."); pintarHabil(); }
+    catch(e){ toast(e.message); }
+  };
+}
+
+/* --- Predicción --- */
+function graficaPred(p){
+  const W = 640, H = 250, pl = 40, pr = 14, pt = 12, pb = 30, gw = W - pl - pr, gh = H - pt - pb;
+  const hoy = deISO(isoD(new Date())), N = Math.max(1, p.total), f = p.fin;
+  const x0 = p.serie.length ? deISO(p.serie[0].fecha) : sumaD(hoy, -7);
+  const fins = [f.pesimista, f.estimado, f.habil, f.optimista].filter(Boolean).map(deISO);
+  let x1 = new Date(Math.max(sumaD(hoy, 14), ...fins)); if ((x1 - x0) / 864e5 > 400) x1 = sumaD(x0, 400);
+  const dias = Math.max(1, (x1 - x0) / 864e5);
+  const X = d => pl + gw * Math.min(1, Math.max(0, (d - x0) / 864e5 / dias)), Y = v => pt + gh - gh * v / N;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Misiones hechas contra fecha, con la proyección">`;
+  for (const v of [0, Math.round(N / 2), N]) s += `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${pl - 8}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
+  const Hh = p.hechas;
+  if (f.optimista && f.pesimista) s += `<polygon points="${X(hoy)},${Y(Hh)} ${X(deISO(f.optimista))},${Y(N)} ${X(deISO(f.pesimista))},${Y(N)}" fill="var(--acc)" opacity=".16"><title>Rango del 80 %: ${fCorta(f.optimista)} – ${fCorta(f.pesimista)}</title></polygon>`;
+  if (f.habil) s += `<line x1="${X(hoy)}" y1="${Y(Hh)}" x2="${X(deISO(f.habil))}" y2="${Y(N)}" stroke="#2F6BE0" stroke-width="2" stroke-dasharray="2 5" stroke-linecap="round"><title>Según tu tiempo hábil: ${fCorta(f.habil)}</title></line>`;
+  if (f.estimado) s += `<line x1="${X(hoy)}" y1="${Y(Hh)}" x2="${X(deISO(f.estimado))}" y2="${Y(N)}" stroke="var(--acc)" stroke-width="2" stroke-dasharray="8 6"/><circle cx="${X(deISO(f.estimado))}" cy="${Y(N)}" r="5" fill="var(--panel)" stroke="var(--acc)" stroke-width="2.5"><title>A tu ritmo: ${fCorta(f.estimado)}</title></circle>`;
+  if (p.serie.length){
+    let d = "", prevY = null;
+    p.serie.forEach((q, i) => { const x = X(deISO(q.fecha)), y = Y(q.hechas); d += i ? ` L${x},${prevY} L${x},${y}` : `M${x},${y}`; prevY = y; });
+    d += ` L${X(hoy)},${prevY}`;
+    s += `<path d="${d}" fill="none" stroke="var(--acc)" stroke-width="3.5" stroke-linejoin="round"/>`;
+    p.serie.slice(1).forEach(q => { s += `<circle cx="${X(deISO(q.fecha))}" cy="${Y(q.hechas)}" r="4" fill="var(--acc)"><title>${fCorta(q.fecha)}: ${q.hechas} misiones</title></circle>`; });
+  }
+  s += `<line x1="${X(hoy)}" x2="${X(hoy)}" y1="${pt - 2}" y2="${pt + gh}" stroke="var(--ink)" stroke-dasharray="3 4" opacity=".55"/><text x="${X(hoy)}" y="${H - 8}" text-anchor="middle" style="fill:var(--ink);font-weight:800">hoy</text>`;
+  if (X(hoy) - pl > 60) s += `<text x="${pl}" y="${H - 8}">${fCorta(isoD(x0))}</text>`;
+  s += `<text x="${W - pr}" y="${H - 8}" text-anchor="end">${fCorta(isoD(x1))}</text></svg>`;
+  return s + `<div class="leyenda"><span><i style="background:var(--acc)"></i>real</span><span><i style="background:transparent;border-top:2px dashed var(--acc);height:0;border-radius:0"></i>a tu ritmo</span><span><i style="background:var(--acc);opacity:.25"></i>rango 80 %</span><span><i style="background:transparent;border-top:2px dotted #2F6BE0;height:0;border-radius:0"></i>según tu tiempo hábil</span></div>`;
+}
+function tarjetaPred(p, titulo, sub){
+  const f = p.fin, r = p.ritmo;
+  const nums = [["Faltan", `${p.faltan} de ${p.total}`], ["Ritmo real", r ? `${r.misiones_semana} / sem` : "—"],
+    ...(p.min_por_mision ? [["Por misión", `${dur(p.min_por_mision.minutos)}${p.min_por_mision.supuesto ? "*" : ""}`]] : []),
+    ["Estudias", p.uso ? `${dur(p.uso.reales_semana)} / sem` : "—"], ["Hábil", p.uso && p.uso.habiles_semana ? `${dur(p.uso.habiles_semana)} / sem` : "sin definir"]];
+  let comp = "";
+  if (f.estimado && f.habil){
+    const dd = Math.round((deISO(f.estimado) - deISO(f.habil)) / 864e5);
+    comp = Math.abs(dd) <= 3 ? "Tu ritmo real y tu tiempo hábil dan casi la misma fecha." :
+      dd > 0 ? `Tu plan (tiempo hábil) termina ${dd} días antes que tu ritmo real: o usas menos horas de las que planeas o las misiones te toman más.` :
+      `Vas ${-dd} días por delante de lo que daría tu tiempo hábil.`;
+  }
+  return `<div class="card pred"><div class="ph"><div class="grow"><b class="t">${esc(titulo)}</b><span class="d">${sub}</span></div>
+    <div class="fecha">${f.estimado ? `<b>~ ${fCorta(f.estimado)}</b><span>entre ${fCorta(f.optimista)} y ${fCorta(f.pesimista)}</span>` : `<b style="font-size:20px;color:var(--muted)">${p.faltan ? "Falta ritmo" : "¡Terminado!"}</b><span>${p.faltan ? "Termina una misión para predecir" : ""}</span>`}
+    ${f.habil ? `<br><span style="color:#2F6BE0;font-weight:700">Según tu tiempo hábil: ${fCorta(f.habil)}</span>` : ""}</div></div>
+    <div class="nums">${nums.map(([k, v]) => `<div class="card tstat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>
+    ${graficaPred(p)}
+    ${comp ? `<p class="metodo" style="color:var(--ink)">${comp}</p>` : ""}
+    ${r && r.misiones_medidas < 8 ? `<p class="aviso">Con ${r.misiones_medidas} ${r.misiones_medidas === 1 ? "misión medida" : "misiones medidas"} el rango es ancho; se angosta solo mientras avanzas.</p>` : ""}
+    ${p.min_por_mision && p.min_por_mision.supuesto ? `<p class="metodo">* Supuesto de 75 min por misión hasta que se mida una completa (el tutor registra el tiempo de cada misión).</p>` : ""}</div>`;
+}
+function pintarPrediccion(){
+  $("#tnav").innerHTML = `<a class="btn" href="/api/tiempo/plan.png" target="_blank" rel="noopener">Ver la imagen de Telegram</a>`;
+  if (!tPred){ $("#tcuerpo").innerHTML = `<div class="card empty">Calculando…</div>`; return; }
+  const P = tPred;
+  let h = "";
+  if (!P.habil_configurado) h += `<p class="card pred aviso" style="padding:10px 14px">Todavía no defines tu tiempo hábil: la línea azul no aparece. <button class="linkbtn" id="irhabil">Definirlo</button></p>`;
+  if (P.cursos.length > 1) h += tarjetaPred(P.total, "Todos los cursos", `Uno tras otro: ${P.cursos.map(c => esc(c.nombre)).join(" → ")}`);
+  h += P.cursos.map(c => tarjetaPred(c, c.nombre, `${c.hechas} de ${c.total} misiones hechas`)).join("");
+  if (!P.cursos.length) h += `<div class="card empty">Ningún curso tiene plan todavía.</div>`;
+  if (P.sin_plan.length) h += `<p class="metodo">Sin plan en la app (entran a la predicción cuando se ingesten): ${P.sin_plan.map(c => esc(c.nombre)).join(", ")}.</p>`;
+  h += `<h2>Cómo se calcula</h2><p class="metodo">${esc(P.metodo)}</p>`;
+  $("#tcuerpo").innerHTML = h;
+  if ($("#irhabil")) $("#irhabil").onclick = () => { tTab = "habil"; store.set("ttab", tTab); cargarTiempo(); pintarTiempo(); };
+}
+
+/* --- Registro automático: mientras estás activo en una lección o en las tarjetas, un ping cada 30 s --- */
+let ultimaActividad = Date.now();
+["mousemove", "keydown", "click", "touchstart", "wheel"].forEach(ev => addEventListener(ev, () => { ultimaActividad = Date.now(); }, {passive: true, capture: true}));
+function contextoTiempo(){
+  if (document.hidden || Date.now() - ultimaActividad > 120000) return null;  // sin moverte en 2 min no cuenta
+  if (view === "lecciones" && lec && !lecFin) return {tipo: "leccion", curso, mision: lec.mision_id};
+  if (view === "tarjetas" && tActual) return {tipo: "tarjetas", curso: tActual.curso};
+  return null;
+}
+async function pingTiempo(){
+  const c = contextoTiempo();
+  if (!c) return;
+  try{ await fetch("/api/tiempo/ping", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(c)}); }catch(e){}
+}
+setInterval(pingTiempo, 30000);
+setInterval(() => { if (view === "tiempo" && !document.hidden && tTab !== "habil") cargarTiempo(); }, 60000);
+
 /* ---------- Grokpet: el ícono vivo de la app ---------- */
 let pet = null;
 function centrar(bot){ const r = bot.el.getBoundingClientRect(); if (r.width) bot.aim(r.left + r.width / 2, r.top + r.height / 2); }
@@ -1601,7 +1958,7 @@ $("#theme").onclick = () => { _theme(); if (window.BloubBot) BloubBot.readTheme(
 
 /* ---------- Vista inicial (los links de Telegram traen #tarjetas, #hoy…) ---------- */
 const _show = show;
-show = function(v){ _show(v); if (v === "tarjetas") cargarCola(); if (v === "mejoras") cargarMejoras(); if (location.hash.slice(1) !== v) history.replaceState(null, "", "#" + v); };
+show = function(v){ _show(v); if (v === "tarjetas") cargarCola(); if (v === "mejoras") cargarMejoras(); if (v === "tiempo"){ pintarTiempo(); cargarTiempo(); } if (location.hash.slice(1) !== v) history.replaceState(null, "", "#" + v); };
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (document.getElementById("v-" + h) && h !== view) show(h); });
 { const h = location.hash.slice(1); if (document.getElementById("v-" + h)) show(h); }
 
