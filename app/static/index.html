@@ -116,6 +116,20 @@ h2{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;c
 .notes{background:var(--panel2);border-left:3px solid var(--acc);border-radius:0 8px 8px 0;padding:14px 16px;font-size:16.5px;line-height:1.6;position:sticky;top:0}
 .notes .k{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:6px}
 .notes p{margin:0 0 8px}.notes p:last-child{margin:0}
+/* el código dentro de la explicación se distingue del texto */
+.notes code{font-family:var(--f-mono);font-size:.84em;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:1px 5px;white-space:pre-wrap;overflow-wrap:anywhere}
+.notes pre{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 12px;overflow:auto;font-size:14px;line-height:1.5;margin:6px 0}
+.notes pre code{border:0;padding:0;background:none;font-size:inherit}
+/* código a todo lo ancho, con su explicación arriba */
+.pila{display:flex;flex-direction:column;gap:14px;margin-top:14px}
+.notes.arriba{position:static;max-width:none;font-size:16px}
+.notes.arriba p{max-width:90ch}
+/* colores de sintaxis (paleta tipo One Light / One Dark) */
+.tk-kw{color:#A626A4}.tk-str{color:#3E8B3B}.tk-com{color:#8A939C;font-style:italic}.tk-num{color:#B76B01}
+.tk-fn{color:#2F6BE0}.tk-bi{color:#0184BC}.tk-cls{color:#B07700}.tk-dec{color:#A626A4}
+:root[data-theme="dark"] .tk-kw{color:#C678DD}:root[data-theme="dark"] .tk-str{color:#98C379}:root[data-theme="dark"] .tk-com{color:#7F848E}
+:root[data-theme="dark"] .tk-num{color:#D19A66}:root[data-theme="dark"] .tk-fn{color:#61AFEF}:root[data-theme="dark"] .tk-bi{color:#56B6C2}
+:root[data-theme="dark"] .tk-cls{color:#E5C07B}:root[data-theme="dark"] .tk-dec{color:#C678DD}
 .mm{display:flex;justify-content:center;overflow:auto}
 .mm svg{width:100%;max-width:min(100%,680px)!important;height:auto} /* los grafos chicos se agrandan para leerse bien */
 .code{background:var(--panel2);border:1px solid var(--line);border-radius:8px;overflow:auto;font:15px/1.6 var(--f-mono);padding:10px 0}
@@ -938,9 +952,12 @@ async function renderPantalla(){
   const conPanel = it.tipo === "recorrido" || (it.tipo === "mermaid" && dat.detalles);
   const notasAbajo = it.notas && ["estado", "comparar"].includes(it.tipo);  // las tablas anchas necesitan todo el ancho
   const hasNotes = conPanel || (!!it.notas && !["predice", "comparar", "estado"].includes(it.tipo));
-  stage.innerHTML = `<div class="st"><b>${esc(it.titulo)}</b><span>${esc(it.ts)}</span></div>
-    <div class="split ${hasNotes ? "" : "solo"}"><div id="visual"></div>${hasNotes ? `<div class="notes" id="pnotes">${it.notas ? `<div class="k">Qué estás viendo</div>${md(it.notas)}` : ""}<div id="pside"></div></div>` : ""}</div>`;
+  // El código va a todo lo ancho y su explicación arriba; lo demás, con la explicación al lado.
+  stage.innerHTML = `<div class="st"><b>${esc(it.titulo)}</b><span>${esc(it.ts)}</span></div>` + (it.tipo === "codigo"
+    ? `<div class="pila">${it.notas ? `<div class="notes arriba"><div class="k">Qué estás viendo</div>${md(it.notas)}</div>` : ""}<div id="visual"></div></div>`
+    : `<div class="split ${hasNotes ? "" : "solo"}"><div id="visual"></div>${hasNotes ? `<div class="notes" id="pnotes">${it.notas ? `<div class="k">Qué estás viendo</div>${md(it.notas)}` : ""}<div id="pside"></div></div>` : ""}</div>`);
   const box = $("#visual");
+  resaltarBloques(stage);
   recActual = null;
 
   if (it.tipo === "predice"){
@@ -951,7 +968,7 @@ async function renderPantalla(){
       <button class="btn pri" id="reveal">Ver respuesta</button><div id="ans"></div>`;
     $("#reveal").onclick = () => {
       $("#ans").innerHTML = `<div class="answer"><div class="k">Respuesta</div><div class="md">${md(it.respuesta)}</div></div>`;
-      $("#reveal").remove();
+      $("#reveal").remove(); resaltarBloques($("#ans"));
     };
   } else if (it.tipo === "recorrido"){
     await pintarRecorrido(box, $("#pside"), it);
@@ -959,7 +976,7 @@ async function renderPantalla(){
     box.innerHTML = (it.tipo === "estado" ? tablaEstado(dat) : pintarComparar(dat)) +
       (notasAbajo ? `<div class="notes" style="margin-top:16px;position:static"><div class="k">Qué estás viendo</div>${md(it.notas)}</div>` : "");
   } else {
-    await pintarVisual(box, it);
+    await pintarVisual(box, it); resaltarBloques(box);
     if (it.tipo === "mermaid" && dat.detalles) activarDetalles(box, $("#pside"), dat.detalles);
   }
 }
@@ -1048,6 +1065,46 @@ function pintarComparar(d){
   return `<div class="cmp">${col(d.izquierda.titulo, a, sa, "menos")}${col(d.derecha.titulo, b, sb, "mas")}</div>`;
 }
 
+/* ---------- Resaltado de sintaxis (Python sobre todo; sirve para JS/TS). Línea por línea, recordando los """docstrings""". */
+const KW = new Set(("False None True and as assert async await break class continue def del elif else except finally for from global if import in is " +
+  "lambda nonlocal not or pass raise return try while with yield const let var function new typeof interface type export of null undefined true false").split(" "));
+const BUILTIN = new Set("print len range str int float list dict set tuple bool isinstance enumerate zip open super self cls Optional Literal Annotated TypedDict".split(" "));
+function resaltarCodigo(lineas){
+  let triple = null;
+  return lineas.map(l => {
+    let out = "", i = 0;
+    const put = (c, s) => { out += c ? `<span class="tk-${c}">${esc(s)}</span>` : esc(s); };
+    if (triple){
+      const j = l.indexOf(triple);
+      if (j < 0){ put("str", l); return out; }
+      put("str", l.slice(0, j + 3)); i = j + 3; triple = null;
+    }
+    while (i < l.length){
+      const r = l.slice(i); let m;
+      if ((m = r.match(/^(#|\/\/).*/))){ put("com", m[0]); break; }
+      if ((m = r.match(/^[rbfuRBFU]{0,2}("""|''')/))){
+        const fin = r.indexOf(m[1], m[0].length);
+        if (fin < 0){ put("str", r); triple = m[1]; break; }
+        put("str", r.slice(0, fin + 3)); i += fin + 3; continue;
+      }
+      if ((m = r.match(/^[rbfuRBFU]{0,2}("(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|`(?:[^`\\]|\\.)*`?)/))){ put("str", m[0]); i += m[0].length; continue; }
+      if ((m = r.match(/^@[\w.]+/))){ put("dec", m[0]); i += m[0].length; continue; }
+      if ((m = r.match(/^\d[\d_]*(?:\.\d+)?/))){ put("num", m[0]); i += m[0].length; continue; }
+      if ((m = r.match(/^[A-Za-z_]\w*/))){
+        const w = m[0], sig = r.slice(w.length);
+        put(KW.has(w) ? "kw" : BUILTIN.has(w) ? "bi" : /^\s*\(/.test(sig) ? "fn" : /^[A-Z]/.test(w) ? "cls" : null, w);
+        i += w.length; continue;
+      }
+      put(null, r[0]); i++;
+    }
+    return out;
+  });
+}
+/* Los bloques ```código``` dentro de Markdown (notas, explicaciones) también se colorean. */
+function resaltarBloques(raiz){
+  raiz.querySelectorAll("pre code:not(.tk)").forEach(c => { c.classList.add("tk"); c.innerHTML = resaltarCodigo(c.textContent.replace(/\n$/, "").split("\n")).join("\n"); });
+}
+
 /* Dibuja un elemento (de la pantalla o de una lección) que no es "predice". */
 let mmN = 0;
 async function pintarVisual(box, it){
@@ -1060,9 +1117,9 @@ async function pintarVisual(box, it){
     try{ const {svg} = await mermaid.render("mm" + (++mmN) + Date.now(), src); box.className = "mm"; box.innerHTML = svg; }
     catch(e){ box.innerHTML = `<pre class="code" style="padding:12px 16px">${esc(it.contenido)}</pre><p class="sub">No se pudo dibujar el diagrama: ${esc(e.message || e)}</p>`; }
   } else if (it.tipo === "codigo"){
-    const hl = new Set(it.resaltar || []);
-    box.innerHTML = `<div class="code">${it.contenido.replace(/\n$/, "").split("\n").map((l, i) =>
-      `<div class="ln ${hl.has(i + 1) ? "hl" : ""}"><i>${i + 1}</i><span>${esc(l) || " "}</span></div>`).join("")}</div>`;
+    const hl = new Set(it.resaltar || []), lineas = resaltarCodigo(it.contenido.replace(/\n$/, "").split("\n"));
+    box.innerHTML = `<div class="code">${lineas.map((l, i) =>
+      `<div class="ln ${hl.has(i + 1) ? "hl" : ""}"><i>${i + 1}</i><span>${l || " "}</span></div>`).join("")}</div>`;
   } else if (it.tipo === "markdown"){
     box.className = "md"; box.innerHTML = md(it.contenido);
   } else if (it.tipo === "html"){
@@ -1342,7 +1399,9 @@ async function pintarPaso(){
   v.innerHTML = `<div class="vbar"><button class="x" id="lx" title="Volver al camino (Esc)" aria-label="Volver al camino">✕</button>
       <div class="segs" role="progressbar" aria-label="Avance de la lección" aria-valuemin="1" aria-valuemax="${n}" aria-valuenow="${lecPaso + 1}">${segs}</div><span class="pos">${lecPaso + 1} de ${n}</span></div>
     <div class="card vstage"><div class="vk">${esc(lec.mision_id)} · ${esc(lec.titulo)}${p.tipo === "predice" ? " · Predice" : ""}</div>${p.titulo ? `<div class="vt">${esc(p.titulo)}</div>` : ""}
-      <div class="split ${hasNotes ? "" : "solo"}" style="margin-top:14px"><div id="lvis"></div>${hasNotes ? `<div class="notes"><div class="k">Qué estás viendo</div>${md(p.notas)}</div>` : ""}</div></div>
+      ${p.tipo === "codigo"
+        ? `<div class="pila">${hasNotes ? `<div class="notes arriba"><div class="k">Qué estás viendo</div>${md(p.notas)}</div>` : ""}<div id="lvis"></div></div>`
+        : `<div class="split ${hasNotes ? "" : "solo"}" style="margin-top:14px"><div id="lvis"></div>${hasNotes ? `<div class="notes"><div class="k">Qué estás viendo</div>${md(p.notas)}</div>` : ""}</div>`}</div>
     <div class="vnav"><button class="btn" id="lprev" ${lecPaso === 0 ? "disabled" : ""}>← Anterior</button><button class="btn pri" id="lnext">${lecPaso === n - 1 ? "Terminar" : "Siguiente →"}</button></div>`;
   $("#lx").onclick = cerrarLeccion;
   $("#lprev").onclick = () => irPaso(-1);
@@ -1350,7 +1409,8 @@ async function pintarPaso(){
   const actualizarNext = () => { const ok = puedeAvanzar(lecPaso); $("#lnext").disabled = !ok; $("#lnext").title = ok ? "" : "Contesta y di si acertaste para seguir"; };
   actualizarNext();
   const box = $("#lvis");
-  if (p.tipo !== "predice"){ await pintarVisual(box, p); return; }
+  resaltarBloques(v);
+  if (p.tipo !== "predice"){ await pintarVisual(box, p); resaltarBloques(v); return; }
   const r = lecResp[lecPaso] || {};
   box.className = "predict";
   box.innerHTML = `<div class="md">${md(p.contenido)}</div>
@@ -1361,6 +1421,7 @@ async function pintarPaso(){
     const rr = lecResp[lecPaso];
     $("#lans").innerHTML = `<div class="answer"><div class="k">Respuesta</div><div class="md">${md(p.respuesta)}</div>
       <div class="self"><span>¿Acertaste?</span>${[["si", "Sí"], ["casi", "Más o menos"], ["no", "No"]].map(([k, l]) => `<button class="btn ${rr.acerto === k ? "on" : ""}" data-a="${k}">${l}</button>`).join("")}</div></div>`;
+    resaltarBloques($("#lans"));
     $("#lans").querySelectorAll("[data-a]").forEach(b => b.onclick = () => { rr.acerto = b.dataset.a; guardarAvance(); Sonido.play(b.dataset.a === "si" ? "bien" : (b.dataset.a === "no" ? "mal" : "casi")); pintarResp(); actualizarNext(); petReaccion(b.dataset.a === "si" ? "bien" : (b.dataset.a === "no" ? "mal" : "neutro")); });
   };
   if (r.visto){ ta.readOnly = true; pintarResp(); return; }
@@ -1368,7 +1429,7 @@ async function pintarPaso(){
   rev.disabled = !ta.value.trim();
   ta.oninput = () => { rev.disabled = !ta.value.trim(); };
   rev.onclick = () => { if (!ta.value.trim()) return; lecResp[lecPaso] = {texto: ta.value.trim(), visto: true}; guardarAvance(); ta.readOnly = true; rev.remove(); pintarResp(); };
-  ta.focus();
+  resaltarBloques(v); ta.focus();
 }
 async function terminarLeccion(){
   const preds = Object.entries(lecResp).filter(([, r]) => r.visto).map(([i, r]) => ({paso: Number(i) + 1, texto: r.texto, acerto: r.acerto}));
