@@ -121,7 +121,7 @@ h2{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;c
 .code{background:var(--panel2);border:1px solid var(--line);border-radius:8px;overflow:auto;font:15px/1.6 var(--f-mono);padding:10px 0}
 .code .ln{display:grid;grid-template-columns:44px 1fr;padding-right:16px}
 .code .ln i{font-style:normal;color:var(--faint);text-align:right;padding-right:14px;user-select:none}
-.code .ln span{white-space:pre}
+.code .ln span{white-space:pre-wrap;overflow-wrap:anywhere} /* el código se ve completo: las líneas largas bajan en vez de esconderse */
 .code .ln.hl{background:var(--mark);box-shadow:inset 3px 0 0 var(--mark-line)}
 .code .ln.hl i{color:var(--ink);font-weight:700}
 .md{font-size:17px;line-height:1.6;max-width:70ch}
@@ -218,6 +218,61 @@ iframe.htmlbox{width:100%;min-height:500px;border:1px solid var(--line);border-r
 .done .bigpet{width:120px;height:120px}
 @media (max-width:900px){.rate{grid-template-columns:repeat(2,1fr)}.review{padding:20px 16px}}
 
+/* ---------- Lecciones: camino y visor paso a paso ---------- */
+.camino{display:flex;flex-direction:column;gap:18px;max-width:640px}
+.cmod{padding:16px 18px 22px}
+.cmod .mh{display:flex;align-items:baseline;gap:10px;padding-bottom:10px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.cmod .mh b{font:800 19px var(--f-head)}
+.cmod .mh span{color:var(--muted);font-size:14px;margin-left:auto;font-family:var(--f-mono)}
+.nodos{display:flex;flex-direction:column;align-items:center;gap:14px}
+.nodo{display:flex;align-items:center;gap:14px;width:340px;max-width:100%;background:none;border:0;padding:0;text-align:left;cursor:pointer}
+.nodo:disabled{cursor:default}
+.nodo .c{width:58px;height:58px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 15px var(--f-mono);
+  background:var(--panel2);border:3px solid var(--line);color:var(--faint);box-shadow:0 4px 0 var(--line)}
+.nodo .c svg{width:26px;height:26px}
+.nodo.ok .c{background:var(--acc);border-color:var(--acc);color:#fff;box-shadow:0 4px 0 var(--acc-ink)}
+.nodo.mision .c{background:var(--acc-soft);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 4px 0 var(--acc)}
+.nodo.now .c{background:var(--panel);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 4px 0 var(--acc),0 0 0 5px var(--acc-soft)}
+.nodo.vacio .c{border-style:dashed;box-shadow:none}
+.nodo:not(:disabled):hover .c{filter:brightness(1.05);border-color:var(--acc)}
+.nodo .lt{flex:1;min-width:0}
+.nodo .lt b{display:block;font-size:15.5px;line-height:1.3}
+.nodo .lt small{color:var(--muted);font-size:13px}
+.nodo.vacio .lt b{color:var(--faint)}
+.nodo .petcam{width:52px;height:52px;flex:none}
+.visor{max-width:980px}
+.vbar{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.vbar .x{border:0;background:none;font-size:22px;line-height:1;color:var(--muted);cursor:pointer;padding:4px 8px;border-radius:8px}
+.vbar .x:hover{background:var(--panel2);color:var(--ink)}
+.segs{flex:1;display:flex;gap:4px}
+.segs i{flex:1;height:10px;border-radius:5px;background:var(--line)}
+.segs i.ok{background:var(--acc)}
+.segs i.cur{background:var(--acc);opacity:.55}
+.segs i.pq{box-shadow:inset 0 -3px 0 var(--mark-line)}
+.vbar .pos{font:14px var(--f-mono);color:var(--muted);white-space:nowrap}
+.vstage{padding:24px 28px;min-height:420px}
+.vstage .vt{font:800 22px/1.25 var(--f-head);margin:0 0 4px}
+.vstage .vk{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:16px}
+.vnav{display:flex;justify-content:space-between;gap:12px;margin-top:16px}
+.imgbox{margin:0}
+.imgbox img{max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;background:#fff;display:block}
+.self{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center}
+.self span{font-size:15px;color:var(--muted);margin-right:4px}
+.self button.on{background:var(--acc-soft);border-color:var(--acc);color:var(--acc-ink);font-weight:700}
+.fin{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;min-height:380px}
+.fin b{font-size:23px}
+.fin .bigpet{width:120px;height:120px}
+.fin .acts{display:flex;gap:10px;margin-top:8px}
+.fuentes{font-size:13.5px;color:var(--muted);margin-top:4px}
+
+/* ---------- Mejoras ---------- */
+.mform{padding:16px 18px;display:flex;flex-direction:column;gap:10px;max-width:760px}
+.mform textarea{width:100%;min-height:70px;font:16px/1.5 var(--f-body);padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);resize:vertical}
+.mform .r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mform label{font-size:14.5px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.row select{font:inherit;font-size:14px;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.row .desc{white-space:pre-wrap}
+
 /* ---------- Ayuda: "¿por qué existe esta vista?" ---------- */
 .titlerow{display:flex;align-items:center;gap:10px;margin:0 0 6px}
 .titlerow h1{margin:0}
@@ -248,6 +303,8 @@ iframe.htmlbox{width:100%;min-height:500px;border:1px solid var(--line);border-r
   .stage{padding:18px 16px}
   .mod{grid-template-columns:1fr;gap:8px}.pct{text-align:left}
   .row{flex-wrap:wrap}
+  .vstage{padding:18px 16px}
+  .nodo{width:100%}
 }
 </style>
 </head>
@@ -259,12 +316,14 @@ iframe.htmlbox{width:100%;min-height:500px;border:1px solid var(--line);border-r
   <button class="nav" data-v="estudios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v6M12 9H6v4M12 9h6v4M6 13v3M18 13v3"/><circle cx="12" cy="3" r="1.5"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>Mis estudios</button>
   <div class="navsep"></div>
   <button class="nav on" data-v="hoy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Hoy</button>
+  <button class="nav" data-v="lecciones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M9 8h6M9 12h6"/></svg>Lecciones</button>
   <button class="nav" data-v="tarjetas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/></svg>Tarjetas<span class="badge" id="tbadge"></span></button>
   <button class="nav" data-v="pantalla"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Pantalla en vivo<span class="badge" id="badge">nuevo</span></button>
   <button class="nav" data-v="hojas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2"/><rect x="6" y="14" width="12" height="7"/></svg>Hojas para imprimir</button>
   <button class="nav" data-v="repaso"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Repaso y exámenes</button>
   <button class="nav" data-v="progreso"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M7.3 11l9.4-5M7.3 13l9.4 5"/></svg>Progreso</button>
   <button class="nav" data-v="proyecto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Proyecto</button>
+  <button class="nav" data-v="mejoras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Mejoras<span class="badge" id="mbadge"></span></button>
   <div class="side-foot">
     <div class="live"><span class="dot" id="dot"></span><span id="live">Conectando…</span></div>
     <button class="linkbtn" id="theme">Cambiar a modo oscuro</button>
@@ -291,6 +350,16 @@ iframe.htmlbox{width:100%;min-height:500px;border:1px solid var(--line);border-r
       <div class="card" id="t-banco"></div>
     </div>
     <div class="summary" id="t-sum"></div>
+  </section>
+
+  <!-- LECCIONES -->
+  <section class="view" id="v-lecciones">
+    <div id="lec-camino">
+      <h1>Lecciones</h1>
+      <p class="sub">Una lección por misión. Primero la explicación con un ejemplo resuelto; después predices tú. Léela antes de la sesión con el tutor.</p>
+      <div class="camino" id="camino"></div>
+    </div>
+    <div id="lec-visor" class="visor" hidden></div>
   </section>
 
   <!-- TARJETAS -->
@@ -350,6 +419,18 @@ iframe.htmlbox{width:100%;min-height:500px;border:1px solid var(--line);border-r
     <div class="card list" id="proyecto"></div>
     <div id="hilos"></div>
   </section>
+
+  <!-- MEJORAS -->
+  <section class="view" id="v-mejoras">
+    <h1>Mejoras</h1>
+    <p class="sub">Errores y propuestas del tutor y de la app. Las registran tú y el tutor; el tutor revisa las abiertas al empezar cada sesión.</p>
+    <div class="card mform">
+      <textarea id="mtexto" placeholder="¿Qué falló o qué mejorarías? Una cosa concreta."></textarea>
+      <div class="r"><label><input type="checkbox" id="mgeneral"> Es de la app en general (no de este curso)</label><span class="sp" style="flex:1"></span><button class="btn pri" id="menviar">Registrar</button></div>
+    </div>
+    <div class="scope" id="mscope" style="margin-top:18px"></div>
+    <div class="card list" id="mejoras"></div>
+  </section>
 </main>
 
 <div class="tip" id="tip"></div>
@@ -378,6 +459,16 @@ const HELP = {
   hoy: `<ul><li>Te muestra <b>solo lo que te toca</b>, para que empieces rápido sin decidir entre mil opciones.</li>
     <li>Las preguntas por repasar están aquí a propósito: intentar <b>recordar sin ayuda</b> es una de las dos técnicas de estudio con más evidencia.</li></ul>
     <div class="src">Dunlosky et al. (2013): práctica de recuerdo y repaso espaciado, las únicas dos de "alta utilidad".</div>`,
+  lecciones: `<ul><li>Cada misión tiene su lección. Va en este orden: primero la <b>explicación con un ejemplo resuelto</b> y el código completo; después <b>predices</b> tú. En un tema nuevo, aprender solo "descubriendo" rinde menos que ver primero un ejemplo bien explicado.</li>
+    <li><b>Un concepto por paso</b> y avanzas a tu ritmo (← →). La barra de arriba te dice cuánto falta.</li>
+    <li>En los pasos <b>Predice</b> tienes que escribir tu respuesta antes de verla: intentar recordar o adivinar, aunque falles, fija más que solo leer. Luego dices si acertaste; el tutor lo lee para saber qué reforzar.</li>
+    <li>Al terminar, las tarjetas de la lección entran a tu mazo de repaso espaciado.</li>
+    <li>La lección <b>no reemplaza</b> la sesión: ahí practicas (predecir, diseñar, revisar, romper). Releer la lección como forma de estudiar rinde poco; para repasar están las tarjetas y las hojas.</li></ul>
+    <div class="src">Kirschner, Sweller y Clark (2006): ejemplos resueltos para novatos. Mayer: segmentación y coherencia. Dunlosky et al. (2013): práctica de recuerdo; releer es de baja utilidad.</div>`,
+  mejoras: `<ul><li>La regla de Mi Tutor: todo lo que hace tiene un porqué con evidencia. Esta lista es cómo lo mantenemos honesto: lo que <b>no funcionó en la práctica</b> queda escrito en vez de olvidarse.</li>
+    <li>El tutor registra lo que nota al cerrar cada sesión y revisa las abiertas al empezar. Tú puedes agregar las tuyas aquí.</li>
+    <li>Estados: <b>nueva</b> (sin revisar), <b>aceptada</b> (se va a hacer), <b>hecha</b>, <b>descartada</b> (con su razón en la nota).</li></ul>
+    <div class="src">No es una técnica de estudio: es el paso 3 de "Cómo cambiar la app" en FILOSOFIA.md.</div>`,
   pantalla: `<ul><li>Aquí el tutor te muestra diagramas, código o ejemplos <b>mientras estudian</b>.</li>
     <li>La explicación va <b>al lado</b> de lo que explica: es el principio de diseño con mayor efecto en el aprendizaje.</li>
     <li>Se resalta <b>solo lo clave</b> para que sepas dónde mirar.</li>
@@ -436,6 +527,7 @@ function cursoActual(){ return cursos.find(c => c.id === curso); }
 function setCurso(id){
   if (id === curso) return;
   curso = id; store.set("curso", id); lastRaw = ""; first = true; renderedKey = null;
+  if (lec) cerrarLeccion();
   renderSelector(); renderArbol(); poll();
 }
 $("#curlabel").onclick = () => show("estudios");
@@ -512,7 +604,7 @@ function render(){
   const d = state.datos || {};
   const c = cursoActual();
   document.title = c ? "Mi Tutor · " + c.nombre : "Mi Tutor";
-  renderHoy(d, state.hojas || []); renderTarjetasStats(); renderPantalla(); renderHojas(d, state.hojas || []); renderRepaso(d); renderProgreso(d); renderProyecto(d);
+  renderHoy(d, state.hojas || []); renderLecciones(d); renderTarjetasStats(); renderPantalla(); renderHojas(d, state.hojas || []); renderRepaso(d); renderProgreso(d); renderProyecto(d);
 }
 let items = [], pendingShow = false;
 const visibles = () => (state.pantalla || []).filter(it => !it.curso || it.curso === curso);
@@ -534,7 +626,8 @@ function renderHoy(d, hojas){
   const ms = d.misiones || [], next = ms.find(m => m.id === d.siguiente);
   $("#t-next").innerHTML = next
     ? `<div class="k">Siguiente misión · ${esc(next.id)}</div><div class="big">${esc(next.titulo)}</div><div class="nb">${esc(material(next))}${material(next) ? " · " : ""}Módulo ${esc(next.modulo)}: ${esc(modNombre(d, next.modulo))}</div>
-       <div class="how">Abre una <b>sesión nueva</b> de Claude en la carpeta del repo y escribe ${cmd}. Una misión por sesión.</div>`
+       ${lecDe(next.id) ? `<div class="how"><b>1.</b> Lee su lección (${lecDe(next.id).n_pasos} pasos)${lecDe(next.id).completada ? " · ya la leíste" : ""}. <button class="btn pri" style="margin-left:6px" onclick="abrirLeccion('${esc(String(next.id))}')">Abrir lección</button></div>` : ""}
+       <div class="how">${lecDe(next.id) ? "<b>2.</b> " : ""}Abre una <b>sesión nueva</b> de Claude en la carpeta del repo y escribe ${cmd}. Una misión por sesión.</div>`
     : `<div class="k">Curso</div><div class="big">¡Terminaste todas las misiones!</div>`;
 
   const meta = d.hojas || {};
@@ -595,23 +688,7 @@ async function renderPantalla(){
     <div class="split ${hasNotes ? "" : "solo"}"><div id="visual"></div>${hasNotes ? `<div class="notes"><div class="k">Qué estás viendo</div>${md(it.notas)}</div>` : ""}</div>`;
   const box = $("#visual");
 
-  if (it.tipo === "mermaid"){
-    let src = it.contenido;
-    if (/^\s*(graph|flowchart)\b/.test(src) && !/classDef\s+clave/.test(src)){
-      const dark = document.documentElement.dataset.theme === "dark";
-      src += `\nclassDef clave fill:${dark ? "#3A3115" : "#FFF1BF"},stroke:${dark ? "#E0A92E" : "#C98A00"},stroke-width:3px,color:${dark ? "#F3E6C4" : "#3B2A00"}`;
-    }
-    try{ const {svg} = await mermaid.render("mm" + it.id + Date.now(), src); box.className = "mm"; box.innerHTML = svg; }
-    catch(e){ box.innerHTML = `<pre class="code" style="padding:12px 16px">${esc(it.contenido)}</pre><p class="sub">No se pudo dibujar el diagrama: ${esc(e.message || e)}</p>`; }
-  } else if (it.tipo === "codigo"){
-    const hl = new Set(it.resaltar || []);
-    box.innerHTML = `<div class="code">${it.contenido.replace(/\n$/, "").split("\n").map((l, i) =>
-      `<div class="ln ${hl.has(i + 1) ? "hl" : ""}"><i>${i + 1}</i><span>${esc(l) || " "}</span></div>`).join("")}</div>`;
-  } else if (it.tipo === "markdown"){
-    box.className = "md"; box.innerHTML = md(it.contenido);
-  } else if (it.tipo === "html"){
-    const f = document.createElement("iframe"); f.className = "htmlbox"; f.setAttribute("sandbox", "allow-scripts"); f.srcdoc = it.contenido; box.appendChild(f);
-  } else if (it.tipo === "predice"){
+  if (it.tipo === "predice"){
     box.className = "predict";
     box.innerHTML = `<div class="md">${md(it.contenido)}</div>
       <textarea id="guess" placeholder="Escribe tu predicción antes de ver la respuesta (opcional, no se guarda)"></textarea>
@@ -621,6 +698,32 @@ async function renderPantalla(){
       $("#ans").innerHTML = `<div class="answer">${g ? `<div class="mine"><b>Tu predicción:</b> ${esc(g)}</div>` : ""}<div class="k">Respuesta</div><div class="md">${md(it.respuesta)}</div></div>`;
       $("#reveal").remove(); $("#guess").readOnly = true;
     };
+  } else {
+    await pintarVisual(box, it);
+  }
+}
+
+/* Dibuja un elemento (de la pantalla o de una lección) que no es "predice". */
+let mmN = 0;
+async function pintarVisual(box, it){
+  if (it.tipo === "mermaid"){
+    let src = it.contenido;
+    if (/^\s*(graph|flowchart)\b/.test(src) && !/classDef\s+clave/.test(src)){
+      const dark = document.documentElement.dataset.theme === "dark";
+      src += `\nclassDef clave fill:${dark ? "#3A3115" : "#FFF1BF"},stroke:${dark ? "#E0A92E" : "#C98A00"},stroke-width:3px,color:${dark ? "#F3E6C4" : "#3B2A00"}`;
+    }
+    try{ const {svg} = await mermaid.render("mm" + (++mmN) + Date.now(), src); box.className = "mm"; box.innerHTML = svg; }
+    catch(e){ box.innerHTML = `<pre class="code" style="padding:12px 16px">${esc(it.contenido)}</pre><p class="sub">No se pudo dibujar el diagrama: ${esc(e.message || e)}</p>`; }
+  } else if (it.tipo === "codigo"){
+    const hl = new Set(it.resaltar || []);
+    box.innerHTML = `<div class="code">${it.contenido.replace(/\n$/, "").split("\n").map((l, i) =>
+      `<div class="ln ${hl.has(i + 1) ? "hl" : ""}"><i>${i + 1}</i><span>${esc(l) || " "}</span></div>`).join("")}</div>`;
+  } else if (it.tipo === "markdown"){
+    box.className = "md"; box.innerHTML = md(it.contenido);
+  } else if (it.tipo === "html"){
+    const f = document.createElement("iframe"); f.className = "htmlbox"; f.setAttribute("sandbox", "allow-scripts"); f.srcdoc = it.contenido; box.appendChild(f);
+  } else if (it.tipo === "imagen"){
+    box.innerHTML = `<figure class="imgbox"><img src="${esc(it.url)}" alt="${esc(it.alt || "")}" loading="lazy"></figure>`;
   } else {
     box.innerHTML = `<pre class="code" style="padding:12px 16px">${esc(it.contenido)}</pre>`;
   }
@@ -764,6 +867,181 @@ document.addEventListener("keydown", e => {
   if (["1","2","3","4"].includes(e.key)) calificar(Number(e.key));
 });
 
+/* ---------- Lecciones: camino por módulos y visor paso a paso ---------- */
+let lec = null, lecPaso = 0, lecResp = {}, lecFin = null;
+const enc = encodeURIComponent;
+const ICON_OK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`;
+const lecDe = id => ((state && state.lecciones) || []).find(l => l.mision_id === String(id));
+function leccionActual(d, ls){
+  const by = Object.fromEntries(ls.map(l => [l.mision_id, l])), ms = d.misiones || [];
+  const sig = by[d.siguiente];
+  if (sig && !sig.completada) return sig.mision_id;
+  const orden = ms.map(m => by[m.id]).filter(Boolean);
+  const hecha = l => (ms.find(m => String(m.id) === l.mision_id) || {}).estado === "hecha";
+  const a = orden.find(l => !l.completada && !hecha(l)) || orden.find(l => !l.completada) || ls.find(l => !l.completada);
+  return a ? a.mision_id : null;
+}
+function renderLecciones(d){
+  if (!$("#lec-visor").hidden) return;
+  const ls = (state && state.lecciones) || [], by = Object.fromEntries(ls.map(l => [l.mision_id, l]));
+  const ms = d.misiones || [], actual = leccionActual(d, ls);
+  const mods = (d.modulos || []).length ? d.modulos : [...new Set(ms.map(m => m.modulo))].map(n => ({n, nombre: ""}));
+  const enMisiones = new Set(ms.map(m => String(m.id)));
+  const nodo = (id, titulo, l, m) => {
+    let cls = "vacio", ic = esc(id), sub = "Sin lección todavía";
+    if (l){
+      if (l.completada){ cls = "ok"; ic = ICON_OK; sub = `Leída · ${l.n_pasos} pasos`; }
+      else if (id === actual){ cls = "now"; sub = `Te toca · ${l.n_pasos} pasos`; }
+      else if (m && m.estado === "hecha"){ cls = "mision"; ic = ICON_OK; sub = `Misión hecha; lección sin leer · ${l.n_pasos} pasos`; }
+      else { cls = ""; sub = `${l.n_pasos} pasos`; }
+    }
+    return `<button class="nodo ${cls}" ${l ? `data-lec="${esc(id)}"` : "disabled"}><span class="c">${ic}</span><span class="lt"><b>${esc(id)} · ${esc(titulo)}</b><small>${sub}</small></span>${l && id === actual ? `<span class="petcam" id="petcam" aria-hidden="true"></span>` : ""}</button>`;
+  };
+  let html = mods.map(({n, nombre}) => {
+    const list = ms.filter(m => m.modulo == n);
+    if (!list.length) return "";
+    const k = list.filter(m => by[m.id] && by[m.id].completada).length;
+    return `<div class="card cmod"><div class="mh"><b>Módulo ${esc(n)}${nombre ? " · " + esc(nombre) : ""}</b><span>${k} de ${list.length} leídas</span></div>
+      <div class="nodos">${list.map(m => nodo(String(m.id), m.titulo, by[m.id], m)).join("")}</div></div>`;
+  }).join("");
+  const sueltas = ls.filter(l => !enMisiones.has(l.mision_id));
+  if (sueltas.length) html += `<div class="card cmod"><div class="mh"><b>Otras lecciones</b></div><div class="nodos">${sueltas.map(l => nodo(l.mision_id, l.titulo, l, null)).join("")}</div></div>`;
+  if (html === renderLecciones.k) return;
+  renderLecciones.k = html;
+  $("#camino").innerHTML = html || `<div class="card empty">Este curso todavía no tiene lecciones. Se crean con la skill <code>/ingestar</code> en Claude Code.</div>`;
+  $("#camino").querySelectorAll("[data-lec]").forEach(b => b.onclick = () => abrirLeccion(b.dataset.lec));
+  if (window.BloubBot && $("#petcam")){ const p = new BloubBot.Bot($("#petcam"), {size: 52, state: "idle", expr: "neutre"}); requestAnimationFrame(() => centrar(p)); }
+}
+const lecKey = () => `lec:${curso}:${lec.mision_id}`;
+function guardarAvance(){ store.set(lecKey(), JSON.stringify({paso: lecPaso, resp: lecResp})); }
+const puedeAvanzar = i => lec.pasos[i].tipo !== "predice" || !!(lecResp[i] && lecResp[i].visto && lecResp[i].acerto);
+async function abrirLeccion(id){
+  const r = await fetch(`/api/lecciones/${enc(curso)}/${enc(id)}`, {cache:"no-store"});
+  if (r.status === 401){ location.href = "/login"; return; }
+  if (!r.ok){ toast("No se pudo abrir la lección."); return; }
+  lec = await r.json(); lecFin = null; lecResp = {}; lecPaso = 0;
+  if (!lec.completada){
+    try{ const g = JSON.parse(store.get(lecKey()) || "null"); if (g){ lecResp = g.resp || {}; lecPaso = g.paso || 0; } }catch(e){}
+    lecPaso = Math.min(lecPaso, lec.pasos.length - 1);
+    for (let i = 0; i < lecPaso; i++) if (!puedeAvanzar(i)){ lecPaso = i; break; }
+  }
+  $("#lec-camino").hidden = true; $("#lec-visor").hidden = false;
+  if (view !== "lecciones") show("lecciones");
+  pintarPaso();
+}
+function cerrarLeccion(){
+  lec = null; lecFin = null;
+  $("#lec-visor").hidden = true; $("#lec-visor").innerHTML = ""; $("#lec-camino").hidden = false;
+  renderLecciones.k = null; if (state) renderLecciones(state.datos || {});
+}
+function irPaso(n){
+  if (!lec || lecFin) return;
+  if (n > 0 && !puedeAvanzar(lecPaso)) return;
+  if (n > 0 && lecPaso === lec.pasos.length - 1){ terminarLeccion(); return; }
+  lecPaso = Math.max(0, Math.min(lec.pasos.length - 1, lecPaso + n));
+  guardarAvance(); pintarPaso(); document.querySelector("main").scrollTop = 0;
+}
+async function pintarPaso(){
+  const v = $("#lec-visor"), n = lec.pasos.length;
+  if (lecFin){
+    const preds = Object.values(lecResp).filter(r => r.visto), ok = preds.filter(r => r.acerto === "si").length;
+    v.innerHTML = `<div class="card vstage"><div class="fin"><span class="bigpet" id="petfin" aria-hidden="true"></span><b>Lección completada</b>
+      <span>${esc(lec.mision_id)} · ${esc(lec.titulo)}</span>
+      ${preds.length ? `<span>Predicciones: acertaste ${ok} de ${preds.length}.${ok < preds.length ? " Las que no te salieron son justo lo que conviene practicar en la sesión: el tutor las verá." : ""}</span>` : ""}
+      <span>${lecFin.tarjetas_creadas ? `${lecFin.tarjetas_creadas} tarjetas nuevas entraron a tu mazo de repaso.` : "Sus tarjetas ya estaban en tu mazo."}</span>
+      <span>Ahora practícala con el tutor: abre una sesión nueva con <code>/tutor ${esc(curso)}</code>.</span>
+      ${(lec.fuentes || []).length ? `<div class="fuentes">Fuente: ${lec.fuentes.map(esc).join(" · ")}</div>` : ""}
+      <div class="acts"><button class="btn" id="lvolver">Volver al camino</button>${lecFin.tarjetas_creadas ? `<button class="btn pri" id="ltarj">Repasar tarjetas</button>` : ""}</div></div></div>`;
+    $("#lvolver").onclick = cerrarLeccion;
+    if ($("#ltarj")) $("#ltarj").onclick = () => { cerrarLeccion(); show("tarjetas"); };
+    if (window.BloubBot){ const p = new BloubBot.Bot($("#petfin"), {size: 120, state: "burst", expr: "heureux"}); centrar(p); }
+    return;
+  }
+  const p = lec.pasos[lecPaso], hasNotes = !!p.notas && p.tipo !== "predice";
+  const segs = lec.pasos.map((x, i) => `<i class="${i < lecPaso ? "ok" : (i === lecPaso ? "cur" : "")}${x.tipo === "predice" ? " pq" : ""}" title="Paso ${i + 1}${x.tipo === "predice" ? " · predice" : ""}"></i>`).join("");
+  v.innerHTML = `<div class="vbar"><button class="x" id="lx" title="Volver al camino (Esc)" aria-label="Volver al camino">✕</button>
+      <div class="segs" role="progressbar" aria-label="Avance de la lección" aria-valuemin="1" aria-valuemax="${n}" aria-valuenow="${lecPaso + 1}">${segs}</div><span class="pos">${lecPaso + 1} de ${n}</span></div>
+    <div class="card vstage"><div class="vk">${esc(lec.mision_id)} · ${esc(lec.titulo)}${p.tipo === "predice" ? " · Predice" : ""}</div>${p.titulo ? `<div class="vt">${esc(p.titulo)}</div>` : ""}
+      <div class="split ${hasNotes ? "" : "solo"}" style="margin-top:14px"><div id="lvis"></div>${hasNotes ? `<div class="notes"><div class="k">Qué estás viendo</div>${md(p.notas)}</div>` : ""}</div></div>
+    <div class="vnav"><button class="btn" id="lprev" ${lecPaso === 0 ? "disabled" : ""}>← Anterior</button><button class="btn pri" id="lnext">${lecPaso === n - 1 ? "Terminar" : "Siguiente →"}</button></div>`;
+  $("#lx").onclick = cerrarLeccion;
+  $("#lprev").onclick = () => irPaso(-1);
+  $("#lnext").onclick = () => irPaso(1);
+  const actualizarNext = () => { const ok = puedeAvanzar(lecPaso); $("#lnext").disabled = !ok; $("#lnext").title = ok ? "" : "Contesta y di si acertaste para seguir"; };
+  actualizarNext();
+  const box = $("#lvis");
+  if (p.tipo !== "predice"){ await pintarVisual(box, p); return; }
+  const r = lecResp[lecPaso] || {};
+  box.className = "predict";
+  box.innerHTML = `<div class="md">${md(p.contenido)}</div>
+    <textarea id="lguess" placeholder="Escribe tu predicción. Hay que contestar antes de ver la respuesta.">${esc(r.texto || "")}</textarea>
+    ${r.visto ? "" : `<button class="btn pri" id="lreveal">Ver respuesta</button>`}<div id="lans"></div>`;
+  const ta = $("#lguess");
+  const pintarResp = () => {
+    const rr = lecResp[lecPaso];
+    $("#lans").innerHTML = `<div class="answer"><div class="k">Respuesta</div><div class="md">${md(p.respuesta)}</div>
+      <div class="self"><span>¿Acertaste?</span>${[["si", "Sí"], ["casi", "Más o menos"], ["no", "No"]].map(([k, l]) => `<button class="btn ${rr.acerto === k ? "on" : ""}" data-a="${k}">${l}</button>`).join("")}</div></div>`;
+    $("#lans").querySelectorAll("[data-a]").forEach(b => b.onclick = () => { rr.acerto = b.dataset.a; guardarAvance(); pintarResp(); actualizarNext(); petReaccion(b.dataset.a === "si" ? "bien" : (b.dataset.a === "no" ? "mal" : "neutro")); });
+  };
+  if (r.visto){ ta.readOnly = true; pintarResp(); return; }
+  const rev = $("#lreveal");
+  rev.disabled = !ta.value.trim();
+  ta.oninput = () => { rev.disabled = !ta.value.trim(); };
+  rev.onclick = () => { if (!ta.value.trim()) return; lecResp[lecPaso] = {texto: ta.value.trim(), visto: true}; guardarAvance(); ta.readOnly = true; rev.remove(); pintarResp(); };
+  ta.focus();
+}
+async function terminarLeccion(){
+  const preds = Object.entries(lecResp).filter(([, r]) => r.visto).map(([i, r]) => ({paso: Number(i) + 1, texto: r.texto, acerto: r.acerto}));
+  const r = await fetch(`/api/lecciones/${enc(curso)}/${enc(lec.mision_id)}/completar`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({predicciones: preds})});
+  if (r.status === 401){ location.href = "/login"; return; }
+  if (!r.ok){ toast("No se pudo guardar. Revisa la conexión e inténtalo otra vez."); return; }
+  lecFin = await r.json(); store.set(lecKey(), ""); petReaccion("bien");
+  lastRaw = ""; poll(); pintarPaso();
+}
+document.addEventListener("keydown", e => {
+  if (view !== "lecciones" || !lec || /^(TEXTAREA|INPUT|SELECT)$/.test(document.activeElement.tagName)) return;
+  if (e.key === "ArrowRight") irPaso(1);
+  if (e.key === "ArrowLeft") irPaso(-1);
+  if (e.key === "Escape") cerrarLeccion();
+});
+
+/* ---------- Mejoras ---------- */
+let mScope = "abiertas", mLista = [];
+const abierta = m => m.estado === "nueva" || m.estado === "aceptada";
+async function cargarMejoras(){
+  try{
+    const r = await fetch("/api/mejoras", {cache:"no-store"});
+    if (r.status === 401){ location.href = "/login"; return; }
+    mLista = (await r.json()).mejoras || [];
+  }catch(e){ return; }
+  pintarMejoras();
+}
+function pintarMejoras(){
+  const nuevas = mLista.filter(m => m.estado === "nueva").length;
+  $("#mbadge").textContent = nuevas || ""; $("#mbadge").classList.toggle("show", !!nuevas);
+  const ab = mLista.filter(abierta);
+  $("#mscope").innerHTML = `<button data-s="abiertas" class="${mScope === "abiertas" ? "on" : ""}">Abiertas (${ab.length})</button><button data-s="todas" class="${mScope === "todas" ? "on" : ""}">Todas (${mLista.length})</button>`;
+  $("#mscope").querySelectorAll("button").forEach(b => b.onclick = () => { mScope = b.dataset.s; pintarMejoras(); });
+  const lista = mScope === "abiertas" ? ab : mLista;
+  const nombre = id => id ? ((cursos.find(c => c.id === id) || {}).nombre || id) : "General";
+  $("#mejoras").innerHTML = lista.length ? lista.map(m => `<div class="row">
+      <span class="chip ${m.reporta === "leo" ? "wait" : "off"}">${m.reporta === "leo" ? "Leo" : "Tutor"}</span>
+      <div class="grow"><div class="desc">${esc(m.descripcion)}</div><div class="d">${esc(nombre(m.curso))} · ${esc((m.ts || "").slice(0, 10))}${m.nota ? " · " + esc(m.nota) : ""}</div></div>
+      <select data-m="${m.id}" aria-label="Estado">${["nueva", "aceptada", "hecha", "descartada"].map(s => `<option ${s === m.estado ? "selected" : ""}>${s}</option>`).join("")}</select></div>`).join("")
+    : `<div class="empty">${mScope === "abiertas" ? "No hay mejoras abiertas." : "Todavía no hay mejoras registradas."}</div>`;
+  $("#mejoras").querySelectorAll("[data-m]").forEach(s => s.onchange = async () => {
+    const r = await fetch(`/api/mejoras/${s.dataset.m}`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({estado: s.value})});
+    toast(r.ok ? "Estado actualizado." : "No se pudo actualizar."); cargarMejoras();
+  });
+}
+$("#menviar").onclick = async () => {
+  const t = $("#mtexto").value.trim();
+  if (!t){ $("#mtexto").focus(); return; }
+  const r = await fetch("/api/mejoras", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({descripcion: t, curso: $("#mgeneral").checked ? null : curso})});
+  if (r.ok){ $("#mtexto").value = ""; toast("Registrada. El tutor la verá al empezar la siguiente sesión."); mScope = "abiertas"; cargarMejoras(); }
+  else toast("No se pudo registrar.");
+};
+
 /* ---------- Grokpet: el ícono vivo de la app ---------- */
 let pet = null;
 function centrar(bot){ const r = bot.el.getBoundingClientRect(); if (r.width) bot.aim(r.left + r.width / 2, r.top + r.height / 2); }
@@ -796,11 +1074,11 @@ $("#theme").onclick = () => { _theme(); if (window.BloubBot) BloubBot.readTheme(
 
 /* ---------- Vista inicial (los links de Telegram traen #tarjetas, #hoy…) ---------- */
 const _show = show;
-show = function(v){ _show(v); if (v === "tarjetas") cargarCola(); if (location.hash.slice(1) !== v) history.replaceState(null, "", "#" + v); };
+show = function(v){ _show(v); if (v === "tarjetas") cargarCola(); if (v === "mejoras") cargarMejoras(); if (location.hash.slice(1) !== v) history.replaceState(null, "", "#" + v); };
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (document.getElementById("v-" + h) && h !== view) show(h); });
 { const h = location.hash.slice(1); if (document.getElementById("v-" + h)) show(h); }
 
-poll(); setInterval(poll, 2000);
+poll(); setInterval(poll, 2000); cargarMejoras();
 </script>
 </body>
 </html>

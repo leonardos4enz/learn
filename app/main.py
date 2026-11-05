@@ -8,7 +8,8 @@ Variables de entorno (en EasyPanel → Entorno):
   PUBLIC_URL           URL pública de la app, para los links (p. ej. https://learn-tutor.ppnoc4.easypanel.host).
   AVISO_HORA           hora del aviso diario (por defecto 08:00).   RECORDATORIO_HORA  segundo aviso (por defecto 19:00).
   TZ_NAME              zona horaria (por defecto America/Mexico_City).
-  DATA_DIR             carpeta de la base SQLite (en producción, el volumen /data).
+  DATA_DIR             carpeta de la base SQLite y de las imágenes de las lecciones (en producción, el volumen /data).
+  IMAGEN_MAX_KB        tamaño máximo de una imagen subida (por defecto 1500).
   DEV_NOAUTH=1         solo en local: entra a la web sin login.
 """
 import asyncio
@@ -145,7 +146,8 @@ async def api_estado(req: Request):
     if not store.curso_existe(cid):
         return JSONResponse({"curso": None, "datos": None, "hojas": [], "pantalla": store.pantalla()})
     return JSONResponse({"curso": cid, "datos": store.leer_datos(cid), "hojas": store.listar_hojas(cid),
-                         "pantalla": store.pantalla(), "tarjetas": store.stats_tarjetas(cid)})
+                         "pantalla": store.pantalla(), "tarjetas": store.stats_tarjetas(cid),
+                         "lecciones": store.listar_lecciones(cid)})
 
 
 @_privado
@@ -169,6 +171,59 @@ async def api_tarjetas(req: Request):
 
 
 @_privado
+async def api_lecciones(req: Request):
+    cid = req.query_params.get("curso", "")
+    return JSONResponse({"lecciones": store.listar_lecciones(cid)})
+
+
+@_privado
+async def api_leccion(req: Request):
+    lec = store.leer_leccion(req.path_params["curso"], req.path_params["mision"])
+    if not lec:
+        return JSONResponse({"error": "No existe esa lección."}, status_code=404)
+    return JSONResponse(lec)
+
+
+@_privado
+async def api_completar(req: Request):
+    body = await req.json()
+    try:
+        return JSONResponse(store.completar_leccion(req.path_params["curso"], req.path_params["mision"], body.get("predicciones")))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@_privado
+async def api_mejoras(req: Request):
+    if req.method == "POST":
+        body = await req.json()
+        try:
+            return JSONResponse(store.registrar_mejora(body.get("descripcion"), "leo", body.get("curso") or None))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"mejoras": store.listar_mejoras()})
+
+
+@_privado
+async def api_mejora(req: Request):
+    body = await req.json()
+    try:
+        store.actualizar_mejora(int(req.path_params["mid"]), body.get("estado"), body.get("nota"))
+        return JSONResponse({"ok": True})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@_privado
+async def imagen(req: Request):
+    p = store.ruta_imagen(req.path_params["curso"], req.path_params["archivo"])
+    if not p:
+        return Response("No existe esa imagen.", status_code=404)
+    return FileResponse(p, media_type=store.MIME[p.suffix[1:]],
+                        headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
+
+
+@_privado
 async def hoja(req: Request):
     html = store.leer_hoja(req.path_params["curso"], req.path_params["archivo"])
     if html is None:
@@ -180,8 +235,9 @@ async def hoja(req: Request):
 mcp = FastMCP(
     "mi-tutor",
     instructions=("Mi Tutor: la app de estudio de Leo. Usa estas herramientas siguiendo la skill 'tutor' del repo "
-                  "AI Engineer Courses: leer el curso al empezar, mostrar cosas en vivo durante la sesión, y al cerrar "
-                  "guardar datos, hoja y tarjetas."),
+                  "AI Engineer Courses: leer el curso, sus mejoras abiertas y la lección de la misión al empezar; enseñar "
+                  "desde la lección (explicar primero, practicar después); mostrar cosas en vivo; y al cerrar guardar datos, "
+                  "hoja y tarjetas y registrar las mejoras que notaste. Las lecciones se escriben con la skill 'ingestar'."),
     stateless_http=True,
     json_response=True,
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
@@ -285,8 +341,81 @@ def editar_tarjeta(id: int, frente: str | None = None, reverso: str | None = Non
 
 
 @mcp.tool()
+def guardar_leccion(curso: str, mision_id: str, titulo: str, pasos: list[dict], fuentes: list[str] | None = None,
+                    tarjetas: list[dict] | None = None) -> dict:
+    """Guarda (o reemplaza) la lección de una misión. Leo la ve en la app → Lecciones, paso a paso.
+    Si Leo ya la completó, su avance se conserva.
+    pasos: lista en orden; cada paso es UN concepto: {"tipo", "titulo"?, "contenido", "notas"?, "resaltar"?, "respuesta"?}.
+      tipo 'markdown' (explicación), 'codigo' (código COMPLETO, nunca recortado; resaltar=[líneas clave]),
+      'mermaid' (diagrama; 'class nodo clave'), 'predice' (pregunta; 'respuesta' obligatoria, Leo debe contestar antes de avanzar),
+      'imagen' ({"url": la de subir_imagen, "alt", "notas"?}).
+      notas: 2–5 líneas de qué mirar, van al lado del código o diagrama.
+    Orden obligatorio: explicación con un ejemplo resuelto y su código completo PRIMERO; después los pasos predice
+    (Kirschner, Sweller y Clark 2006). Nada decorativo.
+    fuentes: de dónde sale (p. ej. 'module-1/router.ipynb'). tarjetas: 4–8 sugeridas {"frente", "reverso"}; entran al
+    mazo FSRS cuando Leo completa la lección."""
+    if not store.curso_existe(curso):
+        raise ValueError(f"No hay un curso '{curso}' en el árbol.")
+    r = store.guardar_leccion(curso, mision_id, titulo, pasos, fuentes, tarjetas)
+    return {**r, "mensaje": "Lección guardada. Leo la ve en la app → Lecciones."}
+
+
+@mcp.tool()
+def leer_leccion(curso: str, mision_id: str) -> dict:
+    """La lección de una misión: pasos, fuentes, tarjetas sugeridas, si Leo ya la completó y sus predicciones
+    (lo que escribió en cada paso 'predice' y si dijo que acertó). Léela antes de enseñar esa misión."""
+    lec = store.leer_leccion(curso, mision_id)
+    if not lec:
+        raise ValueError(f"La misión '{mision_id}' de '{curso}' todavía no tiene lección (usa la skill ingestar).")
+    return lec
+
+
+@mcp.tool()
+def listar_lecciones(curso: str) -> dict:
+    """Lecciones guardadas del curso (sin los pasos): misión, título, número de pasos y si están completadas."""
+    return {"lecciones": store.listar_lecciones(curso)}
+
+
+@mcp.tool()
+def subir_imagen(curso: str, nombre: str, base64_data: str) -> dict:
+    """Sube una imagen (PNG, JPG, GIF o WEBP; máx. ~1.5 MB) para usarla en un paso 'imagen' de una lección.
+    base64_data: el archivo en base64 (sin el prefijo 'data:'). Devuelve la URL privada (/imagenes/<curso>/<archivo>).
+    Mismo nombre = reemplaza. Para archivos locales es más barato correr tools/subir_imagen.py del repo learn."""
+    if not store.curso_existe(curso):
+        raise ValueError(f"No hay un curso '{curso}' en el árbol.")
+    try:
+        data = base64.b64decode(base64_data.split(",", 1)[-1], validate=True)
+    except Exception:
+        raise ValueError("base64_data no es base64 válido.")
+    return store.guardar_imagen(curso, nombre, data)
+
+
+@mcp.tool()
+def registrar_mejora(descripcion: str, reporta: str = "tutor", curso: str | None = None) -> dict:
+    """Registra un error o una propuesta de mejora del tutor o de la app (vista Mejoras).
+    reporta: 'tutor' (lo notaste tú) o 'leo' (lo dijo Leo). Una mejora por llamada, concreta y accionable.
+    Si ya existe una abierta con el mismo texto, no se duplica."""
+    return store.registrar_mejora(descripcion, reporta, curso)
+
+
+@mcp.tool()
+def ver_mejoras(estado: str | None = "abiertas", curso: str | None = None) -> dict:
+    """Lista las mejoras. estado: 'abiertas' (nuevas y aceptadas, por defecto), 'nueva', 'aceptada', 'hecha', 'descartada'
+    o null para todas. Revísalas al empezar cada sesión y aplica las aceptadas."""
+    return {"mejoras": store.listar_mejoras(estado, curso)}
+
+
+@mcp.tool()
+def actualizar_mejora(id: int, estado: str | None = None, nota: str | None = None) -> str:
+    """Cambia el estado de una mejora (nueva / aceptada / hecha / descartada) o le agrega una nota."""
+    store.actualizar_mejora(id, estado, nota)
+    return "Mejora actualizada."
+
+
+@mcp.tool()
 def dar_link(vista: str = "hoy") -> str:
-    """Link de acceso a la app (válido 36 h) para dárselo a Leo. vista: hoy, tarjetas, pantalla, hojas, repaso, progreso, estudios."""
+    """Link de acceso a la app (válido 36 h) para dárselo a Leo. vista: hoy, lecciones, tarjetas, pantalla, hojas, repaso,
+    progreso, proyecto, mejoras, estudios."""
     return link_de_acceso(vista)
 
 
@@ -449,6 +578,12 @@ routes = [
     Route("/api/cola", api_cola),
     Route("/api/tarjetas", api_tarjetas),
     Route("/api/tarjetas/{tid:int}/repaso", api_repasar, methods=["POST"]),
+    Route("/api/lecciones", api_lecciones),
+    Route("/api/lecciones/{curso}/{mision}", api_leccion),
+    Route("/api/lecciones/{curso}/{mision}/completar", api_completar, methods=["POST"]),
+    Route("/api/mejoras", api_mejoras, methods=["GET", "POST"]),
+    Route("/api/mejoras/{mid:int}", api_mejora, methods=["POST"]),
+    Route("/imagenes/{curso}/{archivo}", imagen),
     Route("/hojas/{curso}/{archivo}", hoja),
     Mount("/static", StaticFiles(directory=STATIC)),
     Mount("/", app=mcp_app),
