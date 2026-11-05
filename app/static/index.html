@@ -117,7 +117,7 @@ h2{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;c
 .notes .k{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:6px}
 .notes p{margin:0 0 8px}.notes p:last-child{margin:0}
 .mm{display:flex;justify-content:center;overflow:auto}
-.mm svg{max-width:100%;height:auto}
+.mm svg{width:100%;max-width:min(100%,680px)!important;height:auto} /* los grafos chicos se agrandan para leerse bien */
 .code{background:var(--panel2);border:1px solid var(--line);border-radius:8px;overflow:auto;font:15px/1.6 var(--f-mono);padding:10px 0}
 .code .ln{display:grid;grid-template-columns:44px 1fr;padding-right:16px}
 .code .ln i{font-style:normal;color:var(--faint);text-align:right;padding-right:14px;user-select:none}
@@ -138,6 +138,32 @@ iframe.htmlbox{width:100%;min-height:500px;border:1px solid var(--line);border-r
 .predict .answer{margin-top:16px;border-top:1px dashed var(--line);padding-top:14px}
 .predict .answer .k{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--acc-ink);margin-bottom:6px}
 .predict .mine{font-size:15px;color:var(--muted);margin-bottom:10px;max-width:70ch}
+.chathint{font-size:15px;color:var(--muted);margin:12px 0}
+/* tipos interactivos de la pantalla */
+.mm g.node.activo rect,.mm g.node.activo polygon,.mm g.node.activo circle,.mm g.node.activo path{fill:var(--mark)!important;stroke:var(--mark-line)!important;stroke-width:3px!important}
+.mm g.node.visto rect,.mm g.node.visto polygon,.mm g.node.visto circle{stroke:var(--acc)!important;stroke-width:2px!important}
+.mm g.node.clic{cursor:pointer}
+.mm g.node.clic rect,.mm g.node.clic polygon,.mm g.node.clic circle{stroke-dasharray:5 3}
+.mm g.node.clic:focus-visible{outline:2px solid var(--acc)}
+.recbar{display:flex;align-items:center;gap:8px;margin:2px 0 10px}
+.recbar .btn{padding:4px 12px}
+.dots{flex:1;display:flex;gap:4px;flex-wrap:wrap}
+.dots i{flex:1;min-width:8px;height:7px;border-radius:4px;background:var(--line)}
+.dots i.ok{background:var(--acc)}.dots i.cur{background:var(--acc);opacity:.55}
+.recnota{font-size:16px;line-height:1.55}.recnota p{margin:0 0 6px}
+table.stt{border-collapse:collapse;width:100%;font-size:14.5px;margin-top:4px}
+table.stt th,table.stt td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+table.stt th{font-family:var(--f-mono);font-weight:600;color:var(--muted);white-space:nowrap}
+table.stt td code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}
+table.stt tr.cambio td,table.stt tr.cambio th{background:var(--mark)}
+table.stt tr.cambio th{box-shadow:inset 3px 0 0 var(--mark-line);color:var(--ink)}
+table.est{max-width:860px;font-size:15.5px}
+table.est thead th{background:var(--panel2);color:var(--ink)}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.cmpk{font:600 12px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.code .ln.menos{background:var(--bad-soft);box-shadow:inset 3px 0 0 var(--bad)}
+.code .ln.mas{background:var(--acc-soft);box-shadow:inset 3px 0 0 var(--acc)}
+@media (max-width:900px){.cmp{grid-template-columns:1fr}}
 .waiting{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:380px;color:var(--muted);text-align:center}
 .waiting b{color:var(--ink);font-size:18px}
 
@@ -473,8 +499,11 @@ const HELP = {
     <li>La explicación va <b>al lado</b> de lo que explica: es el principio de diseño con mayor efecto en el aprendizaje.</li>
     <li>Se resalta <b>solo lo clave</b> para que sepas dónde mirar.</li>
     <li>Avanzas <b>a tu ritmo</b> con ← y →. La tecla F oculta el menú.</li>
-    <li>Las tarjetas <b>Predice</b> te piden adivinar antes de ver la respuesta: equivocarte al predecir es donde más aprendes.</li></ul>
-    <div class="src">Mayer: contigüidad, señalización y segmentación. Dunlosky et al. (2013): práctica de recuerdo.</div>`,
+    <li>La pantalla es <b>solo para ver</b>: contestas en el chat con el tutor. En las tarjetas <b>Predice</b> dices tu predicción en el chat y luego revisas la respuesta aquí; equivocarte al predecir es donde más aprendes.</li>
+    <li><b>Recorrido:</b> sigues un grafo paso a paso; se ilumina el node que corre y ves el state en ese momento, con lo que cambió resaltado. Ver un proceso por pasos y a tu ritmo enseña más que una imagen quieta.</li>
+    <li><b>Estado:</b> antes, update y después, con las keys que cambiaron resaltadas. <b>Comparar:</b> dos versiones lado a lado con las líneas distintas marcadas; comparar dos casos ayuda a ver qué importa.</li>
+    <li>En algunos diagramas puedes <b>tocar un node</b> (borde punteado) para ver qué hace, al lado.</li></ul>
+    <div class="src">Mayer: contigüidad, señalización y segmentación. Höffler y Leutner (2007): animaciones para procesos. Alfieri et al. (2013): aprender comparando casos. Dunlosky et al. (2013): práctica de recuerdo.</div>`,
   hojas: `<ul><li>Resolver la hoja <b>al día siguiente</b> junta las dos técnicas con más evidencia: recordar sin ayuda y repasar con días de por medio.</li>
     <li>El papel ayuda porque <b>no puedes buscar la respuesta</b> y estás lejos de distracciones. Escribir a mano no memoriza más por sí solo: eso no se sostuvo en las réplicas.</li>
     <li>Se imprime solo la página de preguntas. Las <b>respuestas</b> se revisan aquí, con el botón Respuestas.</li></ul>
@@ -665,7 +694,10 @@ document.addEventListener("keydown", e => {
   if (e.key === "ArrowRight") step(1);
   if (e.key === "f" || e.key === "F") document.body.classList.toggle("focus");
 });
-function step(n){ idx = Math.max(0, Math.min(items.length - 1, idx + n)); renderPantalla(); }
+function step(n){
+  if (recMover(n)) return;  // dentro de un recorrido, ← → mueven el paso antes que el panel
+  idx = Math.max(0, Math.min(items.length - 1, idx + n)); renderPantalla();
+}
 
 async function renderPantalla(){
   if (idx >= items.length) idx = items.length - 1;
@@ -683,24 +715,118 @@ async function renderPantalla(){
   if (renderedKey === key) return;
   renderedKey = key;
 
-  const hasNotes = !!it.notas && it.tipo !== "predice";
+  const dat = it.datos || {};
+  const conPanel = it.tipo === "recorrido" || (it.tipo === "mermaid" && dat.detalles);
+  const notasAbajo = it.notas && ["estado", "comparar"].includes(it.tipo);  // las tablas anchas necesitan todo el ancho
+  const hasNotes = conPanel || (!!it.notas && !["predice", "comparar", "estado"].includes(it.tipo));
   stage.innerHTML = `<div class="st"><b>${esc(it.titulo)}</b><span>${esc(it.ts)}</span></div>
-    <div class="split ${hasNotes ? "" : "solo"}"><div id="visual"></div>${hasNotes ? `<div class="notes"><div class="k">Qué estás viendo</div>${md(it.notas)}</div>` : ""}</div>`;
+    <div class="split ${hasNotes ? "" : "solo"}"><div id="visual"></div>${hasNotes ? `<div class="notes" id="pnotes">${it.notas ? `<div class="k">Qué estás viendo</div>${md(it.notas)}` : ""}<div id="pside"></div></div>` : ""}</div>`;
   const box = $("#visual");
+  recActual = null;
 
   if (it.tipo === "predice"){
+    // La pantalla es solo para ver: Leo contesta en el chat y aquí revisa la respuesta.
     box.className = "predict";
     box.innerHTML = `<div class="md">${md(it.contenido)}</div>
-      <textarea id="guess" placeholder="Escribe tu predicción antes de ver la respuesta (opcional, no se guarda)"></textarea>
+      <p class="chathint">Contesta en el chat. Cuando lo hayas dicho, mira la respuesta.</p>
       <button class="btn pri" id="reveal">Ver respuesta</button><div id="ans"></div>`;
     $("#reveal").onclick = () => {
-      const g = $("#guess").value.trim();
-      $("#ans").innerHTML = `<div class="answer">${g ? `<div class="mine"><b>Tu predicción:</b> ${esc(g)}</div>` : ""}<div class="k">Respuesta</div><div class="md">${md(it.respuesta)}</div></div>`;
-      $("#reveal").remove(); $("#guess").readOnly = true;
+      $("#ans").innerHTML = `<div class="answer"><div class="k">Respuesta</div><div class="md">${md(it.respuesta)}</div></div>`;
+      $("#reveal").remove();
     };
+  } else if (it.tipo === "recorrido"){
+    await pintarRecorrido(box, $("#pside"), it);
+  } else if (it.tipo === "estado" || it.tipo === "comparar"){
+    box.innerHTML = (it.tipo === "estado" ? tablaEstado(dat) : pintarComparar(dat)) +
+      (notasAbajo ? `<div class="notes" style="margin-top:16px;position:static"><div class="k">Qué estás viendo</div>${md(it.notas)}</div>` : "");
   } else {
     await pintarVisual(box, it);
+    if (it.tipo === "mermaid" && dat.detalles) activarDetalles(box, $("#pside"), dat.detalles);
   }
+}
+
+/* ---------- Tipos interactivos de la pantalla ---------- */
+const jv = v => v === undefined ? "—" : (typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v));
+const nodosDe = (box, id) => [...box.querySelectorAll("g.node")].filter(g => new RegExp(`^flowchart-${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`).test(g.id));
+
+/* State como tabla clave/valor; marca las keys que cambiaron respecto al anterior (señalización). */
+function tablaState(st, prev){
+  if (st === undefined || st === null) return "";
+  if (typeof st !== "object" || Array.isArray(st)) return `<div class="code" style="padding:8px 12px">${esc(jv(st))}</div>`;
+  const keys = Object.keys(st);
+  return `<table class="stt"><tbody>${keys.map(k => {
+    const cambio = prev && typeof prev === "object" && jv(prev[k]) !== jv(st[k]);
+    return `<tr class="${cambio ? "cambio" : ""}"><th>${esc(k)}</th><td><code>${esc(jv(st[k]))}</code></td></tr>`;
+  }).join("")}</tbody></table>`;
+}
+
+let recActual = null;  // {box, side, it, i}
+const recPaso = {};    // en qué paso quedó cada recorrido
+async function pintarRecorrido(box, side, it){
+  await pintarVisual(box, {tipo: "mermaid", contenido: it.contenido});
+  recActual = {box, side, it, i: Math.min(recPaso[it.id] || 0, it.datos.pasos.length - 1)};
+  recPintar();
+}
+function recPintar(){
+  const {box, side, it, i} = recActual, pasos = it.datos.pasos, p = pasos[i];
+  recPaso[it.id] = i;
+  box.querySelectorAll("g.node").forEach(g => g.classList.remove("activo", "visto"));
+  pasos.slice(0, i).forEach(q => q.nodo && nodosDe(box, q.nodo).forEach(g => g.classList.add("visto")));
+  if (p.nodo) nodosDe(box, p.nodo).forEach(g => g.classList.add("activo"));
+  const prev = [...pasos.slice(0, i)].reverse().find(q => q.estado !== undefined);
+  side.innerHTML = `<div class="recbar"><button class="btn" id="rprev" ${i === 0 ? "disabled" : ""} title="Paso anterior (←)">←</button>
+      <span class="dots">${pasos.map((_, j) => `<i class="${j < i ? "ok" : j === i ? "cur" : ""}"></i>`).join("")}</span>
+      <button class="btn" id="rnext" ${i === pasos.length - 1 ? "disabled" : ""} title="Paso siguiente (→)">→</button></div>
+    <div class="k">Paso ${i + 1} de ${pasos.length}${p.nodo ? ` · <code>${esc(p.nodo)}</code>` : ""}</div>
+    ${p.nota ? `<div class="recnota">${md(p.nota)}</div>` : ""}
+    ${p.estado !== undefined ? `<div class="k" style="margin-top:10px">State</div>${tablaState(p.estado, prev && prev.estado)}` : ""}`;
+  $("#rprev").onclick = () => recMover(-1);
+  $("#rnext").onclick = () => recMover(1);
+}
+function recMover(n){
+  if (!recActual || view !== "pantalla") return false;
+  const j = recActual.i + n;
+  if (j < 0 || j >= recActual.it.datos.pasos.length) return false;  // en los bordes, ← → cambian de panel
+  recActual.i = j; recPintar(); return true;
+}
+
+/* Diagrama con nodos que se tocan para ver su explicación al lado. */
+function activarDetalles(box, side, detalles){
+  side.innerHTML = `<p class="chathint" style="margin:8px 0 0">Toca un nodo con borde punteado para ver qué hace.</p><div id="pdet"></div>`;
+  for (const [id, texto] of Object.entries(detalles)){
+    nodosDe(box, id).forEach(g => {
+      g.classList.add("clic"); g.setAttribute("tabindex", "0"); g.setAttribute("role", "button");
+      const abrir = () => { box.querySelectorAll("g.node").forEach(x => x.classList.remove("activo")); g.classList.add("activo");
+        $("#pdet").innerHTML = `<div class="k" style="margin-top:10px"><code>${esc(id)}</code></div><div class="recnota">${md(texto)}</div>`; };
+      g.addEventListener("click", abrir);
+      g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); abrir(); } });
+    });
+  }
+}
+
+/* Antes → update → después, con las keys que cambiaron resaltadas. */
+function tablaEstado(d){
+  const cols = [["Antes", d.antes], ...(d.update !== undefined ? [["Update del node", d.update]] : []), ["Después", d.despues]];
+  const keys = [...new Set(cols.flatMap(([, o]) => o && typeof o === "object" ? Object.keys(o) : []))];
+  return `<table class="stt est"><thead><tr><th>Key</th>${cols.map(([t]) => `<th>${t}</th>`).join("")}</tr></thead><tbody>${keys.map(k => {
+    const cambio = jv((d.antes || {})[k]) !== jv((d.despues || {})[k]);
+    return `<tr class="${cambio ? "cambio" : ""}"><th>${esc(k)}</th>${cols.map(([, o]) => `<td><code>${esc(o && k in o ? jv(o[k]) : "—")}</code></td>`).join("")}</tr>`;
+  }).join("")}</tbody></table><p class="chathint">Resaltadas: las keys que cambiaron.</p>`;
+}
+
+/* Dos versiones lado a lado; las líneas distintas se resaltan (diff por líneas, LCS). */
+function pintarComparar(d){
+  const a = d.izquierda.codigo.replace(/\n$/, "").split("\n"), b = d.derecha.codigo.replace(/\n$/, "").split("\n");
+  const L = Array.from({length: a.length + 1}, () => new Array(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--)
+    L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const sa = new Set(), sb = new Set();
+  for (let i = 0, j = 0; i < a.length && j < b.length;){
+    if (a[i] === b[j]){ sa.add(i); sb.add(j); i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) i++; else j++;
+  }
+  const col = (t, ls, igual, cls) => `<div><div class="k cmpk">${esc(t || "")}</div><div class="code">${ls.map((l, i) =>
+    `<div class="ln ${igual.has(i) ? "" : cls}"><i>${i + 1}</i><span>${esc(l) || " "}</span></div>`).join("")}</div></div>`;
+  return `<div class="cmp">${col(d.izquierda.titulo, a, sa, "menos")}${col(d.derecha.titulo, b, sb, "mas")}</div>`;
 }
 
 /* Dibuja un elemento (de la pantalla o de una lección) que no es "predice". */

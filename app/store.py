@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS lecciones (curso TEXT, mision_id TEXT, modulo TEXT, t
 CREATE TABLE IF NOT EXISTS mejoras (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, reporta TEXT, curso TEXT,
   descripcion TEXT, estado TEXT DEFAULT 'nueva', nota TEXT, actualizado TEXT);
 """)
+# migración: los tipos interactivos de la pantalla guardan su estructura en 'datos'
+if "datos" not in {r["name"] for r in _con.execute("PRAGMA table_info(pantalla)")}:
+    _con.execute("ALTER TABLE pantalla ADD COLUMN datos TEXT")
+    _con.commit()
 
 
 def now_utc():
@@ -221,15 +225,53 @@ def leer_hoja(cid, archivo):
 
 
 # ---------- pantalla ----------
-def mostrar(cid, titulo, tipo, contenido, notas=None, resaltar=None, respuesta=None):
-    if tipo not in ("mermaid", "codigo", "markdown", "html", "predice"):
-        raise ValueError("tipo debe ser mermaid, codigo, markdown, html o predice.")
+TIPOS_PANTALLA = ("mermaid", "codigo", "markdown", "html", "predice", "recorrido", "estado", "comparar")
+
+
+def _validar_datos_pantalla(tipo, contenido, datos):
+    """Los tipos interactivos traen su estructura en 'datos'. Devuelve 'datos' limpio (o None)."""
+    datos = datos or {}
+    if not isinstance(datos, dict):
+        raise ValueError("'datos' debe ser un objeto.")
+    if tipo == "recorrido":
+        pasos = datos.get("pasos")
+        if not str(contenido or "").strip():
+            raise ValueError("'recorrido' necesita el diagrama mermaid en 'contenido'.")
+        if not isinstance(pasos, list) or not pasos:
+            raise ValueError("'recorrido' necesita datos.pasos: [{\"nodo\", \"estado\"?, \"nota\"}, ...].")
+        for i, p in enumerate(pasos, 1):
+            if not isinstance(p, dict) or not (p.get("nodo") or p.get("nota")):
+                raise ValueError(f"datos.pasos[{i}] necesita 'nodo' (id del nodo en el diagrama) o 'nota'.")
+        return {"pasos": pasos}
+    if tipo == "estado":
+        if "antes" not in datos or "despues" not in datos:
+            raise ValueError("'estado' necesita datos.antes y datos.despues (y opcional datos.update).")
+        return {k: datos[k] for k in ("antes", "update", "despues") if k in datos}
+    if tipo == "comparar":
+        for lado in ("izquierda", "derecha"):
+            v = datos.get(lado)
+            if not isinstance(v, dict) or not str(v.get("codigo") or "").strip():
+                raise ValueError(f"'comparar' necesita datos.{lado} = {{\"titulo\", \"codigo\"}}.")
+        return {k: datos[k] for k in ("izquierda", "derecha")}
+    if tipo == "mermaid" and datos.get("detalles"):
+        if not isinstance(datos["detalles"], dict):
+            raise ValueError("datos.detalles debe ser {id_del_nodo: texto}.")
+        return {"detalles": datos["detalles"]}
+    if not str(contenido or "").strip():
+        raise ValueError("Falta 'contenido'.")
+    return None
+
+
+def mostrar(cid, titulo, tipo, contenido, notas=None, resaltar=None, respuesta=None, datos=None):
+    if tipo not in TIPOS_PANTALLA:
+        raise ValueError("tipo debe ser uno de: " + ", ".join(TIPOS_PANTALLA) + ".")
     if tipo == "predice" and not respuesta:
         raise ValueError("El tipo 'predice' necesita 'respuesta'.")
+    extra = _validar_datos_pantalla(tipo, contenido, datos)
     iid = int(now_utc().timestamp() * 1000)
-    _x("INSERT INTO pantalla (id, curso, ts, titulo, tipo, contenido, notas, resaltar, respuesta) VALUES (?,?,?,?,?,?,?,?,?)",
-       (iid, cid, datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), titulo, tipo, contenido, notas,
-        json.dumps(resaltar or []), respuesta))
+    _x("INSERT INTO pantalla (id, curso, ts, titulo, tipo, contenido, notas, resaltar, respuesta, datos) VALUES (?,?,?,?,?,?,?,?,?,?)",
+       (iid, cid, datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), titulo, tipo, contenido or "", notas,
+        json.dumps(resaltar or []), respuesta, json.dumps(extra, ensure_ascii=False) if extra else None))
     _x("DELETE FROM pantalla WHERE id NOT IN (SELECT id FROM pantalla ORDER BY id DESC LIMIT ?)", (PANTALLA_MAX,))
     return iid
 
@@ -240,6 +282,7 @@ def pantalla():
     for r in rows:
         d = dict(r)
         d["resaltar"] = json.loads(d["resaltar"] or "[]")
+        d["datos"] = json.loads(d["datos"]) if d.get("datos") else None
         out.append({k: v for k, v in d.items() if v is not None})
     return out
 

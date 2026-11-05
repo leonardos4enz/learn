@@ -41,6 +41,11 @@ antes de cambiar el método, la interfaz o las skills (`tutor`, `ingestar`).
 | Camino de lecciones por módulo, con el grokpet junto a la que toca | Gusto de Leo; menos decisiones | **Hipótesis**: estilo Duolingo. Mostrar "la que toca" reduce el costo de decidir por dónde seguir; no hay estudio que lo respalde para este caso. |
 | Código siempre **completo**; las líneas largas bajan en vez de esconderse | Coherencia: nada que reconstruir | Viene de la primera sesión: Leo se confundía con código recortado (registrado en Mejoras). |
 | Imágenes solo si enseñan algo; los grafos van en diagrama, no en captura | Coherencia | Mayer (coherencia); Sundararajan y Adesope (2020). |
+| La **pantalla en vivo es solo para ver**: no tiene campos de texto; Leo contesta en el chat y en *Predice* revela la respuesta después de decirla | Práctica de recuerdo sin duplicar trabajo | Dunlosky et al. (2013). La app no le pasa al tutor lo que se escribe en la pantalla, así que escribir ahí era trabajo perdido y Leo terminaba contestando dos veces. |
+| **Recorrido**: un grafo paso a paso, con el node activo iluminado y el state de ese momento al lado; Leo avanza con ← → | Animación de un proceso + segmentación + señalización | Höffler y Leutner (2007), meta-análisis: las animaciones superan a las imágenes quietas sobre todo en conocimiento de procedimientos (d ≈ 0.4). Mayer y Chandler (2001): que el alumno controle el ritmo de los pasos ayuda. |
+| **Estado**: antes / update / después, con las keys que cambiaron resaltadas | Señalización | Mayer (señalización, d ≈ 0.4): marca justo lo que hizo el reducer. |
+| **Comparar**: dos versiones de código lado a lado con las líneas distintas marcadas | Comparación de casos + contigüidad | Alfieri, Nokes-Malach y Schunn (2013), meta-análisis: aprender comparando casos rinde más que verlos por separado (d ≈ 0.5). Mayer (contigüidad). |
+| Diagramas con **nodes que se tocan** para ver su explicación al lado | Contigüidad + control del alumno | Mayer (contigüidad). Que tocar ayude más que leer todas las notas es **hipótesis**. |
 | Modo claro por defecto (texto oscuro sobre fondo claro) | Polaridad positiva | Piepenbrock et al. (2013, 2014). |
 | Texto de 16–17 px, interlineado 1.6, líneas de ~70 caracteres | Legibilidad | Dyson (2004): preferencia por 45–72 caracteres; WCAG 1.4.8 (máx. 80). Convención, evidencia limitada. |
 | Fuente Nunito (redondeada, estilo Duolingo) | Gusto de Leo | No hay ganador claro entre fuentes legibles (Nielsen; estudios mixtos). Fuentes "difíciles" como Sans Forgetica **no** ayudan (Taylor et al. 2020). |
@@ -81,6 +86,9 @@ antes de cambiar el método, la interfaz o las skills (`tutor`, `ingestar`).
 - Bastani et al. (2025). *Generative AI without guardrails can harm learning*. PNAS 122.
 - Kestin et al. (2025). *AI tutoring outperforms in-class active learning*. Scientific Reports 15, 17458.
 - Kirschner, Sweller y Clark (2006). *Why minimal guidance during instruction does not work*. Educational Psychologist.
+- Höffler y Leutner (2007). *Instructional animation versus static pictures: A meta-analysis*. Learning and Instruction 17(6).
+- Mayer y Chandler (2001). *When learning is just a click away: Does simple user interaction foster deeper understanding of multimedia messages?* Journal of Educational Psychology 93(2).
+- Alfieri, Nokes-Malach y Schunn (2013). *Learning Through Case Comparisons: A Meta-Analytic Review*. Educational Psychologist 48(2).
 - Kalyuga (2007). *Expertise Reversal Effect and Its Implications for Learner-Tailored Instruction*. Educational Psychology Review 19.
 - Mayer, *Multimedia Learning* (principios de contigüidad, coherencia, señalización y segmentación).
 - Sundararajan y Adesope (2020). *Keep it Coherent: A Meta-Analysis of the Seductive Details Effect*. Educational Psychology Review 32.

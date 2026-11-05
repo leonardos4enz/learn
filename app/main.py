@@ -306,14 +306,27 @@ def leer_hoja(curso: str, archivo: str) -> str:
 
 
 @mcp.tool()
-def mostrar(curso: str, titulo: str, tipo: str, contenido: str, notas: str | None = None,
-            resaltar: list[int] | None = None, respuesta: str | None = None) -> str:
-    """Muestra algo en la Pantalla en vivo de Leo (lo ve en ~2 s).
-    tipo: 'mermaid' (diagrama; marca el nodo clave con 'class nodo clave'), 'codigo' (usa resaltar=[n° de línea]),
-    'markdown', 'html' o 'predice' (pregunta; 'respuesta' queda oculta hasta que Leo da clic).
-    notas: 2–5 líneas que dicen qué mirar; van al lado del contenido (ponlas siempre en diagramas y código)."""
-    store.mostrar(curso, titulo, tipo, contenido, notas, resaltar, respuesta)
-    return "En pantalla."
+def mostrar(curso: str, titulo: str, tipo: str, contenido: str = "", notas: str | None = None,
+            resaltar: list[int] | None = None, respuesta: str | None = None, datos: dict | None = None) -> str:
+    """Muestra algo en la Pantalla en vivo de Leo (lo ve en ~2 s). La pantalla es SOLO para ver: Leo contesta en el chat.
+    Manda UN panel y espera a que Leo responda antes del siguiente (si mandas dos seguidos, solo ve el último).
+    tipo:
+      'mermaid'   diagrama; marca el nodo clave con 'class X clave'. Opcional datos={"detalles": {"X": "qué hace X"}}:
+                  Leo toca un nodo y ve su explicación al lado.
+      'codigo'    código COMPLETO (nunca recortado); resaltar=[n° de línea].
+      'markdown'  explicación, tabla o ejemplo.
+      'predice'   pregunta; 'respuesta' queda oculta hasta que Leo da clic. Leo contesta en el chat ANTES de revelarla.
+      'recorrido' un grafo paso a paso: contenido = diagrama mermaid (flowchart);
+                  datos={"pasos": [{"nodo": "A", "estado": {...}, "nota": "qué pasa aquí"}, ...]}. Leo avanza con ← →;
+                  se ilumina el nodo activo y se ve el state en ese momento. Ideal para seguir un invoke o un loop.
+      'estado'    cómo cambia el state con un update: datos={"antes": {...}, "update": {...}, "despues": {...}};
+                  se resaltan las keys que cambiaron. Ideal para reducers.
+      'comparar'  dos versiones de código lado a lado: datos={"izquierda": {"titulo", "codigo"}, "derecha": {...}};
+                  se resaltan las líneas distintas. Ideal para "antes / después" o "con y sin reducer".
+      'html'      solo si nada de lo anterior sirve.
+    notas: 2–5 líneas que dicen qué mirar; van al lado del contenido (ponlas siempre)."""
+    store.mostrar(curso, titulo, tipo, contenido, notas, resaltar, respuesta, datos)
+    return "En pantalla. Espera a que Leo conteste antes de mandar el siguiente panel."
 
 
 @mcp.tool()
