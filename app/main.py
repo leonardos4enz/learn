@@ -343,6 +343,15 @@ def mostrar(curso: str, titulo: str, tipo: str, contenido: str = "", notas: str 
 
 
 @mcp.tool()
+def clasificar_panel(curso: str, ids: list[int], mision: str | None = None) -> dict:
+    """Mueve paneles ya mostrados a la lección de una misión (o a Libre si mision es null). Sirve para ordenar paneles
+    que quedaron en Libre o en la lección equivocada. Los ids salen de ver_pantalla."""
+    if not store.curso_existe(curso):
+        raise ValueError(f"No hay un curso '{curso}' en el árbol.")
+    return store.clasificar_paneles(curso, ids, mision)
+
+
+@mcp.tool()
 def ver_pantalla(curso: str, mision: str | None = None) -> dict:
     """Lo que ya se le mostró a Leo en la pantalla en vivo: título, tipo y fecha de cada panel. Con mision, solo los de
     esa lección; con mision="libre", los que no son de ninguna lección; sin mision, todos los del curso.

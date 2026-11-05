@@ -374,12 +374,7 @@ def mostrar(cid, titulo, tipo, contenido, notas=None, resaltar=None, respuesta=N
         raise ValueError("tipo debe ser uno de: " + ", ".join(TIPOS_PANTALLA) + ".")
     if tipo == "predice" and not respuesta:
         raise ValueError("El tipo 'predice' necesita 'respuesta'.")
-    mision = str(mision).strip() if mision not in (None, "") else None
-    if mision:
-        ids = {str(m.get("id")) for m in (leer_datos(cid) or {}).get("misiones", [])}
-        if ids and mision not in ids:
-            raise ValueError(f"'{mision}' no es una misión de '{cid}'. Misiones: {', '.join(sorted(ids))}. "
-                             "Para una duda suelta, no pases 'mision' (va a Libre).")
+    mision = _validar_mision(cid, mision)
     extra = _validar_datos_pantalla(tipo, contenido, datos)
     iid = int(now_utc().timestamp() * 1000)
     _x("""INSERT INTO pantalla (id, curso, ts, titulo, tipo, contenido, notas, resaltar, respuesta, datos, mision)
@@ -389,6 +384,29 @@ def mostrar(cid, titulo, tipo, contenido, notas=None, resaltar=None, respuesta=N
     # Tope solo de seguridad (muy alto): el historial por lección se conserva.
     _x("DELETE FROM pantalla WHERE id NOT IN (SELECT id FROM pantalla ORDER BY id DESC LIMIT ?)", (PANTALLA_MAX,))
     return iid
+
+
+def _validar_mision(cid, mision):
+    mision = str(mision).strip() if mision not in (None, "") else None
+    if mision:
+        ids = {str(m.get("id")) for m in (leer_datos(cid) or {}).get("misiones", [])}
+        if ids and mision not in ids:
+            raise ValueError(f"'{mision}' no es una misión de '{cid}'. Misiones: {', '.join(sorted(ids))}. "
+                             "Para una duda suelta, no pases 'mision' (va a Libre).")
+    return mision
+
+
+def clasificar_paneles(cid, ids, mision=None):
+    """Mueve paneles ya guardados a una lección (o a Libre con mision=None). Solo toca paneles de ese curso."""
+    mision = _validar_mision(cid, mision)
+    ids = [int(i) for i in (ids or [])]
+    if not ids:
+        raise ValueError("Pasa al menos un id de panel (los da ver_pantalla).")
+    marcas = ",".join("?" * len(ids))
+    encontrados = [r["id"] for r in _q(f"SELECT id FROM pantalla WHERE curso=? AND id IN ({marcas})", (cid, *ids))]
+    if encontrados:
+        _x(f"UPDATE pantalla SET mision=? WHERE curso=? AND id IN ({','.join('?' * len(encontrados))})", (mision, cid, *encontrados))
+    return {"movidos": len(encontrados), "no_encontrados": sorted(set(ids) - set(encontrados)), "mision": mision or "libre"}
 
 
 def _panel(r):
