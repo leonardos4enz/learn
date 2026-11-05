@@ -137,7 +137,7 @@ async def app_index(req: Request):
 
 @_privado
 async def api_cursos(req: Request):
-    return JSONResponse({"arbol": store.arbol_con_resumen()})
+    return JSONResponse({"arbol": store.arbol_con_resumen(), "racha": store.racha()})
 
 
 @_privado
@@ -246,8 +246,9 @@ mcp = FastMCP(
 
 @mcp.tool()
 def ver_arbol() -> dict:
-    """Árbol de estudios (áreas › series › cursos) con el resumen de cada curso: misiones hechas, siguiente misión y tarjetas."""
-    return {"arbol": store.arbol_con_resumen()}
+    """Árbol de estudios (áreas › series › cursos) con el resumen de cada curso (misiones hechas, siguiente misión, tarjetas
+    y score por módulo), el score de cada rama y la racha de días seguidos estudiando."""
+    return {"arbol": store.arbol_con_resumen(), "racha": store.racha()}
 
 
 @mcp.tool()

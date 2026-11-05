@@ -25,7 +25,7 @@
 <style>
 :root{
   --bg:#F5F6F7; --panel:#FFFFFF; --panel2:#F3F5F6; --ink:#16191D; --muted:#59636E; --faint:#8A939C;
-  --line:#E2E5E9; --acc:#0B7D67; --acc-soft:#E2F2EE; --acc-ink:#095E4E;
+  --line:#E2E5E9; --acc:#0B7D67; --acc-soft:#E2F2EE; --acc-ink:#095E4E; --on-acc:#FFFFFF;
   --mark:#FFF1BF; --mark-line:#C98A00; --warn:#9A5B00; --warn-soft:#FFF3DC; --bad:#A8231B; --bad-soft:#FCEBE9;
   --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.07);
   --f-body: "Nunito", "Segoe UI", system-ui, sans-serif;
@@ -36,7 +36,7 @@
 }
 :root[data-theme="dark"]{
   --bg:#101417; --panel:#171C20; --panel2:#1D2328; --ink:#E6EBEE; --muted:#9BA6B0; --faint:#6E7983;
-  --line:#283037; --acc:#34C3A2; --acc-soft:#14322B; --acc-ink:#86E3CC;
+  --line:#283037; --acc:#34C3A2; --acc-soft:#14322B; --acc-ink:#86E3CC; --on-acc:#062A21;
   --mark:#3A3115; --mark-line:#E0A92E; --warn:#F0A43A; --warn-soft:#33260F; --bad:#F07167; --bad-soft:#3A1A18;
   --shadow:none; --sheet:#171C20; color-scheme: dark;
 }
@@ -60,7 +60,7 @@ aside{background:var(--panel);border-right:1px solid var(--line);display:flex;fl
 .nav:hover{background:var(--panel2);color:var(--ink)}
 .nav.on{background:var(--acc-soft);color:var(--acc-ink);font-weight:600}
 .nav svg{width:18px;height:18px;flex:none}
-.badge{margin-left:auto;font:600 11px var(--f-mono);background:var(--acc);color:#fff;border-radius:10px;padding:1px 7px;display:none}
+.badge{margin-left:auto;font:600 11px var(--f-mono);background:var(--acc);color:var(--on-acc);border-radius:10px;padding:1px 7px;display:none}
 .badge.show{display:inline-block}
 .side-foot{margin-top:auto;padding:12px 8px 0;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:9px}
 .live{display:flex;align-items:center;gap:7px}
@@ -78,8 +78,8 @@ h2{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;c
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
 .btn{border:1px solid var(--line);background:var(--panel);padding:7px 14px;border-radius:8px;cursor:pointer;font-size:14.5px;white-space:nowrap}
 .btn:hover{border-color:var(--acc);color:var(--acc-ink)}
-.btn.pri{background:var(--acc);border-color:var(--acc);color:#fff}
-.btn.pri:hover{filter:brightness(1.07);color:#fff}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
+.btn.pri:hover{filter:brightness(1.07);color:var(--on-acc)}
 .btn:disabled{opacity:.4;cursor:default}
 .chip{font:600 12.5px var(--f-mono);padding:2px 8px;border-radius:6px;white-space:nowrap}
 .chip.ok{background:var(--acc-soft);color:var(--acc-ink)}
@@ -96,7 +96,7 @@ h2{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;c
 .today .nb{font:14px var(--f-mono);color:var(--muted)}
 .today .how{margin:14px 0 0;padding:10px 12px;border-radius:8px;background:var(--panel2);font-size:15px}
 .today .how code{font-size:14px;background:var(--panel);padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
-.today .main{grid-row:span 3;border-left:4px solid var(--acc)}
+.today .main{grid-row:span 2;border-left:4px solid var(--acc)}
 .qlist{margin:10px 0 0;padding-left:20px}
 .qlist li{margin-bottom:8px;max-width:70ch}
 .summary{display:flex;gap:28px;flex-wrap:wrap;margin-top:16px;color:var(--muted);font-size:15px}
@@ -174,7 +174,7 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .mod .name small{display:block;font-weight:400;color:var(--muted);font-size:13.5px}
 .pills{display:flex;flex-wrap:wrap;gap:6px}
 .pill{font:600 13px var(--f-mono);padding:4px 9px;border-radius:7px;border:1.5px solid var(--line);color:var(--faint);background:var(--panel2)}
-.pill.done{background:var(--acc);border-color:var(--acc);color:#fff}
+.pill.done{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
 .pill.now{border-color:var(--acc);color:var(--acc-ink);background:var(--acc-soft)}
 .pct{font:600 14px var(--f-mono);color:var(--muted);text-align:right}
 .tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);font-size:14px;padding:8px 11px;border-radius:8px;max-width:300px;z-index:20;display:none}
@@ -237,7 +237,8 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .rate button small{font:12.5px var(--f-mono);color:var(--muted);font-weight:400}
 .rate button:hover{border-color:var(--acc)}
 .rate .r1{color:var(--bad)} .rate .r2{color:var(--warn)} .rate .r3{color:var(--acc-ink)} .rate .r4{color:#2A6EE8}
-.rate kbd,.showbtn kbd{font:11px var(--f-mono);color:var(--faint)}
+.rate kbd{font:11px var(--f-mono);color:var(--muted)}
+.showbtn kbd,.btn.pri kbd{font:600 11.5px var(--f-mono);color:var(--on-acc);border:1px solid currentColor;border-radius:4px;padding:0 5px;margin-left:8px;opacity:.9} /* sobre el botón de color: mismo color que su texto, contraste completo */
 .showbtn{margin-top:24px}
 .done{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;min-height:330px;color:var(--muted)}
 .done b{font-size:22px;color:var(--ink)}
@@ -256,7 +257,7 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .nodo .c{width:58px;height:58px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 15px var(--f-mono);
   background:var(--panel2);border:3px solid var(--line);color:var(--faint);box-shadow:0 4px 0 var(--line)}
 .nodo .c svg{width:26px;height:26px}
-.nodo.ok .c{background:var(--acc);border-color:var(--acc);color:#fff;box-shadow:0 4px 0 var(--acc-ink)}
+.nodo.ok .c{background:var(--acc);border-color:var(--acc);color:var(--on-acc);box-shadow:0 4px 0 var(--acc-ink)}
 .nodo.mision .c{background:var(--acc-soft);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 4px 0 var(--acc)}
 .nodo.now .c{background:var(--panel);border-color:var(--acc);color:var(--acc-ink);box-shadow:0 4px 0 var(--acc),0 0 0 5px var(--acc-soft)}
 .nodo.vacio .c{border-style:dashed;box-shadow:none}
@@ -266,6 +267,25 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .nodo .lt small{color:var(--muted);font-size:13px}
 .nodo.vacio .lt b{color:var(--faint)}
 .nodo .petcam{width:52px;height:52px;flex:none}
+/* camino ondulado: botones "3D" (sombra sólida abajo) corridos sobre una onda; el actual con anillo y burbuja */
+.nodos{gap:20px;padding:6px 0 4px}
+.nodo{width:300px;transform:translateX(calc(var(--x, 0) * 1px))}
+.nodo .c{width:66px;height:66px;position:relative;box-shadow:0 6px 0 var(--line);transition:transform .08s,box-shadow .08s}
+.nodo .c svg{width:28px;height:28px}
+.nodo:not(.vacio):not(.ok):not(.now):not(.mision) .c{color:var(--faint)}
+.nodo.ok .c{box-shadow:0 6px 0 var(--acc-ink)}
+.nodo.mision .c{box-shadow:0 6px 0 var(--acc)}
+.nodo.now{margin-top:34px}
+.nodo.now .c{background:var(--acc);border-color:var(--acc);color:var(--on-acc);box-shadow:0 6px 0 var(--acc-ink),0 0 0 7px var(--panel),0 0 0 12px var(--acc-soft)}
+.nodo:not(:disabled):active .c{transform:translateY(6px);box-shadow:0 0 0 transparent}
+.nodo.now:not(:disabled):active .c{box-shadow:0 0 0 transparent,0 0 0 7px var(--panel),0 0 0 12px var(--acc-soft)}
+.burbuja{position:absolute;bottom:calc(100% + 16px);left:50%;transform:translateX(-50%);background:var(--panel);border:2px solid var(--line);border-radius:12px;
+  padding:6px 12px;font:800 13px/1 var(--f-body);letter-spacing:.05em;text-transform:uppercase;color:var(--acc-ink);white-space:nowrap;animation:bob 1.6s ease-in-out infinite;pointer-events:none}
+.burbuja::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);border:8px solid transparent;border-top-color:var(--line)}
+.burbuja::before{content:"";position:absolute;top:calc(100% - 3px);left:50%;transform:translateX(-50%);border:7px solid transparent;border-top-color:var(--panel);z-index:1}
+@keyframes bob{50%{transform:translate(-50%,-6px)}}
+@media (max-width:900px){.nodo{transform:translateX(calc(var(--x, 0) * .4px))}}
+@media (prefers-reduced-motion:reduce){.burbuja{animation:none}}
 .visor{max-width:980px}
 .vbar{display:flex;align-items:center;gap:14px;margin-bottom:14px}
 .vbar .x{border:0;background:none;font-size:22px;line-height:1;color:var(--muted);cursor:pointer;padding:4px 8px;border-radius:8px}
@@ -290,6 +310,104 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .fin .bigpet{width:120px;height:120px}
 .fin .acts{display:flex;gap:10px;margin-top:8px}
 .fuentes{font-size:13.5px;color:var(--muted);margin-top:4px}
+
+/* ---------- Hoy: racha y plan del día ---------- */
+.hoyhead{display:flex;align-items:flex-start;gap:16px;margin-bottom:4px}
+.hoyhead .grow{flex:1;min-width:0}
+.racha{display:flex;align-items:center;gap:12px;padding:12px 16px;min-width:260px}
+.racha .rtxt b{font:800 26px/1 var(--f-head)}
+.racha .rtxt span{font-weight:700;color:var(--muted)}
+.racha small{display:block;color:var(--muted);font-size:13.5px;margin-top:3px;max-width:30ch}
+.semana{display:flex;gap:5px;margin-top:7px}
+.semana span{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font:700 11px var(--f-mono);background:var(--panel2);color:var(--faint);border:1.5px solid var(--line)}
+.semana span.hecho{background:#FF9A2E;border-color:#E8741A;color:#3A1A00}
+.semana span.hoy{border-color:var(--ink)}
+.semana span.futuro{opacity:.5}
+.fuego{flex:none;line-height:0}
+.fuego svg{width:44px;height:54px;transform-origin:50% 100%}
+.fuego .out{fill:#C5CBD1}.fuego .in{fill:#E4E7EA}
+:root[data-theme="dark"] .fuego .out{fill:#3A434B}:root[data-theme="dark"] .fuego .in{fill:#4C565F}
+.fuego.on .out{fill:#FF7A1A}.fuego.on .in{fill:#FFC83D;transform-box:fill-box;transform-origin:50% 100%}
+.fuego.on svg{animation:llama 1.7s ease-in-out infinite}
+.fuego.on .in{animation:llama2 1.1s ease-in-out infinite}
+.fuego.enciende svg{animation:enciende .8s cubic-bezier(.3,1.6,.5,1),llama 1.7s .8s ease-in-out infinite}
+@keyframes llama{0%,100%{transform:scale(1,1) skewX(0)}25%{transform:scale(1.03,.97) skewX(-2deg)}50%{transform:scale(.98,1.05) skewX(1.5deg)}75%{transform:scale(1.02,.98) skewX(-1deg)}}
+@keyframes llama2{0%,100%{transform:scale(1,1)}50%{transform:scale(.9,1.12)}}
+@keyframes enciende{0%{transform:scale(.3);opacity:.2}60%{transform:scale(1.3)}100%{transform:scale(1);opacity:1}}
+.fuego .brillo{fill:#fff;opacity:0}
+.fuego.on .out{fill:#FF8A1F}.fuego.on .in{fill:#FFD23F}.fuego.on .brillo{opacity:.45}
+.fuego.on .in{animation-delay:.3s}
+/* celebración de racha */
+.celebra{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(16,20,23,.55);opacity:0;transition:opacity .2s}
+.celebra.dentro{opacity:1}.celebra.fuera{opacity:0}
+.celebra .cbox{background:var(--panel);border-radius:20px;padding:30px 34px 26px;text-align:center;max-width:360px;width:calc(100% - 32px);box-shadow:0 20px 60px rgba(0,0,0,.25);transform:scale(.92);transition:transform .25s cubic-bezier(.34,1.56,.64,1)}
+.celebra.dentro .cbox{transform:none}
+.fuego.grande svg{width:110px;height:132px}
+.contador{height:64px;overflow:hidden;font:800 60px/64px var(--f-head);color:#E8741A;margin-top:4px}
+.contador span{display:block;transition:transform .45s cubic-bezier(.34,1.56,.64,1)}
+.contador.sube span{transform:translateY(-100%)}
+.clabel{display:block;font-size:19px;color:#C25A00;margin-bottom:12px}
+:root[data-theme="dark"] .clabel,:root[data-theme="dark"] .contador{color:#FFB15C}
+.semana.grande{justify-content:center;gap:7px}
+.semana.grande span{width:30px;height:30px;font-size:12px}
+.semana span.llena{animation:llena .5s .9s both}
+@keyframes llena{from{background:var(--panel2);border-color:var(--line);transform:scale(1)}50%{transform:scale(1.25)}to{background:#FF9A2E;border-color:#E8741A;color:#3A1A00;transform:scale(1)}}
+.celebra p{color:var(--muted);margin:14px 0 18px;font-size:15.5px}
+.celebra .btn{width:100%;padding:11px;font-weight:800;font-size:16px;letter-spacing:.03em}
+@media (prefers-reduced-motion:reduce){.celebra,.celebra .cbox,.contador span{transition:none}.semana span.llena{animation:none;background:#FF9A2E;border-color:#E8741A;color:#3A1A00}}
+.fuego.mini svg{width:13px;height:16px;vertical-align:-3px;margin-right:3px}
+.fuego.mini.on svg{animation:none}
+.rnav{margin-left:auto;font:700 12.5px var(--f-mono);color:#C25A00}
+:root[data-theme="dark"] .rnav{color:#FFB15C}
+.plansegs{margin:14px 0 4px}
+.segs.plansegs i{height:8px}
+ol.plan{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+ol.plan li{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1.5px solid transparent}
+ol.plan li.now{border-color:var(--acc);background:var(--acc-soft)}
+ol.plan li.ok{opacity:.72}
+ol.plan li.ok .grow>b{text-decoration:line-through;text-decoration-color:var(--faint)}
+ol.plan .pc{width:30px;height:30px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 14px var(--f-mono);border:2px solid var(--line);background:var(--panel);color:var(--muted)}
+ol.plan li.now .pc{border-color:var(--acc);color:var(--acc-ink)}
+ol.plan li.ok .pc{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}
+ol.plan .pc svg{width:16px;height:16px}
+ol.plan .grow>b{display:block;font-size:15.5px}
+ol.plan small{color:var(--muted);font-size:14px}
+ol.plan small code{font-size:13px;background:var(--panel);padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+ol.plan .pb{display:flex;gap:6px;flex:none}
+.plandone{margin:12px 0 0;color:var(--acc-ink);font-weight:700}
+/* score */
+.scorebig{display:flex;align-items:center;gap:12px;margin:6px 0 10px}
+.scorebig b{font:800 28px var(--f-head)}
+.meter.wide{flex:1;width:auto}
+.meter.wide::after,.mrow .meter::after,.bscore .meter::after,.coursewrap .meter::after{display:none}
+.mscore{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.mrow{display:grid;grid-template-columns:34px 1fr 42px;align-items:center;gap:10px;font-size:14px}
+.mrow span{font:600 13px var(--f-mono);color:var(--muted)}
+.mrow .meter{width:auto}
+.mrow em{font:600 13px var(--f-mono);font-style:normal;text-align:right}
+.mrow.big{grid-template-columns:minmax(120px,190px) 1fr 44px;row-gap:2px;padding:6px 0;border-top:1px solid var(--line)}
+.mrow.big .mn{color:var(--ink);font-family:var(--f-body);font-weight:700;font-size:14.5px}
+.mrow.big .mn small{display:block;font-weight:400;color:var(--muted);font-size:12.5px}
+.mrow .mp{grid-column:1/-1;color:var(--muted);font-size:12.5px}
+.coursewrap{margin-bottom:8px}.coursewrap .course{margin-bottom:0}
+.mods-det{margin:4px 4px 0 14px;font-size:14px}
+.mods-det summary{cursor:pointer;color:var(--acc-ink);font-weight:700;padding:4px 0;width:max-content}
+.bscore{margin-left:auto;display:inline-flex;align-items:center;gap:8px}
+.bscore .meter{width:110px}
+.bscore b{font:700 14px var(--f-mono)!important;color:var(--ink)}
+.sub-branch > .sh{display:flex;align-items:center;gap:10px}
+/* tarjetas: giro al voltear y salida/entrada al calificar */
+.review{transform-origin:50% 50%}
+.review.gira{transform:perspective(1100px) rotateY(90deg);transition:transform .16s ease-in}
+.review.vuelve{animation:vuelve .22s ease-out}
+@keyframes vuelve{from{transform:perspective(1100px) rotateY(-90deg)}to{transform:none}}
+.review.sale{transition:transform .2s ease-in,opacity .2s ease-in;opacity:0}
+.review.sale.bien{transform:translateX(70px) rotate(2deg)}
+.review.sale.otra{transform:translateX(-70px) rotate(-2deg)}
+.review.entra{animation:entra .26s ease-out}
+@keyframes entra{from{transform:translateY(16px) scale(.98);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.fuego svg,.fuego .in,.review{animation:none!important;transition:none!important}}
+@media (max-width:900px){.hoyhead{flex-direction:column}.racha{width:100%}ol.plan li{flex-wrap:wrap}.bscore .meter{width:70px}}
 
 /* ---------- Mejoras ---------- */
 .mform{padding:16px 18px;display:flex;flex-direction:column;gap:10px;max-width:760px}
@@ -341,7 +459,7 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
   <button class="curlabel" id="curlabel" type="button" title="Cambiar de curso en Mis estudios"><span>Curso</span><b id="curname">…</b></button>
   <button class="nav" data-v="estudios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v6M12 9H6v4M12 9h6v4M6 13v3M18 13v3"/><circle cx="12" cy="3" r="1.5"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>Mis estudios</button>
   <div class="navsep"></div>
-  <button class="nav on" data-v="hoy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Hoy</button>
+  <button class="nav on" data-v="hoy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Hoy<span class="rnav" id="rnav" title="Días de racha"></span></button>
   <button class="nav" data-v="lecciones"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M9 8h6M9 12h6"/></svg>Lecciones</button>
   <button class="nav" data-v="tarjetas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/></svg>Tarjetas<span class="badge" id="tbadge"></span></button>
   <button class="nav" data-v="pantalla"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Pantalla en vivo<span class="badge" id="badge">nuevo</span></button>
@@ -353,6 +471,7 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
   <div class="side-foot">
     <div class="live"><span class="dot" id="dot"></span><span id="live">Conectando…</span></div>
     <button class="linkbtn" id="theme">Cambiar a modo oscuro</button>
+    <button class="linkbtn" id="sonido">Sonido: activado</button>
     <a href="/salir">Salir</a>
   </div>
 </aside>
@@ -367,13 +486,15 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 
   <!-- HOY -->
   <section class="view on" id="v-hoy">
-    <h1 id="hello">Hoy</h1>
-    <p class="sub">Lo que te toca, nada más.</p>
+    <div class="hoyhead">
+      <div class="grow"><h1 id="hello">Hoy</h1>
+      <p class="sub">Lo que te toca, en orden. Nada más.</p></div>
+      <div class="card racha" id="racha" aria-live="polite"></div>
+    </div>
     <div class="today">
-      <div class="card main" id="t-next"></div>
-      <div class="card" id="t-hoja"></div>
-      <div class="card" id="t-tarj"></div>
+      <div class="card main" id="t-plan"></div>
       <div class="card" id="t-banco"></div>
+      <div class="card" id="t-score"></div>
     </div>
     <div class="summary" id="t-sum"></div>
   </section>
@@ -481,10 +602,14 @@ applyTheme(store.get("tema") || "light");
 const HELP = {
   estudios: `<ul><li>Todo lo que estás aprendiendo, organizado en <b>ramas</b> (por ejemplo IA › LangChain Academy › cursos).</li>
     <li>Cada curso guarda su propio avance, sus hojas y su plan. Al elegir uno, las demás vistas muestran ese curso.</li>
-    <li>Para empezar algo nuevo, abre una sesión con <code>/tutor</code> y dile qué quieres aprender: el tutor arma el plan y lo agrega aquí.</li></ul>`,
-  hoy: `<ul><li>Te muestra <b>solo lo que te toca</b>, para que empieces rápido sin decidir entre mil opciones.</li>
-    <li>Las preguntas por repasar están aquí a propósito: intentar <b>recordar sin ayuda</b> es una de las dos técnicas de estudio con más evidencia.</li></ul>
-    <div class="src">Dunlosky et al. (2013): práctica de recuerdo y repaso espaciado, las únicas dos de "alta utilidad".</div>`,
+    <li>Para empezar algo nuevo, abre una sesión con <code>/tutor</code> y dile qué quieres aprender: el tutor arma el plan y lo agrega aquí.</li>
+    <li><b>Score:</b> cada módulo promedia lo que se puede medir: misiones hechas, lecciones leídas, tarjetas <b>dominadas</b> (las que aguantan 21 días o más) y el examen del módulo, si ya lo hiciste. El curso promedia sus módulos; cada rama (como IA) promedia sus cursos, y los que no has empezado cuentan 0.</li>
+    <li>Las tarjetas dominadas tardan semanas en subir: es a propósito. Mide si <b>recuerdas</b>, no solo si ya pasaste por ahí. El examen sin IA es la medida más real.</li></ul>
+    <div class="src">Repaso espaciado: Cepeda et al. (2006). Medir sin ayuda: Bastani et al. (2025). Cómo se combinan las partes es una decisión nuestra, no un estudio.</div>`,
+  hoy: `<ul><li>El <b>plan de hoy</b> te dice qué hacer y en qué orden: primero recordar (tarjetas), luego el ejemplo resuelto (lección), luego practicar con el tutor y al final la hoja en papel. Decidir de antemano <b>qué</b> vas a hacer y <b>cuándo</b> hace mucho más probable que lo hagas.</li>
+    <li>Las preguntas por repasar están aquí a propósito: intentar <b>recordar sin ayuda</b> es una de las dos técnicas de estudio con más evidencia.</li>
+    <li>La <b>racha</b> cuenta los días seguidos en que estudiaste algo (tarjetas, una lección o una sesión). Si un día fallas, no pasa nada grave: un hábito sigue formándose aunque te saltes un día. Que la racha motive es una apuesta nuestra (estilo Duolingo), no un hecho probado.</li></ul>
+    <div class="src">Gollwitzer y Sheeran (2006): planes concretos ("intenciones de implementación"). Dunlosky et al. (2013): práctica de recuerdo. Lally et al. (2010): formar hábitos.</div>`,
   lecciones: `<ul><li>Cada misión tiene su lección. Va en este orden: primero la <b>explicación con un ejemplo resuelto</b> y el código completo; después <b>predices</b> tú. En un tema nuevo, aprender solo "descubriendo" rinde menos que ver primero un ejemplo bien explicado.</li>
     <li><b>Un concepto por paso</b> y avanzas a tu ritmo (← →). La barra de arriba te dice cuánto falta.</li>
     <li>En los pasos <b>Predice</b> tienes que escribir tu respuesta antes de verla: intentar recordar o adivinar, aunque falles, fija más que solo leer. Luego dices si acertaste; el tutor lo lee para saber qué reforzar.</li>
@@ -515,7 +640,8 @@ const HELP = {
   tarjetas: `<ul><li>Repaso espaciado: cada tarjeta vuelve justo cuando estás por olvidarla. Si la recuerdas, tarda más en volver; si fallas, vuelve pronto.</li>
     <li>Primero <b>intenta recordar</b> y luego voltéala: recordar sin ayuda es lo que más fija lo aprendido.</li>
     <li>Califícate con honestidad: <b>Otra vez</b> si no te salió, <b>Difícil</b> si te costó, <b>Bien</b> si salió, <b>Fácil</b> si fue inmediato.</li>
-    <li>Una tarjeta cuenta como <b>dominada</b> cuando ya aguanta 21 días o más sin repasar (como en Anki). El dominio de cada curso y módulo sale de ahí.</li></ul>
+    <li>Una tarjeta cuenta como <b>dominada</b> cuando ya aguanta 21 días o más sin repasar (como en Anki). El dominio de cada curso y módulo sale de ahí.</li>
+    <li>La tarjeta gira al voltearla y sale al calificarla: es solo para que notes el cambio, dura menos de un cuarto de segundo y se apaga si tu sistema tiene "reducir movimiento".</li></ul>
     <div class="src">Cepeda et al. (2006): repaso espaciado; Dunlosky et al. (2013); algoritmo FSRS, el mismo que usa Anki.</div>`,
   progreso: `<ul><li>Es tu registro: qué misiones llevas en cada módulo y qué hiciste en cada sesión.</li>
     <li>Sirve para <b>compararte con tu yo de antes</b>, no con otras personas.</li></ul>
@@ -565,19 +691,23 @@ function renderSelector(){
   $("#curname").textContent = c ? c.nombre : "Elige un curso";
 }
 function renderArbol(){
+  const abiertos = new Set([...document.querySelectorAll("#tree details[open]")].map(x => x.dataset.c));
   const nodo = (n, nivel) => {
     if (n.curso){
-      const r = n.resumen || {}, pct = r.total ? Math.round(100 * r.hechas / r.total) : 0;
+      const r = n.resumen || {}, sc = r.score, pct = sc ? sc.pct : 0;
       const tj = r.tarjetas || {};
       const det = (r.tiene_plan ? `${r.hechas} de ${r.total} misiones${r.siguiente ? " · sigue " + esc(r.siguiente) : ""}` : esc(n.nota || "Sin plan todavía: se arma al empezarlo con el tutor."))
-        + (tj.total ? ` · ${tj.dominio}% dominado (${tj.dominadas} de ${tj.total} tarjetas)` : "");
+        + (tj.total ? ` · ${tj.dominadas} de ${tj.total} tarjetas dominadas` : "");
       const chip = n.estado === "actual" ? `<span class="chip ok">Actual</span>` : (n.estado ? `<span class="chip off">${esc(n.estado)}</span>` : "");
-      return `<button class="course ${n.id === curso ? "on" : ""}" data-curso="${esc(n.id)}"><div class="grow"><div class="t">${esc(n.nombre)}</div><div class="d">${det}</div></div>
-        ${r.tiene_plan ? `<div class="meter" title="${pct}%"><i style="width:${pct}%"></i></div><span class="n">${pct}%</span>` : ""}${chip}</button>`;
+      const mods = sc && sc.modulos.length ? `<details class="mods-det" data-c="${esc(n.id)}" ${abiertos.has(n.id) ? "open" : ""}><summary>Score por módulo</summary>
+        ${sc.modulos.map(m => `<div class="mrow big"><span class="mn">M${esc(m.n)}<small>${esc(m.nombre)}</small></span>${barra(m.pct)}<em>${m.pct}%</em><small class="mp">${esc(partesTxt(m.partes))}</small></div>`).join("")}</details>` : "";
+      return `<div class="coursewrap"><button class="course ${n.id === curso ? "on" : ""}" data-curso="${esc(n.id)}"><div class="grow"><div class="t">${esc(n.nombre)}</div><div class="d">${det}</div></div>
+        ${r.tiene_plan ? `${barra(pct)}<span class="n" title="Score del curso">${pct}%</span>` : ""}${chip}</button>${mods}</div>`;
     }
     const hijos = (n.hijos || []).map(h => nodo(h, nivel + 1)).join("") || `<div class="d" style="color:var(--muted)">Vacío</div>`;
-    if (nivel === 0) return `<div class="card branch"><div class="bh"><b>${esc(n.nombre)}</b><span>${aplanar([n]).length} cursos</span></div>${hijos}</div>`;
-    return `<div class="sub-branch"><div class="sh">${esc(n.nombre)}</div>${hijos}</div>`;
+    const sc = `<span class="bscore" title="Promedio de sus ${n.n_cursos || 0} cursos (los no empezados cuentan 0)">${barra(n.score_pct || 0)}<b>${n.score_pct || 0}%</b></span>`;
+    if (nivel === 0) return `<div class="card branch"><div class="bh"><b>${esc(n.nombre)}</b><span>${aplanar([n]).length} cursos</span>${sc}</div>${hijos}</div>`;
+    return `<div class="sub-branch"><div class="sh">${esc(n.nombre)}${sc}</div>${hijos}</div>`;
   };
   $("#tree").innerHTML = arbol.length ? arbol.map(n => nodo(n, 0)).join("") : `<div class="card empty">Aún no hay cursos. Abre una sesión con <code>/tutor</code> y dile qué quieres aprender.</div>`;
   $("#tree").querySelectorAll("[data-curso]").forEach(b => b.onclick = () => { setCurso(b.dataset.curso); show("hoy"); });
@@ -601,9 +731,9 @@ async function poll(){
     if (rc.status === 401){ location.href = "/login"; return; }
     const rt = await rc.text();
     if (rt !== lastTree){
-      lastTree = rt; arbol = JSON.parse(rt).arbol || []; cursos = aplanar(arbol);
+      lastTree = rt; const jt = JSON.parse(rt); arbol = jt.arbol || []; cursos = aplanar(arbol); racha = jt.racha || null;
       if (!cursoActual()) curso = (cursos.find(c => c.estado === "actual") || cursos[0] || {}).id;
-      renderSelector(); renderArbol();
+      renderSelector(); renderArbol(); pintarRacha(); if (state && state.datos) pintarScoreHoy();
       if (view === "tarjetas" && tActual) pintarTarjeta();
     }
     if (!curso){ $("#dot").classList.add("ok"); $("#live").textContent = "Conectado"; return; }
@@ -625,7 +755,7 @@ function render(){
       setCurso(newest.curso); pendingShow = true; return;
     }
     items = visibles(); idx = items.length - 1;
-    toast("Nuevo en pantalla: " + newest.titulo); petReaccion("nuevo");
+    toast("Nuevo en pantalla: " + newest.titulo); petReaccion("nuevo"); Sonido.play("nuevo");
     if (view === "hoy" || view === "estudios") show("pantalla"); else if (view !== "pantalla") $("#badge").classList.add("show");
   }
   if (first){ newestSeen = newest ? newest.id : null; items = visibles(); idx = items.length - 1; first = false; if (pendingShow){ pendingShow = false; show("pantalla"); } }
@@ -646,31 +776,37 @@ function renderHoy(d, hojas){
   $("#hello").textContent = "Hoy, " + dias[new Date().getDay()];
   const cmd = `<code>/tutor ${esc(curso || "")}</code>`;
   if (!state.datos){
-    $("#t-next").innerHTML = `<div class="k">${esc(cursoActual()?.nombre || "Curso")}</div><div class="big">Este curso todavía no tiene plan</div>
+    $("#t-plan").innerHTML = `<div class="k">${esc(cursoActual()?.nombre || "Curso")}</div><div class="big">Este curso todavía no tiene plan</div>
       <div class="how">Abre una <b>sesión nueva</b> de Claude en la carpeta del repo y escribe ${cmd}. El tutor armará contigo las misiones del curso.</div>`;
-    $("#t-hoja").innerHTML = `<div class="k">Hojas</div><div class="big" style="font-size:19px">Sin hojas todavía</div>`;
+    $("#t-score").innerHTML = "";
     $("#t-banco").innerHTML = `<div class="k">Por repasar</div><div class="big" style="font-size:19px">Nada por ahora</div>`;
     $("#t-sum").innerHTML = ""; return;
   }
   const ms = d.misiones || [], next = ms.find(m => m.id === d.siguiente);
-  $("#t-next").innerHTML = next
-    ? `<div class="k">Siguiente misión · ${esc(next.id)}</div><div class="big">${esc(next.titulo)}</div><div class="nb">${esc(material(next))}${material(next) ? " · " : ""}Módulo ${esc(next.modulo)}: ${esc(modNombre(d, next.modulo))}</div>
-       ${lecDe(next.id) ? `<div class="how"><b>1.</b> Lee su lección (${lecDe(next.id).n_pasos} pasos)${lecDe(next.id).completada ? " · ya la leíste" : ""}. <button class="btn pri" style="margin-left:6px" onclick="abrirLeccion('${esc(String(next.id))}')">Abrir lección</button></div>` : ""}
-       <div class="how">${lecDe(next.id) ? "<b>2.</b> " : ""}Abre una <b>sesión nueva</b> de Claude en la carpeta del repo y escribe ${cmd}. Una misión por sesión.</div>`
-    : `<div class="k">Curso</div><div class="big">¡Terminaste todas las misiones!</div>`;
-
-  const meta = d.hojas || {};
-  const pend = hojas.filter(h => (meta[h.archivo] || {}).estado !== "hecha");
-  const h = pend[pend.length - 1];
-  $("#t-hoja").innerHTML = h
-    ? `<div class="k">Hoja pendiente</div><div class="big" style="font-size:19px">${esc(h.titulo)}</div><p style="margin:4px 0 14px;color:var(--muted);font-size:15px">Resuélvela en papel, sin ver apuntes. Luego revisa las respuestas aquí.</p>
-       <button class="btn pri" onclick="imprimir('${encodeURIComponent(h.archivo)}')">Imprimir</button> <button class="btn" onclick="verRespuestas('${encodeURIComponent(h.archivo)}')">Respuestas</button>`
-    : `<div class="k">Hojas</div><div class="big" style="font-size:19px">Sin hojas pendientes</div><p style="margin:4px 0 0;color:var(--muted);font-size:15px">La siguiente llega al terminar tu próxima sesión.</p>`;
-
-  const tj = state.tarjetas || {};
-  $("#t-tarj").innerHTML = tj.para_hoy
-    ? `<div class="k">Tarjetas de hoy</div><div class="big" style="font-size:19px">${tj.para_hoy} por repasar</div><p style="margin:4px 0 14px;color:var(--muted);font-size:15px">Unos minutos. Dominio del curso: ${tj.dominio}%.</p><button class="btn pri" onclick="show('tarjetas')">Repasar</button>`
-    : `<div class="k">Tarjetas</div><div class="big" style="font-size:19px">${tj.total ? "Al día" : "Aún no hay tarjetas"}</div><p style="margin:4px 0 0;color:var(--muted);font-size:15px">${tj.total ? `Dominio del curso: ${tj.dominio}%.` : "El tutor crea tarjetas al cerrar cada sesión."}</p>`;
+  const tj = state.tarjetas || {}, meta = d.hojas || {};
+  const hoyISO = new Date().toLocaleDateString("sv-SE");
+  const h = hojas.filter(x => (meta[x.archivo] || {}).estado !== "hecha").slice(-1)[0];
+  const lec = next && lecDe(next.id);
+  const sesHoy = (d.sesiones || []).some(s => String(s.fecha).slice(0, 10) === hoyISO);
+  // El plan del día, en el orden que conviene: recordar → ejemplo resuelto → practicar → papel.
+  const pasos = [];
+  if (tj.total) pasos.push({hecho: !tj.para_hoy, t: tj.para_hoy ? `Repasa tus tarjetas (${tj.para_hoy})` : "Tarjetas al día",
+    d: tj.para_hoy ? "Primero recordar: calienta la memoria con lo de días anteriores. Unos minutos." : `Repasaste ${tj.repasadas_hoy || 0} hoy.`,
+    btn: tj.para_hoy ? `<button class="btn pri" onclick="show('tarjetas')">Repasar</button>` : ""});
+  if (lec) pasos.push({hecho: !!lec.completada, t: `Lee la lección ${esc(next.id)}`, d: `${esc(next.titulo)} · ${lec.n_pasos} pasos, unos 10 min.`,
+    btn: `<button class="btn ${lec.completada ? "" : "pri"}" onclick="abrirLeccion('${esc(String(next.id))}')">${lec.completada ? "Verla" : "Abrir lección"}</button>`});
+  if (next) pasos.push({hecho: sesHoy, t: sesHoy ? "Sesión con el tutor: hecha" : `Practica ${esc(next.id)} con el tutor`,
+    d: sesHoy ? "Una misión por sesión: la siguiente, en otra sesión." : `Abre una <b>sesión nueva</b> de Claude en la carpeta del repo y escribe ${cmd}.`, btn: ""});
+  if (h) pasos.push({hecho: false, t: "Resuelve la hoja en papel", d: `${esc(h.titulo)} · sin computadora ni apuntes.`,
+    btn: `<button class="btn" onclick="verRespuestas('${encodeURIComponent(h.archivo)}')">Respuestas</button> <button class="btn pri" onclick="imprimir('${encodeURIComponent(h.archivo)}')">Imprimir</button>`});
+  const hechos = pasos.filter(p => p.hecho).length, sig = pasos.findIndex(p => !p.hecho);
+  $("#t-plan").innerHTML = `<div class="k">Plan de hoy · ${hechos} de ${pasos.length}</div>
+    ${next ? `<div class="big">${esc(next.id)} · ${esc(next.titulo)}</div><div class="nb">Módulo ${esc(next.modulo)}: ${esc(modNombre(d, next.modulo))}</div>` : `<div class="big">¡Terminaste todas las misiones!</div>`}
+    <div class="segs plansegs">${pasos.map(p => `<i class="${p.hecho ? "ok" : ""}"></i>`).join("")}</div>
+    <ol class="plan">${pasos.map((p, i) => `<li class="${p.hecho ? "ok" : (i === sig ? "now" : "")}"><span class="pc">${p.hecho ? ICON_OK : i + 1}</span>
+      <div class="grow"><b>${p.t}</b><small>${p.d}</small></div>${p.hecho ? "" : `<div class="pb">${p.btn}</div>`}</li>`).join("")}</ol>
+    ${pasos.length && sig === -1 ? `<p class="plandone">Todo listo por hoy. Mañana vuelven las tarjetas que tocan.</p>` : ""}`;
+  pintarScoreHoy();
 
   const b = d.banco || [];
   $("#t-banco").innerHTML = b.length
@@ -681,6 +817,89 @@ function renderHoy(d, hojas){
   const ex = (d.examenes || []).slice(-1)[0];
   $("#t-sum").innerHTML = `<span><b>${done}</b> de ${ms.length} misiones</span>${nm ? `<span>Módulo <b>${next ? esc(next.modulo) : nm}</b> de ${nm}</span>` : ""}${ex ? `<span>Último examen: <b>${esc(ex.puntaje)}%</b></span>` : ""}`;
 }
+
+/* ---------- Score (Hoy y Mis estudios) ---------- */
+const PARTES = {misiones: "misiones hechas", lecciones: "lecciones leídas", tarjetas: "tarjetas dominadas", examen: "examen"};
+const partesTxt = p => Object.entries(p).map(([k, [a, b]]) => k === "examen" ? `examen ${a}%` : `${a}/${b} ${PARTES[k]}`).join(" · ");
+const barra = (pct, cls = "") => `<div class="meter ${cls}" title="${pct}%"><i style="width:${pct}%"></i></div>`;
+function pintarScoreHoy(){
+  const sc = (cursoActual()?.resumen || {}).score;
+  if (!sc){ $("#t-score").innerHTML = ""; return; }
+  $("#t-score").innerHTML = `<div class="k">Score del curso</div><div class="scorebig"><b>${sc.pct}%</b>${barra(sc.pct, "wide")}</div>
+    <div class="mscore">${sc.modulos.map(m => `<div class="mrow" title="${esc(partesTxt(m.partes))}"><span>M${esc(m.n)}</span>${barra(m.pct)}<em>${m.pct}%</em></div>`).join("")}</div>
+    <button class="linkbtn" onclick="show('estudios')">Ver el detalle por módulo</button>`;
+}
+
+/* ---------- Racha: días seguidos estudiando ---------- */
+let racha = null, rachaPrev = null;
+// Llama dibujada para Mi Tutor (no es el arte de Duolingo): exterior, núcleo y un brillo.
+const FUEGO = `<svg viewBox="0 0 40 48" aria-hidden="true"><path class="out" d="M20.5 1.5c2.3 6.6 9.7 11 12.6 17.9 3.4 8.1.4 18.3-7.3 21.6-1.9.8-3.9 1.2-5.9 1.2-9.4 0-16.2-7.2-15.6-16.2.4-5.5 3.4-9.8 6.6-12.8.5 3.2 1.9 5.5 4.3 6.7-.6-7.5 2-13.3 5.3-18.4z"/><path class="in" d="M20.8 21.6c4.3 3.7 7.4 7.8 6.5 12.6-.8 4.3-4 6.6-7.4 6.6-4 0-7.1-3.1-6.8-7.3.2-3 1.9-5 3.7-6.6.3 1.9 1.1 3.1 2.5 3.7-.2-3.5.4-6.3 1.5-9z"/><ellipse class="brillo" cx="12.6" cy="25" rx="2" ry="4.6" transform="rotate(22 12.6 25)"/></svg>`;
+function pintarRacha(){
+  if (!racha) return;
+  const r = racha, letras = ["L", "M", "M", "J", "V", "S", "D"], hoyISO = new Date().toLocaleDateString("sv-SE");
+  const msg = r.hoy_hecho ? "Hoy ya estudiaste." : (r.en_riesgo ? "Repasa hoy para mantenerla: con unas tarjetas basta." : "Empieza hoy: un repaso basta.");
+  const enciende = rachaPrev === false && r.hoy_hecho;
+  $("#racha").innerHTML = `<div class="fuego ${r.hoy_hecho ? "on" : ""} ${enciende ? "enciende" : ""}">${FUEGO}</div>
+    <div class="rtxt"><div><b>${r.dias}</b> <span>${r.dias === 1 ? "día" : "días"} de racha</span></div><small>${msg}${r.mejor > r.dias ? ` Mejor: ${r.mejor}.` : ""}</small>
+    <div class="semana">${r.semana.map((s, i) => `<span class="${s.hecho ? "hecho" : ""} ${s.fecha === hoyISO ? "hoy" : ""} ${s.futuro ? "futuro" : ""}" title="${s.fecha}">${letras[i]}</span>`).join("")}</div></div>`;
+  $("#rnav").innerHTML = r.dias ? `<span class="fuego mini ${r.hoy_hecho ? "on" : ""}">${FUEGO}</span>${r.dias}` : "";
+  if (enciende) celebrarRacha(r);
+  rachaPrev = r.hoy_hecho;
+}
+
+/* La primera actividad del día enciende la racha: pantalla de celebración corta con el contador que sube. */
+function celebrarRacha(r){
+  if (document.querySelector(".celebra")) return;
+  const letras = ["L", "M", "M", "J", "V", "S", "D"], hoyISO = new Date().toLocaleDateString("sv-SE");
+  const el = document.createElement("div");
+  el.className = "celebra"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", `Racha de ${r.dias} días`);
+  el.innerHTML = `<div class="cbox"><div class="fuego on grande enciende">${FUEGO}</div>
+    <div class="contador" aria-hidden="true"><span>${Math.max(0, r.dias - 1)}</span><span>${r.dias}</span></div>
+    <b class="clabel">${r.dias === 1 ? "día de racha" : "días de racha"}</b>
+    <div class="semana grande">${r.semana.map((s, i) => `<span class="${s.hecho && s.fecha !== hoyISO ? "hecho" : ""} ${s.fecha === hoyISO ? "hoy llena" : ""} ${s.futuro ? "futuro" : ""}">${letras[i]}</span>`).join("")}</div>
+    <p>${r.dias === 1 ? "Empezaste una racha. Mañana, otro rato." : "Hoy ya cuenta. Lo que repasas en días distintos se queda más."}</p>
+    <button class="btn pri" id="cseguir">Seguir</button></div>`;
+  document.body.appendChild(el);
+  const cerrar = () => { el.classList.add("fuera"); setTimeout(() => el.remove(), 200); document.removeEventListener("keydown", tecla); };
+  const tecla = e => { if (e.key === "Escape" || e.key === "Enter"){ e.preventDefault(); cerrar(); } };
+  el.onclick = e => { if (e.target === el) cerrar(); };
+  el.querySelector("#cseguir").onclick = cerrar;
+  document.addEventListener("keydown", tecla);
+  setTimeout(() => el.querySelector("#cseguir").focus(), 50);
+  requestAnimationFrame(() => el.classList.add("dentro"));
+  setTimeout(() => el.querySelector(".contador").classList.add("sube"), sinMovimiento() ? 0 : 650);
+  Sonido.play("racha"); petReaccion("bien");
+}
+
+/* ---------- Sonidos: sintetizados con Web Audio (sin archivos). Se apagan desde el menú. ---------- */
+const Sonido = (() => {
+  let ac = null, on = store.get("sonido") !== "0";
+  const ctx = () => { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === "suspended") ac.resume(); return ac; };
+  function tono(f, t0, dur, tipo = "sine", vol = .2, hasta = null){
+    const a = ctx(), o = a.createOscillator(), g = a.createGain(), t = a.currentTime + t0;
+    o.type = tipo; o.frequency.setValueAtTime(f, t);
+    if (hasta) o.frequency.exponentialRampToValueAtTime(hasta, t + dur * .8);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .01); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+    o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + .03);
+  }
+  const SONIDOS = {
+    bien(){ tono(880, 0, .12, "triangle", .18); tono(1318.5, .09, .26, "triangle", .18); },
+    mal(){ tono(220, 0, .18, "sine", .2); tono(185, .12, .3, "sine", .2); },
+    casi(){ tono(660, 0, .14, "triangle", .13); },
+    voltear(){ tono(1800, 0, .03, "square", .04); },
+    leccion(){ [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tono(f, i * .08, .16, "triangle", .16)); tono(1046.5, .34, .55, "triangle", .12); tono(1318.5, .34, .55, "triangle", .1); },
+    racha(){ tono(400, 0, .3, "triangle", .14, 1200); tono(1568, .26, .35, "sine", .14); tono(2093, .36, .4, "sine", .08); },
+    nuevo(){ tono(988, 0, .08, "sine", .08); tono(1319, .07, .12, "sine", .08); },
+  };
+  return {
+    play(n){ if (!on || !SONIDOS[n]) return; try{ SONIDOS[n](); }catch(e){} },
+    get on(){ return on; },
+    set(v){ on = v; store.set("sonido", v ? "1" : "0"); },
+  };
+})();
+function pintarBotonSonido(){ $("#sonido").textContent = Sonido.on ? "Sonido: activado" : "Sonido: apagado"; }
+$("#sonido").onclick = () => { Sonido.set(!Sonido.on); pintarBotonSonido(); if (Sonido.on) Sonido.play("bien"); };
+pintarBotonSonido();
 
 /* ---------- Pantalla en vivo ---------- */
 let renderedKey = null;
@@ -976,16 +1195,43 @@ function pintarTarjeta(){
   if (!tVolteada) $("#voltear").onclick = voltear;
   else box.querySelectorAll("[data-r]").forEach(b => b.onclick = () => calificar(Number(b.dataset.r)));
 }
-function voltear(){ if (tActual && !tVolteada){ tVolteada = true; pintarTarjeta(); } }
+/* Animaciones de las tarjetas: la tarjeta gira al voltearla (como en AnkiDroid) y sale/entra al calificar.
+   Cortas (<250 ms) y apagadas con "reducir movimiento". */
+const sinMovimiento = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esperar = ms => new Promise(r => setTimeout(r, ms));
+let tAnimando = false;
+async function voltear(){
+  if (!tActual || tVolteada || tAnimando) return;
+  const box = $("#review");
+  if (sinMovimiento()){ tVolteada = true; pintarTarjeta(); return; }
+  tAnimando = true; Sonido.play("voltear");
+  box.classList.add("gira"); await esperar(160);
+  tVolteada = true; pintarTarjeta();
+  box.classList.remove("gira"); box.classList.add("vuelve"); await esperar(220);
+  box.classList.remove("vuelve"); tAnimando = false;
+}
 async function calificar(n){
-  if (!tActual || !tVolteada) return;
-  const t = tActual; tActual = null;
-  petReaccion(n === 1 ? "mal" : (n >= 3 ? "bien" : "neutro"));
-  const r = await fetch(`/api/tarjetas/${t.id}/repaso`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({rating: n})});
-  if (r.status === 401){ location.href = "/login"; return; }
-  tHechas++;
-  lastRaw = ""; poll();
-  await cargarCola();
+  if (!tActual || !tVolteada || tAnimando) return;
+  const t = tActual; tActual = null; tAnimando = true;
+  petReaccion(n === 1 ? "mal" : (n >= 3 ? "bien" : "neutro")); Sonido.play(n === 1 ? "mal" : (n >= 3 ? "bien" : "casi"));
+  const box = $("#review"), anim = !sinMovimiento();
+  const guardado = fetch(`/api/tarjetas/${t.id}/repaso`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({rating: n})});
+  if (anim){ box.classList.add("sale", n === 1 ? "otra" : "bien"); await esperar(200); }
+  try{
+    const r = await guardado;
+    if (r.status === 401){ location.href = "/login"; return; }
+    if (!r.ok) throw new Error(r.status);
+    tHechas++;
+    lastRaw = ""; poll();
+    await cargarCola();
+  }catch(e){
+    toast("No se guardó la respuesta. Revisa la conexión y califícala otra vez.");
+    tActual = t; tVolteada = true; pintarTarjeta();
+  }finally{
+    box.classList.remove("sale", "otra", "bien");
+    if (anim){ box.classList.add("entra"); await esperar(260); box.classList.remove("entra"); }
+    tAnimando = false;
+  }
 }
 document.addEventListener("keydown", e => {
   if (view !== "tarjetas" || /^(TEXTAREA|INPUT|SELECT)$/.test(document.activeElement.tagName)) return;
@@ -997,6 +1243,8 @@ document.addEventListener("keydown", e => {
 let lec = null, lecPaso = 0, lecResp = {}, lecFin = null;
 const enc = encodeURIComponent;
 const ICON_OK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`;
+const ICON_ESTRELLA = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.8l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.6l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+const ICON_LIBRO = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5C5.6 4.6 8.6 4.7 11 6.2v13.3c-2.4-1.4-5.4-1.5-8-.6zM21 5.5c-2.6-.9-5.6-.8-8 .7v13.3c2.4-1.4 5.4-1.5 8-.6z"/></svg>`;
 const lecDe = id => ((state && state.lecciones) || []).find(l => l.mision_id === String(id));
 function leccionActual(d, ls){
   const by = Object.fromEntries(ls.map(l => [l.mision_id, l])), ms = d.misiones || [];
@@ -1013,25 +1261,31 @@ function renderLecciones(d){
   const ms = d.misiones || [], actual = leccionActual(d, ls);
   const mods = (d.modulos || []).length ? d.modulos : [...new Set(ms.map(m => m.modulo))].map(n => ({n, nombre: ""}));
   const enMisiones = new Set(ms.map(m => String(m.id)));
-  const nodo = (id, titulo, l, m) => {
-    let cls = "vacio", ic = esc(id), sub = "Sin lección todavía";
+  // El camino ondula como una onda (seno, periodo de 8 nodos): cada nodo se corre a un lado según su posición.
+  const onda = i => Math.round(Math.sin(i * Math.PI / 4) * 64);
+  const nodo = (id, titulo, l, m, i) => {
+    let cls = "vacio", ic = ICON_LIBRO, sub = "Sin lección todavía", burbuja = "";
     if (l){
       if (l.completada){ cls = "ok"; ic = ICON_OK; sub = `Leída · ${l.n_pasos} pasos`; }
-      else if (id === actual){ cls = "now"; sub = `Te toca · ${l.n_pasos} pasos`; }
+      else if (id === actual){
+        cls = "now"; ic = ICON_ESTRELLA; sub = `Te toca · ${l.n_pasos} pasos`;
+        let empezada = false; try{ empezada = !!JSON.parse(store.get(`lec:${curso}:${id}`) || "null"); }catch(e){}
+        burbuja = `<span class="burbuja">${empezada ? "Seguir" : "Empezar"}</span>`;
+      }
       else if (m && m.estado === "hecha"){ cls = "mision"; ic = ICON_OK; sub = `Misión hecha; lección sin leer · ${l.n_pasos} pasos`; }
       else { cls = ""; sub = `${l.n_pasos} pasos`; }
     }
-    return `<button class="nodo ${cls}" ${l ? `data-lec="${esc(id)}"` : "disabled"}><span class="c">${ic}</span><span class="lt"><b>${esc(id)} · ${esc(titulo)}</b><small>${sub}</small></span>${l && id === actual ? `<span class="petcam" id="petcam" aria-hidden="true"></span>` : ""}</button>`;
+    return `<button class="nodo ${cls}" style="--x:${onda(i)}" ${l ? `data-lec="${esc(id)}"` : "disabled"}><span class="c">${burbuja}${ic}</span><span class="lt"><b>${esc(id)} · ${esc(titulo)}</b><small>${sub}</small></span>${l && id === actual ? `<span class="petcam" id="petcam" aria-hidden="true"></span>` : ""}</button>`;
   };
   let html = mods.map(({n, nombre}) => {
     const list = ms.filter(m => m.modulo == n);
     if (!list.length) return "";
     const k = list.filter(m => by[m.id] && by[m.id].completada).length;
     return `<div class="card cmod"><div class="mh"><b>Módulo ${esc(n)}${nombre ? " · " + esc(nombre) : ""}</b><span>${k} de ${list.length} leídas</span></div>
-      <div class="nodos">${list.map(m => nodo(String(m.id), m.titulo, by[m.id], m)).join("")}</div></div>`;
+      <div class="nodos">${list.map((m, i) => nodo(String(m.id), m.titulo, by[m.id], m, i)).join("")}</div></div>`;
   }).join("");
   const sueltas = ls.filter(l => !enMisiones.has(l.mision_id));
-  if (sueltas.length) html += `<div class="card cmod"><div class="mh"><b>Otras lecciones</b></div><div class="nodos">${sueltas.map(l => nodo(l.mision_id, l.titulo, l, null)).join("")}</div></div>`;
+  if (sueltas.length) html += `<div class="card cmod"><div class="mh"><b>Otras lecciones</b></div><div class="nodos">${sueltas.map((l, i) => nodo(l.mision_id, l.titulo, l, null, i)).join("")}</div></div>`;
   if (html === renderLecciones.k) return;
   renderLecciones.k = html;
   $("#camino").innerHTML = html || `<div class="card empty">Este curso todavía no tiene lecciones. Se crean con la skill <code>/ingestar</code> en Claude Code.</div>`;
@@ -1107,7 +1361,7 @@ async function pintarPaso(){
     const rr = lecResp[lecPaso];
     $("#lans").innerHTML = `<div class="answer"><div class="k">Respuesta</div><div class="md">${md(p.respuesta)}</div>
       <div class="self"><span>¿Acertaste?</span>${[["si", "Sí"], ["casi", "Más o menos"], ["no", "No"]].map(([k, l]) => `<button class="btn ${rr.acerto === k ? "on" : ""}" data-a="${k}">${l}</button>`).join("")}</div></div>`;
-    $("#lans").querySelectorAll("[data-a]").forEach(b => b.onclick = () => { rr.acerto = b.dataset.a; guardarAvance(); pintarResp(); actualizarNext(); petReaccion(b.dataset.a === "si" ? "bien" : (b.dataset.a === "no" ? "mal" : "neutro")); });
+    $("#lans").querySelectorAll("[data-a]").forEach(b => b.onclick = () => { rr.acerto = b.dataset.a; guardarAvance(); Sonido.play(b.dataset.a === "si" ? "bien" : (b.dataset.a === "no" ? "mal" : "casi")); pintarResp(); actualizarNext(); petReaccion(b.dataset.a === "si" ? "bien" : (b.dataset.a === "no" ? "mal" : "neutro")); });
   };
   if (r.visto){ ta.readOnly = true; pintarResp(); return; }
   const rev = $("#lreveal");
@@ -1121,7 +1375,7 @@ async function terminarLeccion(){
   const r = await fetch(`/api/lecciones/${enc(curso)}/${enc(lec.mision_id)}/completar`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({predicciones: preds})});
   if (r.status === 401){ location.href = "/login"; return; }
   if (!r.ok){ toast("No se pudo guardar. Revisa la conexión e inténtalo otra vez."); return; }
-  lecFin = await r.json(); store.set(lecKey(), ""); petReaccion("bien");
+  lecFin = await r.json(); store.set(lecKey(), ""); petReaccion("bien"); Sonido.play("leccion");
   lastRaw = ""; poll(); pintarPaso();
 }
 document.addEventListener("keydown", e => {

@@ -186,10 +186,49 @@ def resumen(cid):
         return {"tiene_plan": False, "tarjetas": t}
     ms = d.get("misiones", [])
     return {"tiene_plan": True, "hechas": sum(1 for m in ms if m.get("estado") == "hecha"), "total": len(ms),
-            "siguiente": d.get("siguiente"), "banco": len(d.get("banco", [])), "tarjetas": t}
+            "siguiente": d.get("siguiente"), "banco": len(d.get("banco", [])), "tarjetas": t,
+            "score": puntaje(cid, d, t)}
+
+
+def puntaje(cid, d=None, t=None):
+    """Score de un curso, módulo por módulo. Cada módulo promedia las partes que se pueden medir:
+    misiones hechas, lecciones leídas, tarjetas dominadas (≥21 días) y el último examen del módulo (sin IA).
+    El curso promedia sus módulos pesando por número de misiones. Las partes van aparte para que el número sea transparente."""
+    d = d if d is not None else leer_datos(cid)
+    t = t if t is not None else stats_tarjetas(cid)
+    if not d:
+        return None
+    ms = d.get("misiones", [])
+    mods = d.get("modulos") or [{"n": n, "nombre": ""} for n in dict.fromkeys(m.get("modulo") for m in ms)]
+    lecs = {r["mision_id"]: bool(r["completada"]) for r in _q("SELECT mision_id, completada FROM lecciones WHERE curso=?", (cid,))}
+    examenes = {}
+    for e in d.get("examenes", []):
+        examenes[str(e.get("modulo"))] = e.get("puntaje")  # el último gana
+    out, peso, total = [], 0, 0.0
+    for mod in mods:
+        n = mod.get("n")
+        lista = [m for m in ms if str(m.get("modulo")) == str(n)]
+        if not lista:
+            continue
+        partes = {"misiones": [sum(1 for m in lista if m.get("estado") == "hecha"), len(lista)]}
+        con_leccion = [m for m in lista if str(m.get("id")) in lecs]
+        if con_leccion:
+            partes["lecciones"] = [sum(1 for m in con_leccion if lecs[str(m.get("id"))]), len(con_leccion)]
+        tm = (t.get("por_modulo") or {}).get(str(n))
+        if tm and tm.get("total"):
+            partes["tarjetas"] = [tm["dominadas"], tm["total"]]
+        if examenes.get(str(n)) is not None:
+            partes["examen"] = [round(float(examenes[str(n)])), 100]
+        pct = round(100 * sum(a / b for a, b in partes.values()) / len(partes))
+        out.append({"n": n, "nombre": mod.get("nombre", ""), "pct": pct, "partes": partes})
+        peso += len(lista)
+        total += pct * len(lista)
+    return {"pct": round(total / peso) if peso else 0, "modulos": out}
 
 
 def arbol_con_resumen():
+    """Árbol con el resumen de cada curso y el score de cada rama: promedio de sus cursos
+    (los que no se han empezado cuentan 0, para no inflar el porcentaje del área)."""
     def anotar(ns):
         out = []
         for n in ns:
@@ -197,11 +236,65 @@ def arbol_con_resumen():
             if n.get("curso") or "hijos" not in n:
                 m["curso"] = True
                 m["resumen"] = resumen(n["id"])
+                sc = m["resumen"].get("score")
+                m["_scores"] = [sc["pct"] if sc else 0]
             else:
                 m["hijos"] = anotar(n["hijos"])
+                m["_scores"] = [s for h in m["hijos"] for s in h["_scores"]]
+                m["score_pct"] = round(sum(m["_scores"]) / len(m["_scores"])) if m["_scores"] else 0
+                m["n_cursos"] = len(m["_scores"])
             out.append(m)
         return out
-    return anotar(arbol())
+
+    def limpiar(ns):
+        for n in ns:
+            n.pop("_scores", None)
+            limpiar(n.get("hijos", []))
+        return ns
+    return limpiar(anotar(arbol()))
+
+
+# ---------- racha (días seguidos estudiando) ----------
+def _dias_con_estudio():
+    dias = set()
+
+    def local(ts):
+        try:
+            return datetime.fromisoformat(ts).astimezone(TZ).date()
+        except (TypeError, ValueError):
+            return None
+    for r in _q("SELECT ts FROM repasos"):
+        dias.add(local(r["ts"]))
+    for r in _q("SELECT completada FROM lecciones WHERE completada IS NOT NULL"):
+        dias.add(local(r["completada"]))
+    for r in _q("SELECT datos FROM cursos WHERE datos IS NOT NULL"):
+        d = json.loads(r["datos"])
+        for s in d.get("sesiones", []):
+            try:
+                dias.add(datetime.strptime(str(s.get("fecha"))[:10], "%Y-%m-%d").date())
+            except ValueError:
+                pass
+    dias.discard(None)
+    return dias
+
+
+def racha():
+    """Cuenta un día si hubo repaso de tarjetas, una lección terminada o una sesión con el tutor.
+    Si hoy todavía no hay nada, la racha sigue viva desde ayer ('en_riesgo')."""
+    dias, hoy = _dias_con_estudio(), hoy_local()
+    hoy_hecho = hoy in dias
+    d, n = (hoy if hoy_hecho else hoy - timedelta(days=1)), 0
+    while d in dias:
+        n += 1
+        d -= timedelta(days=1)
+    mejor, corrida, prev = 0, 0, None
+    for x in sorted(dias):
+        corrida = corrida + 1 if prev and (x - prev).days == 1 else 1
+        mejor, prev = max(mejor, corrida), x
+    lunes = hoy - timedelta(days=hoy.weekday())
+    semana = [{"fecha": (lunes + timedelta(days=i)).isoformat(), "hecho": (lunes + timedelta(days=i)) in dias,
+               "futuro": lunes + timedelta(days=i) > hoy} for i in range(7)]
+    return {"dias": n, "hoy_hecho": hoy_hecho, "en_riesgo": n > 0 and not hoy_hecho, "mejor": mejor, "semana": semana}
 
 
 # ---------- hojas ----------
