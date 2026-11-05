@@ -107,6 +107,11 @@ h2{font:600 12.5px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;c
 .stagebar .pos{font:14px var(--f-mono);color:var(--muted);min-width:70px;text-align:center}
 .stagebar select{font:inherit;font-size:14.5px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);max-width:340px;flex:1;min-width:0}
 .stagebar .sp{flex:1}
+.modos{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;flex:none}
+.modos button{border:0;background:var(--panel);padding:7px 12px;font-size:14px;cursor:pointer;color:var(--muted)}
+.modos button+button{border-left:1px solid var(--line)}
+.modos button.on{background:var(--acc-soft);color:var(--acc-ink);font-weight:700}
+#plec{max-width:260px}
 .stage{padding:24px 28px;min-height:440px}
 .stage .st{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding-bottom:12px;margin-bottom:18px;border-bottom:1px solid var(--line)}
 .stage .st b{font:800 23px/1.25 var(--f-head)}
@@ -542,6 +547,8 @@ ol.plan .pb{display:flex;gap:6px;flex:none}
   <!-- PANTALLA -->
   <section class="view" id="v-pantalla">
     <div class="stagebar">
+      <div class="modos" role="group" aria-label="Qué paneles ver"><button type="button" data-m="leccion">Por lección</button><button type="button" data-m="libre">Libre</button></div>
+      <select id="plec" aria-label="Lección"></select>
       <button class="btn" id="prev" title="Anterior (←)">← Anterior</button>
       <span class="pos" id="pos"></span>
       <button class="btn" id="nextb" title="Siguiente (→)">Siguiente →</button>
@@ -643,6 +650,7 @@ const HELP = {
     <li>Estados: <b>nueva</b> (sin revisar), <b>aceptada</b> (se va a hacer), <b>hecha</b>, <b>descartada</b> (con su razón en la nota).</li></ul>
     <div class="src">No es una técnica de estudio: es el paso 3 de "Cómo cambiar la app" en FILOSOFIA.md.</div>`,
   pantalla: `<ul><li>Aquí el tutor te muestra diagramas, código o ejemplos <b>mientras estudian</b>.</li>
+    <li><b>Dos modos.</b> <b>Por lección</b>: lo que el tutor te mostró en cada misión queda guardado ahí, en orden, para consultarlo cuando practiques o te atores. <b>Libre</b>: las dudas sueltas, fuera de una lección. Cuando llega algo nuevo, la pantalla se cambia sola a su modo. Volver a verlo sirve para consultar, no como forma de estudiar: para repasar están las tarjetas y las hojas.</li>
     <li>La explicación va <b>al lado</b> de lo que explica: es el principio de diseño con mayor efecto en el aprendizaje.</li>
     <li>Se resalta <b>solo lo clave</b> para que sepas dónde mirar.</li>
     <li>Avanzas <b>a tu ritmo</b> con ← y →. La tecla F oculta el menú.</li>
@@ -776,11 +784,16 @@ function render(){
       toast("Nuevo en pantalla (" + (cursos.find(c => c.id === newest.curso).nombre) + "): " + newest.titulo);
       setCurso(newest.curso); pendingShow = true; return;
     }
-    items = visibles(); idx = items.length - 1;
-    toast("Nuevo en pantalla: " + newest.titulo); petReaccion("nuevo"); Sonido.play("nuevo");
+    irAlPanel(newest);  // cambia al modo y a la lección del panel nuevo
+    toast("Nuevo en pantalla" + (newest.mision ? ` (${newest.mision})` : " (libre)") + ": " + newest.titulo); petReaccion("nuevo"); Sonido.play("nuevo");
     if (view === "hoy" || view === "estudios") show("pantalla"); else if (view !== "pantalla") $("#badge").classList.add("show");
   }
-  if (first){ newestSeen = newest ? newest.id : null; items = visibles(); idx = items.length - 1; first = false; if (pendingShow){ pendingShow = false; show("pantalla"); } }
+  if (first){
+    newestSeen = newest ? newest.id : null; first = false;
+    if (!cargarModo()){ const ult = visiblesCurso().slice(-1)[0]; if (ult) irAlPanel(ult); }
+    items = visibles(); idx = items.length - 1;
+    if (pendingShow){ pendingShow = false; show("pantalla"); }
+  }
   items = visibles();
   const d = state.datos || {};
   const c = cursoActual();
@@ -788,7 +801,30 @@ function render(){
   renderHoy(d, state.hojas || []); renderLecciones(d); renderTarjetasStats(); renderPantalla(); renderHojas(d, state.hojas || []); renderRepaso(d); renderProgreso(d); renderProyecto(d);
 }
 let items = [], pendingShow = false;
-const visibles = () => (state.pantalla || []).filter(it => !it.curso || it.curso === curso);
+/* Dos modos: "Por lección" (los paneles que el tutor clasificó en una misión) y "Libre" (dudas sueltas). */
+let pModo = "leccion", pMision = null;
+const visiblesCurso = () => (state.pantalla || []).filter(it => !it.curso || it.curso === curso);
+const visibles = () => visiblesCurso().filter(it => pModo === "libre" ? !it.mision : it.mision === pMision);
+function guardarModo(){ store.set(`pant:${curso}`, JSON.stringify({m: pModo, l: pMision})); }
+function cargarModo(){
+  try{ const g = JSON.parse(store.get(`pant:${curso}`) || "null"); if (g){ pModo = g.m === "libre" ? "libre" : "leccion"; pMision = g.l || null; return true; } }catch(e){}
+  return false;
+}
+function irAlPanel(p){
+  pModo = p.mision ? "leccion" : "libre";
+  if (p.mision) pMision = p.mision;
+  guardarModo(); items = visibles(); idx = items.findIndex(x => x.id === p.id); if (idx < 0) idx = items.length - 1; renderedKey = null;
+}
+function cambiarModo(m, mision){
+  pModo = m;
+  if (m === "leccion"){
+    const con = visiblesCurso().filter(x => x.mision);
+    pMision = mision || pMision || (con.slice(-1)[0] || {}).mision || (state.datos || {}).siguiente || null;
+  }
+  guardarModo(); items = visibles(); idx = items.length - 1; renderedKey = null; renderPantalla();
+}
+document.querySelectorAll(".modos [data-m]").forEach(b => b.onclick = () => cambiarModo(b.dataset.m));
+$("#plec").onchange = e => cambiarModo("leccion", e.target.value);
 const modNombre = (d, n) => ((d.modulos || []).find(m => m.n == n) || {}).nombre || "";
 const material = m => m.material || m.notebook || "";
 
@@ -940,21 +976,50 @@ function step(n){
   idx = Math.max(0, Math.min(items.length - 1, idx + n)); renderPantalla();
 }
 
+const panelCache = new Map();
+async function cargarPanel(id){
+  if (panelCache.has(id)) return panelCache.get(id);
+  const r = await fetch(`/api/pantalla/${id}`);
+  if (r.status === 401){ location.href = "/login"; return null; }
+  if (!r.ok) return null;
+  const p = await r.json(); panelCache.set(id, p); return p;
+}
+function pintarBarraPantalla(){
+  document.querySelectorAll(".modos [data-m]").forEach(b => b.classList.toggle("on", b.dataset.m === pModo));
+  const todos = visiblesCurso(), cuenta = {};
+  todos.forEach(x => { if (x.mision) cuenta[x.mision] = (cuenta[x.mision] || 0) + 1; });
+  const ms = (state.datos || {}).misiones || [];
+  // Las lecciones con paneles, más la que toca (aunque todavía no tenga).
+  const opciones = ms.filter(m => cuenta[m.id] || m.id === (state.datos || {}).siguiente || m.id === pMision);
+  Object.keys(cuenta).filter(id => !ms.some(m => String(m.id) === id)).forEach(id => opciones.push({id, titulo: ""}));
+  $("#plec").innerHTML = opciones.map(m => `<option value="${esc(m.id)}" ${String(m.id) === pMision ? "selected" : ""}>${esc(m.id)}${m.titulo ? " · " + esc(m.titulo) : ""} (${cuenta[m.id] || 0})</option>`).join("");
+  $("#plec").style.display = pModo === "leccion" && opciones.length ? "" : "none";
+  const libres = todos.filter(x => !x.mision).length;
+  document.querySelector('.modos [data-m="libre"]').textContent = `Libre (${libres})`;
+}
 async function renderPantalla(){
   if (idx >= items.length) idx = items.length - 1;
+  pintarBarraPantalla();
   $("#prev").disabled = idx <= 0; $("#nextb").disabled = idx >= items.length - 1;
   $("#pos").textContent = items.length ? `${idx + 1} de ${items.length}` : "";
   $("#pick").innerHTML = items.map((it, i) => `<option value="${i}" ${i === idx ? "selected" : ""}>${esc(it.ts.slice(5))} · ${esc(it.titulo)}</option>`).join("");
   $("#pick").style.display = items.length ? "" : "none";
 
-  const it = items[idx], stage = $("#stage");
-  if (!it){
-    stage.innerHTML = `<div class="waiting"><b>Esperando al tutor</b><span>Abre una sesión con <code>/tutor ${esc(curso || "")}</code>.<br>Lo que te muestre aparecerá aquí.</span></div>`;
+  const ref = items[idx], stage = $("#stage");
+  if (!ref){
+    stage.innerHTML = pModo === "libre"
+      ? `<div class="waiting"><b>Nada en Libre todavía</b><span>Aquí quedan las dudas sueltas que el tutor te muestra fuera de una lección.</span></div>`
+      : (pMision
+        ? `<div class="waiting"><b>La lección ${esc(pMision)} todavía no tiene paneles</b><span>Lo que el tutor te muestre en su sesión quedará guardado aquí, en orden.<br>Abre una sesión con <code>/tutor ${esc(curso || "")}</code>.</span></div>`
+        : `<div class="waiting"><b>Esperando al tutor</b><span>Abre una sesión con <code>/tutor ${esc(curso || "")}</code>.<br>Lo que te muestre aparecerá aquí.</span></div>`);
     renderedKey = null; return;
   }
-  const key = it.id + document.documentElement.dataset.theme;
+  const key = ref.id + document.documentElement.dataset.theme;
   if (renderedKey === key) return;
   renderedKey = key;
+  const it = await cargarPanel(ref.id);
+  if (renderedKey !== key) return;  // cambió de panel mientras cargaba
+  if (!it){ stage.innerHTML = `<div class="waiting"><b>No se pudo cargar este panel</b></div>`; renderedKey = null; return; }
 
   const dat = it.datos || {};
   const conPanel = it.tipo === "recorrido" || (it.tipo === "mermaid" && dat.detalles);

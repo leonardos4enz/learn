@@ -151,6 +151,14 @@ async def api_estado(req: Request):
 
 
 @_privado
+async def api_panel(req: Request):
+    p = store.panel(int(req.path_params["pid"]))
+    if not p:
+        return JSONResponse({"error": "No existe ese panel."}, status_code=404)
+    return JSONResponse(p, headers={"Cache-Control": "private, max-age=3600"})  # un panel no cambia
+
+
+@_privado
 async def api_cola(req: Request):
     cid = req.query_params.get("curso", "todos")
     return JSONResponse({"cola": store.cola(cid)})
@@ -308,9 +316,12 @@ def leer_hoja(curso: str, archivo: str) -> str:
 
 @mcp.tool()
 def mostrar(curso: str, titulo: str, tipo: str, contenido: str = "", notas: str | None = None,
-            resaltar: list[int] | None = None, respuesta: str | None = None, datos: dict | None = None) -> str:
+            resaltar: list[int] | None = None, respuesta: str | None = None, datos: dict | None = None,
+            mision: str | None = None) -> str:
     """Muestra algo en la Pantalla en vivo de Leo (lo ve en ~2 s). La pantalla es SOLO para ver: Leo contesta en el chat.
     Manda UN panel y espera a que Leo responda antes del siguiente (si mandas dos seguidos, solo ve el último).
+    mision: el id de la misión que están trabajando (p. ej. "1.B"). El panel queda guardado en esa lección y Leo lo
+      vuelve a ver en el modo "Por lección". Sin mision (una duda suelta), el panel va al modo "Libre".
     tipo:
       'mermaid'   diagrama; marca el nodo clave con 'class X clave'. Opcional datos={"detalles": {"X": "qué hace X"}}:
                   Leo toca un nodo y ve su explicación al lado.
@@ -326,8 +337,22 @@ def mostrar(curso: str, titulo: str, tipo: str, contenido: str = "", notas: str 
                   se resaltan las líneas distintas. Ideal para "antes / después" o "con y sin reducer".
       'html'      solo si nada de lo anterior sirve.
     notas: 2–5 líneas que dicen qué mirar; van al lado del contenido (ponlas siempre)."""
-    store.mostrar(curso, titulo, tipo, contenido, notas, resaltar, respuesta, datos)
-    return "En pantalla. Espera a que Leo conteste antes de mandar el siguiente panel."
+    store.mostrar(curso, titulo, tipo, contenido, notas, resaltar, respuesta, datos, mision)
+    donde = f"la lección {mision}" if mision else "Libre"
+    return f"En pantalla ({donde}). Espera a que Leo conteste antes de mandar el siguiente panel."
+
+
+@mcp.tool()
+def ver_pantalla(curso: str, mision: str | None = None) -> dict:
+    """Lo que ya se le mostró a Leo en la pantalla en vivo: título, tipo y fecha de cada panel. Con mision, solo los de
+    esa lección; con mision="libre", los que no son de ninguna lección; sin mision, todos los del curso.
+    Úsalo para retomar una lección sin repetir lo que ya vio."""
+    items = [p for p in store.pantalla(curso) if p.get("curso") == curso]
+    if mision == "libre":
+        items = [p for p in items if not p.get("mision")]
+    elif mision:
+        items = [p for p in items if p.get("mision") == str(mision)]
+    return {"paneles": items}
 
 
 @mcp.tool()
@@ -607,6 +632,7 @@ routes = [
     Route("/api/cola", api_cola),
     Route("/api/tarjetas", api_tarjetas),
     Route("/api/tarjetas/{tid:int}/repaso", api_repasar, methods=["POST"]),
+    Route("/api/pantalla/{pid:int}", api_panel),
     Route("/api/lecciones", api_lecciones),
     Route("/api/lecciones/{curso}/{mision}", api_leccion),
     Route("/api/lecciones/{curso}/{mision}/completar", api_completar, methods=["POST"]),

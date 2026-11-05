@@ -30,7 +30,7 @@ IMG_MAX = int(os.environ.get("IMAGEN_MAX_KB", "1500")) * 1024
 TZ = ZoneInfo(os.environ.get("TZ_NAME", "America/Mexico_City"))
 NUEVAS_POR_DIA = int(os.environ.get("NUEVAS_POR_DIA", "20"))
 DOMINADA_DIAS = 21  # como Anki: una tarjeta es "madura" cuando su intervalo pasa de 21 días
-PANTALLA_MAX = 60
+PANTALLA_MAX = 5000  # solo un tope de seguridad: los paneles se guardan por lección
 
 SCHEDULER = Scheduler(desired_retention=0.9)
 RATINGS = {1: Rating.Again, 2: Rating.Hard, 3: Rating.Good, 4: Rating.Easy}
@@ -65,9 +65,14 @@ CREATE TABLE IF NOT EXISTS mejoras (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEX
   descripcion TEXT, estado TEXT DEFAULT 'nueva', nota TEXT, actualizado TEXT);
 """)
 # migración: los tipos interactivos de la pantalla guardan su estructura en 'datos'
-if "datos" not in {r["name"] for r in _con.execute("PRAGMA table_info(pantalla)")}:
+_cols_pan = {r["name"] for r in _con.execute("PRAGMA table_info(pantalla)")}
+if "datos" not in _cols_pan:
     _con.execute("ALTER TABLE pantalla ADD COLUMN datos TEXT")
-    _con.commit()
+# migración: cada panel se clasifica por lección (mision); sin lección = modo libre
+if "mision" not in _cols_pan:
+    _con.execute("ALTER TABLE pantalla ADD COLUMN mision TEXT")
+_con.execute("CREATE INDEX IF NOT EXISTS pantalla_curso ON pantalla (curso, mision, id)")
+_con.commit()
 # migración: leer una lección no es saberla; el tutor la verifica en la sesión
 _cols_lec = {r["name"] for r in _con.execute("PRAGMA table_info(lecciones)")}
 for _col in ("verificada", "verificacion"):
@@ -362,29 +367,48 @@ def _validar_datos_pantalla(tipo, contenido, datos):
     return None
 
 
-def mostrar(cid, titulo, tipo, contenido, notas=None, resaltar=None, respuesta=None, datos=None):
+def mostrar(cid, titulo, tipo, contenido, notas=None, resaltar=None, respuesta=None, datos=None, mision=None):
+    """Guarda un panel de la pantalla en vivo. Con 'mision' queda clasificado en esa lección; sin ella, en 'libre'.
+    Los paneles ya no se borran: quedan como registro de lo que se vio en cada lección."""
     if tipo not in TIPOS_PANTALLA:
         raise ValueError("tipo debe ser uno de: " + ", ".join(TIPOS_PANTALLA) + ".")
     if tipo == "predice" and not respuesta:
         raise ValueError("El tipo 'predice' necesita 'respuesta'.")
+    mision = str(mision).strip() if mision not in (None, "") else None
+    if mision:
+        ids = {str(m.get("id")) for m in (leer_datos(cid) or {}).get("misiones", [])}
+        if ids and mision not in ids:
+            raise ValueError(f"'{mision}' no es una misión de '{cid}'. Misiones: {', '.join(sorted(ids))}. "
+                             "Para una duda suelta, no pases 'mision' (va a Libre).")
     extra = _validar_datos_pantalla(tipo, contenido, datos)
     iid = int(now_utc().timestamp() * 1000)
-    _x("INSERT INTO pantalla (id, curso, ts, titulo, tipo, contenido, notas, resaltar, respuesta, datos) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    _x("""INSERT INTO pantalla (id, curso, ts, titulo, tipo, contenido, notas, resaltar, respuesta, datos, mision)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
        (iid, cid, datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), titulo, tipo, contenido or "", notas,
-        json.dumps(resaltar or []), respuesta, json.dumps(extra, ensure_ascii=False) if extra else None))
+        json.dumps(resaltar or []), respuesta, json.dumps(extra, ensure_ascii=False) if extra else None, mision))
+    # Tope solo de seguridad (muy alto): el historial por lección se conserva.
     _x("DELETE FROM pantalla WHERE id NOT IN (SELECT id FROM pantalla ORDER BY id DESC LIMIT ?)", (PANTALLA_MAX,))
     return iid
 
 
-def pantalla():
-    rows = _q("SELECT * FROM pantalla ORDER BY id")
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["resaltar"] = json.loads(d["resaltar"] or "[]")
-        d["datos"] = json.loads(d["datos"]) if d.get("datos") else None
-        out.append({k: v for k, v in d.items() if v is not None})
-    return out
+def _panel(r):
+    d = dict(r)
+    d["resaltar"] = json.loads(d["resaltar"] or "[]")
+    d["datos"] = json.loads(d["datos"]) if d.get("datos") else None
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def pantalla(cid=None):
+    """Índice ligero de los paneles (sin el contenido), para que la app lo consulte cada 2 s sin cargar todo."""
+    sql, args = "SELECT id, curso, ts, titulo, tipo, mision FROM pantalla", ()
+    if cid:
+        sql, args = sql + " WHERE curso=? OR curso IS NULL", (cid,)
+    return [{k: v for k, v in dict(r).items() if v is not None} for r in _q(sql + " ORDER BY id", args)]
+
+
+def panel(pid):
+    r = _q("SELECT * FROM pantalla WHERE id=?", (pid,), one=True)
+    return _panel(r) if r else None
 
 
 # ---------- tarjetas (FSRS) ----------
