@@ -288,6 +288,13 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .nodo .c svg{width:28px;height:28px}
 .nodo:not(.vacio):not(.ok):not(.now):not(.mision) .c{color:var(--faint)}
 .nodo.ok .c{box-shadow:0 6px 0 var(--acc-ink)}
+/* leída pero sin verificar: solo contorno; el verde lleno es para lo que el tutor verificó */
+.nodo.leida .c{background:var(--panel);border-color:var(--acc);color:var(--acc);box-shadow:0 6px 0 var(--acc-soft)}
+.nodo.repasar .c{background:var(--warn-soft);border-color:var(--warn);color:var(--warn);box-shadow:0 6px 0 var(--mark-line)}
+.refcod{margin:12px 0 0;max-width:100%}
+.refcod summary{cursor:pointer;font-weight:700;color:var(--acc-ink);padding:6px 0;width:max-content;max-width:100%}
+.refcod .code{margin-top:6px;max-height:420px}
+.fin .falta{max-width:46ch;color:var(--warn);font-weight:600}
 .nodo.mision .c{box-shadow:0 6px 0 var(--acc)}
 .nodo.now{margin-top:34px}
 .nodo.now .c{background:var(--acc);border-color:var(--acc);color:var(--on-acc);box-shadow:0 6px 0 var(--acc-ink),0 0 0 7px var(--panel),0 0 0 12px var(--acc-soft)}
@@ -628,8 +635,9 @@ const HELP = {
     <li><b>Un concepto por paso</b> y avanzas a tu ritmo (← →). La barra de arriba te dice cuánto falta.</li>
     <li>En los pasos <b>Predice</b> tienes que escribir tu respuesta antes de verla: intentar recordar o adivinar, aunque falles, fija más que solo leer. Luego dices si acertaste; el tutor lo lee para saber qué reforzar.</li>
     <li>Al terminar, las tarjetas de la lección entran a tu mazo de repaso espaciado.</li>
+    <li><b>Leer no es saber.</b> Al terminar, la lección queda <b>leída</b> (contorno verde). Solo el <b>tutor</b> la marca como <b>verificada</b> (verde lleno) cuando en la sesión contestas sin ayuda; si nota huecos, la marca para <b>repasar</b> (ámbar). Uno mismo tiende a creer que ya sabe algo justo después de leerlo; por eso la verificación la hace otro.</li>
     <li>La lección <b>no reemplaza</b> la sesión: ahí practicas (predecir, diseñar, revisar, romper). Releer la lección como forma de estudiar rinde poco; para repasar están las tarjetas y las hojas.</li></ul>
-    <div class="src">Kirschner, Sweller y Clark (2006): ejemplos resueltos para novatos. Mayer: segmentación y coherencia. Dunlosky et al. (2013): práctica de recuerdo; releer es de baja utilidad.</div>`,
+    <div class="src">Kirschner, Sweller y Clark (2006): ejemplos resueltos para novatos. Mayer: segmentación y coherencia. Dunlosky et al. (2013): práctica de recuerdo; releer es de baja utilidad. Dunlosky y Rawson (2012): sobreconfianza al juzgar lo que uno sabe.</div>`,
   mejoras: `<ul><li>La regla de Mi Tutor: todo lo que hace tiene un porqué con evidencia. Esta lista es cómo lo mantenemos honesto: lo que <b>no funcionó en la práctica</b> queda escrito en vez de olvidarse.</li>
     <li>El tutor registra lo que nota al cerrar cada sesión y revisa las abiertas al empezar. Tú puedes agregar las tuyas aquí.</li>
     <li>Estados: <b>nueva</b> (sin revisar), <b>aceptada</b> (se va a hacer), <b>hecha</b>, <b>descartada</b> (con su razón en la nota).</li></ul>
@@ -833,7 +841,7 @@ function renderHoy(d, hojas){
 }
 
 /* ---------- Score (Hoy y Mis estudios) ---------- */
-const PARTES = {misiones: "misiones hechas", lecciones: "lecciones leídas", tarjetas: "tarjetas dominadas", examen: "examen"};
+const PARTES = {misiones: "misiones hechas", lecciones: "lecciones verificadas", tarjetas: "tarjetas dominadas", examen: "examen"};
 const partesTxt = p => Object.entries(p).map(([k, [a, b]]) => k === "examen" ? `examen ${a}%` : `${a}/${b} ${PARTES[k]}`).join(" · ");
 const barra = (pct, cls = "") => `<div class="meter ${cls}" title="${pct}%"><i style="width:${pct}%"></i></div>`;
 function pintarScoreHoy(){
@@ -1301,6 +1309,7 @@ let lec = null, lecPaso = 0, lecResp = {}, lecFin = null;
 const enc = encodeURIComponent;
 const ICON_OK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`;
 const ICON_ESTRELLA = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.8l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.6l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+const ICON_REPASAR = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg>`;
 const ICON_LIBRO = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5C5.6 4.6 8.6 4.7 11 6.2v13.3c-2.4-1.4-5.4-1.5-8-.6zM21 5.5c-2.6-.9-5.6-.8-8 .7v13.3c2.4-1.4 5.4-1.5 8-.6z"/></svg>`;
 const lecDe = id => ((state && state.lecciones) || []).find(l => l.mision_id === String(id));
 function leccionActual(d, ls){
@@ -1323,7 +1332,10 @@ function renderLecciones(d){
   const nodo = (id, titulo, l, m, i) => {
     let cls = "vacio", ic = ICON_LIBRO, sub = "Sin lección todavía", burbuja = "";
     if (l){
-      if (l.completada){ cls = "ok"; ic = ICON_OK; sub = `Leída · ${l.n_pasos} pasos`; }
+      const rv = (l.verificacion || {}).resultado;
+      if (l.verificada){ cls = "ok"; ic = ICON_OK; sub = `Verificada por el tutor · ${l.n_pasos} pasos`; }
+      else if (rv === "repasar"){ cls = "repasar"; ic = ICON_REPASAR; sub = `El tutor pidió repasarla · ${l.n_pasos} pasos`; }
+      else if (l.completada){ cls = "leida"; ic = ICON_OK; sub = `Leída · falta verificarla con el tutor`; }
       else if (id === actual){
         cls = "now"; ic = ICON_ESTRELLA; sub = `Te toca · ${l.n_pasos} pasos`;
         let empezada = false; try{ empezada = !!JSON.parse(store.get(`lec:${curso}:${id}`) || "null"); }catch(e){}
@@ -1337,8 +1349,8 @@ function renderLecciones(d){
   let html = mods.map(({n, nombre}) => {
     const list = ms.filter(m => m.modulo == n);
     if (!list.length) return "";
-    const k = list.filter(m => by[m.id] && by[m.id].completada).length;
-    return `<div class="card cmod"><div class="mh"><b>Módulo ${esc(n)}${nombre ? " · " + esc(nombre) : ""}</b><span>${k} de ${list.length} leídas</span></div>
+    const k = list.filter(m => by[m.id] && by[m.id].completada).length, kv = list.filter(m => by[m.id] && by[m.id].verificada).length;
+    return `<div class="card cmod"><div class="mh"><b>Módulo ${esc(n)}${nombre ? " · " + esc(nombre) : ""}</b><span>${k} leídas · ${kv} verificadas de ${list.length}</span></div>
       <div class="nodos">${list.map((m, i) => nodo(String(m.id), m.titulo, by[m.id], m, i)).join("")}</div></div>`;
   }).join("");
   const sueltas = ls.filter(l => !enMisiones.has(l.mision_id));
@@ -1382,7 +1394,8 @@ async function pintarPaso(){
   const v = $("#lec-visor"), n = lec.pasos.length;
   if (lecFin){
     const preds = Object.values(lecResp).filter(r => r.visto), ok = preds.filter(r => r.acerto === "si").length;
-    v.innerHTML = `<div class="card vstage"><div class="fin"><span class="bigpet" id="petfin" aria-hidden="true"></span><b>Lección completada</b>
+    v.innerHTML = `<div class="card vstage"><div class="fin"><span class="bigpet" id="petfin" aria-hidden="true"></span><b>Lección leída</b>
+      <span class="falta">Todavía no cuenta como sabida: el tutor la verifica en la sesión, cuando la practiques sin ayuda.</span>
       <span>${esc(lec.mision_id)} · ${esc(lec.titulo)}</span>
       ${preds.length ? `<span>Predicciones: acertaste ${ok} de ${preds.length}.${ok < preds.length ? " Las que no te salieron son justo lo que conviene practicar en la sesión: el tutor las verá." : ""}</span>` : ""}
       <span>${lecFin.tarjetas_creadas ? `${lecFin.tarjetas_creadas} tarjetas nuevas entraron a tu mazo de repaso.` : "Sus tarjetas ya estaban en tu mazo."}</span>
@@ -1413,7 +1426,15 @@ async function pintarPaso(){
   if (p.tipo !== "predice"){ await pintarVisual(box, p); resaltarBloques(v); return; }
   const r = lecResp[lecPaso] || {};
   box.className = "predict";
-  box.innerHTML = `<div class="md">${md(p.contenido)}</div>
+  // Si la pregunta no trae su código, se puede abrir el del ejemplo al que se refiere (p.ref, o el último paso de código).
+  let refHtml = "";
+  if (!/```/.test(p.contenido)){
+    let ri = p.ref ? p.ref - 1 : -1;
+    if (ri < 0) for (let j = lecPaso - 1; j >= 0; j--) if (lec.pasos[j].tipo === "codigo"){ ri = j; break; }
+    const rp = lec.pasos[ri];
+    if (rp && rp.tipo === "codigo") refHtml = `<details class="refcod"><summary>Ver el código del paso ${ri + 1}${rp.titulo ? ": " + esc(rp.titulo) : ""}</summary><div class="code">${resaltarCodigo(rp.contenido.replace(/\n$/, "").split("\n")).map((l, i) => `<div class="ln"><i>${i + 1}</i><span>${l || " "}</span></div>`).join("")}</div></details>`;
+  }
+  box.innerHTML = `<div class="md">${md(p.contenido)}</div>${refHtml}
     <textarea id="lguess" placeholder="Escribe tu predicción. Hay que contestar antes de ver la respuesta.">${esc(r.texto || "")}</textarea>
     ${r.visto ? "" : `<button class="btn pri" id="lreveal">Ver respuesta</button>`}<div id="lans"></div>`;
   const ta = $("#lguess");

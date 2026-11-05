@@ -361,7 +361,9 @@ def guardar_leccion(curso: str, mision_id: str, titulo: str, pasos: list[dict], 
     Si Leo ya la completó, su avance se conserva.
     pasos: lista en orden; cada paso es UN concepto: {"tipo", "titulo"?, "contenido", "notas"?, "resaltar"?, "respuesta"?}.
       tipo 'markdown' (explicación), 'codigo' (código COMPLETO, nunca recortado; resaltar=[líneas clave]),
-      'mermaid' (diagrama; 'class nodo clave'), 'predice' (pregunta; 'respuesta' obligatoria, Leo debe contestar antes de avanzar),
+      'mermaid' (diagrama; 'class nodo clave'), 'predice' (pregunta; 'respuesta' obligatoria, Leo debe contestar antes de avanzar;
+      debe poder contestarse con lo que está en pantalla: si es una variación, el código completo va en 'contenido' en un
+      bloque ```python; si es sobre un ejemplo ya mostrado, "ref": número del paso de código),
       'imagen' ({"url": la de subir_imagen, "alt", "notas"?}).
       notas: 2–5 líneas de qué mirar, van al lado del código o diagrama.
     Orden obligatorio: explicación con un ejemplo resuelto y su código completo PRIMERO; después los pasos predice
@@ -386,8 +388,21 @@ def leer_leccion(curso: str, mision_id: str) -> dict:
 
 @mcp.tool()
 def listar_lecciones(curso: str) -> dict:
-    """Lecciones guardadas del curso (sin los pasos): misión, título, número de pasos y si están completadas."""
+    """Lecciones guardadas del curso (sin los pasos): misión, título, número de pasos, si Leo ya la leyó (completada)
+    y si el tutor la verificó (verificada / verificacion)."""
     return {"lecciones": store.listar_lecciones(curso)}
+
+
+@mcp.tool()
+def verificar_leccion(curso: str, mision_id: str, resultado: str, nota: str = "") -> dict:
+    """Solo el tutor marca si Leo SABE una lección; leerla en la app no basta. Úsalo al cerrar la sesión de esa misión.
+    resultado: 'dominada' si Leo contestó bien SIN ayuda (al menos 2 de 3 preguntas de práctica: predecir, diseñar,
+    revisar o romper) o 'repasar' si necesitó pistas o falló lo central. nota: 1–2 líneas con el porqué (qué acertó o
+    qué falló). En la app la lección pasa de 'leída' a 'verificada' (verde) o 'repasar' (ámbar), y el score solo
+    cuenta las verificadas."""
+    if not store.curso_existe(curso):
+        raise ValueError(f"No hay un curso '{curso}' en el árbol.")
+    return store.verificar_leccion(curso, mision_id, resultado, nota)
 
 
 @mcp.tool()

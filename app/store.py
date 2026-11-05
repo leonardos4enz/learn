@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS mejoras (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEX
 if "datos" not in {r["name"] for r in _con.execute("PRAGMA table_info(pantalla)")}:
     _con.execute("ALTER TABLE pantalla ADD COLUMN datos TEXT")
     _con.commit()
+# migración: leer una lección no es saberla; el tutor la verifica en la sesión
+_cols_lec = {r["name"] for r in _con.execute("PRAGMA table_info(lecciones)")}
+for _col in ("verificada", "verificacion"):
+    if _col not in _cols_lec:
+        _con.execute(f"ALTER TABLE lecciones ADD COLUMN {_col} TEXT")
+_con.commit()
 
 
 def now_utc():
@@ -192,15 +198,16 @@ def resumen(cid):
 
 def puntaje(cid, d=None, t=None):
     """Score de un curso, módulo por módulo. Cada módulo promedia las partes que se pueden medir:
-    misiones hechas, lecciones leídas, tarjetas dominadas (≥21 días) y el último examen del módulo (sin IA).
-    El curso promedia sus módulos pesando por número de misiones. Las partes van aparte para que el número sea transparente."""
+    misiones hechas, lecciones VERIFICADAS por el tutor (leerla no basta), tarjetas dominadas (≥21 días) y el último
+    examen del módulo (sin IA). El curso promedia sus módulos pesando por número de misiones. Las partes van aparte
+    para que el número sea transparente."""
     d = d if d is not None else leer_datos(cid)
     t = t if t is not None else stats_tarjetas(cid)
     if not d:
         return None
     ms = d.get("misiones", [])
     mods = d.get("modulos") or [{"n": n, "nombre": ""} for n in dict.fromkeys(m.get("modulo") for m in ms)]
-    lecs = {r["mision_id"]: bool(r["completada"]) for r in _q("SELECT mision_id, completada FROM lecciones WHERE curso=?", (cid,))}
+    lecs = {r["mision_id"]: bool(r["verificada"]) for r in _q("SELECT mision_id, verificada FROM lecciones WHERE curso=?", (cid,))}
     examenes = {}
     for e in d.get("examenes", []):
         examenes[str(e.get("modulo"))] = e.get("puntaje")  # el último gana
@@ -547,9 +554,11 @@ def _validar_pasos(pasos):
             raise ValueError(f"Paso {i}: falta 'contenido'.")
         if tipo == "predice" and not str(p.get("respuesta") or "").strip():
             raise ValueError(f"Paso {i}: un paso 'predice' necesita 'respuesta'.")
+        if "ref" in p and not (isinstance(p["ref"], int) and 1 <= p["ref"] <= len(pasos)):
+            raise ValueError(f"Paso {i}: 'ref' es el número de un paso de la lección (el código al que se refiere la pregunta).")
         if "resaltar" in p and not (isinstance(p["resaltar"], list) and all(isinstance(n, int) for n in p["resaltar"])):
             raise ValueError(f"Paso {i}: 'resaltar' es una lista de números de línea.")
-        out.append({k: p[k] for k in ("tipo", "titulo", "contenido", "notas", "resaltar", "respuesta", "url", "alt")
+        out.append({k: p[k] for k in ("tipo", "titulo", "contenido", "notas", "resaltar", "respuesta", "url", "alt", "ref")
                     if p.get(k) not in (None, "", [])})
     return out
 
@@ -579,7 +588,8 @@ def guardar_leccion(cid, mision_id, titulo, pasos, fuentes=None, tarjetas=None, 
 def _leccion_dict(r, completa=True):
     pasos = json.loads(r["pasos"] or "[]")
     d = {"curso": r["curso"], "mision_id": r["mision_id"], "modulo": r["modulo"], "titulo": r["titulo"],
-         "actualizado": r["actualizado"], "completada": r["completada"], "n_pasos": len(pasos)}
+         "actualizado": r["actualizado"], "completada": r["completada"], "n_pasos": len(pasos),
+         "verificada": r["verificada"], "verificacion": json.loads(r["verificacion"]) if r["verificacion"] else None}
     if completa:
         d.update(pasos=pasos, fuentes=json.loads(r["fuentes"] or "[]"), tarjetas=json.loads(r["tarjetas"] or "[]"),
                  predicciones=json.loads(r["predicciones"] or "[]"))
@@ -593,6 +603,22 @@ def leer_leccion(cid, mision_id):
 
 def listar_lecciones(cid):
     return [_leccion_dict(r, completa=False) for r in _q("SELECT * FROM lecciones WHERE curso=? ORDER BY mision_id", (cid,))]
+
+
+RESULTADOS_VERIFICACION = ("dominada", "repasar")
+
+
+def verificar_leccion(cid, mision_id, resultado, nota=""):
+    """El tutor dice si Leo SABE la lección (no solo si la leyó): 'dominada' o 'repasar', con una nota del porqué."""
+    if resultado not in RESULTADOS_VERIFICACION:
+        raise ValueError("resultado debe ser 'dominada' o 'repasar'.")
+    if not _q("SELECT 1 FROM lecciones WHERE curso=? AND mision_id=?", (cid, str(mision_id)), one=True):
+        raise ValueError("No existe esa lección.")
+    ts = now_utc().isoformat()
+    _x("UPDATE lecciones SET verificada=?, verificacion=? WHERE curso=? AND mision_id=?",
+       (ts if resultado == "dominada" else None,
+        json.dumps({"resultado": resultado, "nota": str(nota or "")[:2000], "fecha": ts}, ensure_ascii=False), cid, str(mision_id)))
+    return {"mision_id": str(mision_id), "resultado": resultado}
 
 
 def completar_leccion(cid, mision_id, predicciones=None):
