@@ -150,10 +150,13 @@ def exportar(carpeta, solo=None, pisar=False):
     carpeta.mkdir(parents=True, exist_ok=True)
     arbol = _json(asyncio.run(_llamar("ver_arbol", {})))
     ids = [c["id"] for c in _cursos_de(arbol["arbol"]) if not solo or c["id"] in solo]
-    (carpeta / "arbol.json").write_text(json.dumps(_podar(arbol["arbol"], set(ids)), ensure_ascii=False, indent=1), encoding="utf-8")
+    # árbol y rutas: solo si no existen (o con --pisar); así exportar un curso suelto no recorta el paquete
+    if pisar or not (carpeta / "arbol.json").exists():
+        (carpeta / "arbol.json").write_text(json.dumps(_podar(arbol["arbol"], set(ids)), ensure_ascii=False, indent=1), encoding="utf-8")
     rutas = [{"id": r["id"], "nombre": r["nombre"], "descripcion": r.get("descripcion", ""),
               "cursos": [c for c in r["cursos"] if c in ids]} for r in arbol.get("rutas", [])]
-    (carpeta / "rutas.json").write_text(json.dumps([r for r in rutas if r["cursos"]], ensure_ascii=False, indent=1), encoding="utf-8")
+    if pisar or not (carpeta / "rutas.json").exists():
+        (carpeta / "rutas.json").write_text(json.dumps([r for r in rutas if r["cursos"]], ensure_ascii=False, indent=1), encoding="utf-8")
     for cid in ids:
         curso, lista = asyncio.run(_llamar_varios([("leer_curso", {"curso": cid}), ("listar_lecciones", {"curso": cid})]))
         curso, lista = _json(curso), _json(lista)["lecciones"]
