@@ -350,7 +350,9 @@ def leer_curso(curso: str) -> dict:
 @mcp.tool()
 def guardar_datos(curso: str, datos: dict) -> str:
     """Reemplaza los datos del curso (el JSON completo que devolvió leer_curso, ya modificado): misiones, siguiente,
-    sesiones, hojas {archivo: {estado, falladas, total}}, banco, examenes, modulos, proyecto, hilos."""
+    sesiones, hojas {archivo: {estado, falladas, total}}, banco, examenes, modulos, proyecto, hilos.
+    Cada misión puede traer links: [{"tipo": "video"|"lectura"|"lab"|"quiz", "titulo", "url" (https), "min"?}]: el
+    material oficial (p. ej. LangChain Academy). La app los muestra como botones en Hoy, en el camino y en la lección."""
     if not store.curso_existe(curso):
         raise ValueError(f"No hay un curso '{curso}' en el árbol.")
     store.guardar_datos(curso, datos)

@@ -336,6 +336,11 @@ table.est thead th{background:var(--panel2);color:var(--ink)}
 .fin .bigpet{width:120px;height:120px}
 .fin .acts{display:flex;gap:10px;margin-top:8px}
 .fuentes{font-size:13.5px;color:var(--muted);margin-top:4px}
+a.btn{display:inline-block;text-decoration:none;color:inherit}
+a.btn.pri{color:var(--on-acc)}
+.vacad{display:flex;gap:6px;flex-wrap:wrap;margin-left:8px}
+.vacad .btn{padding:3px 10px;font-size:13px}
+.nodo.acad .lt b{color:var(--ink)}
 
 /* ---------- Hoy: racha y plan del día ---------- */
 .hoyhead{display:flex;align-items:flex-start;gap:16px;margin-bottom:4px}
@@ -915,6 +920,19 @@ document.querySelectorAll(".modos [data-m]").forEach(b => b.onclick = () => camb
 $("#plec").onchange = e => cambiarModo("leccion", e.target.value);
 const modNombre = (d, n) => ((d.modulos || []).find(m => m.n == n) || {}).nombre || "";
 const material = m => m.material || m.notebook || "";
+/* Material oficial de cada misión (videos y lecturas de LangChain Academy, u otro curso): mision.links =
+   [{tipo: "video"|"lectura"|"lab"|"quiz", titulo, url, min?}]. Es la explicación de la misión; después se practica. */
+const TIPO_LINK = {video: "Video", lectura: "Lectura", lab: "Lab", quiz: "Quiz"};
+const linksDe = m => ((m && m.links) || []).filter(l => l && /^https:\/\//.test(String(l.url || "")));
+const misionDe = id => ((state && state.datos && state.datos.misiones) || []).find(m => String(m.id) === String(id));
+const vistoKey = id => `academy:${curso}:${id}`;
+const linkBtns = (m, pri) => linksDe(m).map((l, i) => `<a class="btn ${pri && i === 0 ? "pri" : ""}" href="${esc(l.url)}" target="_blank" rel="noopener" data-visto="${esc(String(m.id))}" title="${esc(l.titulo || "")}">${esc(TIPO_LINK[l.tipo] || "Abrir")}${l.min ? " · " + esc(l.min) + " min" : ""} ↗</a>`).join("");
+document.addEventListener("click", e => {
+  const a = e.target.closest("[data-visto]");
+  if (!a) return;
+  store.set(vistoKey(a.dataset.visto), new Date().toLocaleDateString("sv-SE"));
+  if (state && state.datos) setTimeout(() => renderHoy(state.datos, state.hojas || []), 0);
+});
 
 /* ---------- Hoy ---------- */
 function renderHoy(d, hojas){
@@ -936,9 +954,13 @@ function renderHoy(d, hojas){
   const sesHoy = (d.sesiones || []).some(s => String(s.fecha).slice(0, 10) === hoyISO);
   // El plan del día, en el orden que conviene: recordar → ejemplo resuelto → practicar → papel.
   const pasos = [];
+  const links = linksDe(next), visto = next && !!store.get(vistoKey(next.id));
   if (tj.total) pasos.push({hecho: !tj.para_hoy, t: tj.para_hoy ? `Repasa tus tarjetas (${tj.para_hoy})` : "Tarjetas al día",
     d: tj.para_hoy ? "Primero recordar: calienta la memoria con lo de días anteriores. Unos minutos." : `Repasaste ${tj.repasadas_hoy || 0} hoy.`,
     btn: tj.para_hoy ? `<button class="btn pri" onclick="show('tarjetas')">Repasar</button>` : ""});
+  if (links.length) pasos.push({hecho: visto || !!(lec && lec.completada), t: `Ve el material oficial de ${esc(next.id)}`,
+    d: "Primero la explicación oficial; después la practicas.",
+    btn: linkBtns(next, true)});
   if (lec) pasos.push({hecho: !!lec.completada, t: `Lee la lección ${esc(next.id)}`, d: `${esc(next.titulo)} · ${lec.n_pasos} pasos, unos 10 min.`,
     btn: `<button class="btn ${lec.completada ? "" : "pri"}" onclick="abrirLeccion('${esc(String(next.id))}')">${lec.completada ? "Verla" : "Abrir lección"}</button>`});
   if (next) pasos.push({hecho: sesHoy, t: sesHoy ? "Sesión con el tutor: hecha" : `Practica ${esc(next.id)} con el tutor`,
@@ -1484,6 +1506,8 @@ function renderLecciones(d){
   const onda = i => Math.round(Math.sin(i * Math.PI / 4) * 64);
   const nodo = (id, titulo, l, m, i) => {
     let cls = "vacio", ic = ICON_LIBRO, sub = "Sin lección todavía", burbuja = "";
+    const lk = linksDe(m);
+    if (!l && lk.length){ cls = "vacio acad"; sub = `Material en Academy ↗ · ${lk.length} ${lk.length === 1 ? "enlace" : "enlaces"}`; }
     if (l){
       const rv = (l.verificacion || {}).resultado;
       if (l.verificada){ cls = "ok"; ic = ICON_OK; sub = `Verificada por el tutor · ${l.n_pasos} pasos`; }
@@ -1497,7 +1521,7 @@ function renderLecciones(d){
       else if (m && m.estado === "hecha"){ cls = "mision"; ic = ICON_OK; sub = `Misión hecha; lección sin leer · ${l.n_pasos} pasos`; }
       else { cls = ""; sub = `${l.n_pasos} pasos`; }
     }
-    return `<button class="nodo ${cls}" style="--x:${onda(i)}" ${l ? `data-lec="${esc(id)}"` : "disabled"}><span class="c">${burbuja}${ic}</span><span class="lt"><b>${esc(id)} · ${esc(titulo)}</b><small>${sub}</small></span>${l && id === actual ? `<span class="petcam" id="petcam" aria-hidden="true"></span>` : ""}</button>`;
+    return `<button class="nodo ${cls}" style="--x:${onda(i)}" ${l ? `data-lec="${esc(id)}"` : (lk.length ? `data-url="${esc(lk[0].url)}" data-visto="${esc(id)}"` : "disabled")}><span class="c">${burbuja}${ic}</span><span class="lt"><b>${esc(id)} · ${esc(titulo)}</b><small>${sub}</small></span>${l && id === actual ? `<span class="petcam" id="petcam" aria-hidden="true"></span>` : ""}</button>`;
   };
   let html = mods.map(({n, nombre}) => {
     const list = ms.filter(m => m.modulo == n);
@@ -1512,6 +1536,7 @@ function renderLecciones(d){
   renderLecciones.k = html;
   $("#camino").innerHTML = html || `<div class="card empty">Este curso todavía no tiene lecciones. Se crean con la skill <code>/ingestar</code> en Claude Code.</div>`;
   $("#camino").querySelectorAll("[data-lec]").forEach(b => b.onclick = () => abrirLeccion(b.dataset.lec));
+  $("#camino").querySelectorAll("[data-url]").forEach(b => b.onclick = () => window.open(b.dataset.url, "_blank", "noopener"));
   if (window.BloubBot && $("#petcam")){ const p = new BloubBot.Bot($("#petcam"), {size: 52, state: "idle", expr: "neutre"}); requestAnimationFrame(() => centrar(p)); }
 }
 const lecKey = () => `lec:${curso}:${lec.mision_id}`;
@@ -1554,6 +1579,7 @@ async function pintarPaso(){
       <span>${lecFin.tarjetas_creadas ? `${lecFin.tarjetas_creadas} tarjetas nuevas entraron a tu mazo de repaso.` : "Sus tarjetas ya estaban en tu mazo."}</span>
       <span>Ahora practícala con el tutor: abre una sesión nueva con <code>/tutor ${esc(curso)}</code>.</span>
       ${(lec.fuentes || []).length ? `<div class="fuentes">Fuente: ${lec.fuentes.map(esc).join(" · ")}</div>` : ""}
+      ${linksDe(misionDe(lec.mision_id)).length ? `<div class="acts">${linkBtns(misionDe(lec.mision_id), false)}</div>` : ""}
       <div class="acts"><button class="btn" id="lvolver">Volver al camino</button>${lecFin.tarjetas_creadas ? `<button class="btn pri" id="ltarj">Repasar tarjetas</button>` : ""}</div></div></div>`;
     $("#lvolver").onclick = cerrarLeccion;
     if ($("#ltarj")) $("#ltarj").onclick = () => { cerrarLeccion(); show("tarjetas"); };
@@ -1563,7 +1589,7 @@ async function pintarPaso(){
   const p = lec.pasos[lecPaso], hasNotes = !!p.notas && p.tipo !== "predice";
   const segs = lec.pasos.map((x, i) => `<i class="${i < lecPaso ? "ok" : (i === lecPaso ? "cur" : "")}${x.tipo === "predice" ? " pq" : ""}" title="Paso ${i + 1}${x.tipo === "predice" ? " · predice" : ""}"></i>`).join("");
   v.innerHTML = `<div class="vbar"><button class="x" id="lx" title="Volver al camino (Esc)" aria-label="Volver al camino">✕</button>
-      <div class="segs" role="progressbar" aria-label="Avance de la lección" aria-valuemin="1" aria-valuemax="${n}" aria-valuenow="${lecPaso + 1}">${segs}</div><span class="pos">${lecPaso + 1} de ${n}</span></div>
+      <div class="segs" role="progressbar" aria-label="Avance de la lección" aria-valuemin="1" aria-valuemax="${n}" aria-valuenow="${lecPaso + 1}">${segs}</div><span class="pos">${lecPaso + 1} de ${n}</span>${linksDe(misionDe(lec.mision_id)).length ? `<span class="vacad">${linkBtns(misionDe(lec.mision_id), false)}</span>` : ""}</div>
     <div class="card vstage"><div class="vk">${esc(lec.mision_id)} · ${esc(lec.titulo)}${p.tipo === "predice" ? " · Predice" : ""}</div>${p.titulo ? `<div class="vt">${esc(p.titulo)}</div>` : ""}
       ${p.tipo === "codigo"
         ? `<div class="pila">${hasNotes ? `<div class="notes arriba"><div class="k">Qué estás viendo</div>${md(p.notas)}</div>` : ""}<div id="lvis"></div></div>`
