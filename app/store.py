@@ -674,7 +674,8 @@ def guardar_leccion(cid, mision_id, titulo, pasos, fuentes=None, tarjetas=None, 
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(curso, mision_id) DO UPDATE SET modulo=excluded.modulo, titulo=excluded.titulo, pasos=excluded.pasos,
           fuentes=excluded.fuentes, tarjetas=excluded.tarjetas, actualizado=excluded.actualizado""",
-       (cid, mision_id, "" if modulo is None else str(modulo), titulo.strip(),  # el módulo 0 (Bienvenida) es válido json.dumps(pasos, ensure_ascii=False),
+       # el módulo 0 (Bienvenida) es válido: no usar `modulo or ""`
+       (cid, mision_id, "" if modulo is None else str(modulo), titulo.strip(), json.dumps(pasos, ensure_ascii=False),
         json.dumps(fuentes, ensure_ascii=False), json.dumps(tarjetas, ensure_ascii=False), now_utc().isoformat()))
     return {"pasos": len(pasos), "predice": sum(1 for p in pasos if p["tipo"] == "predice"), "tarjetas": len(tarjetas)}
 
