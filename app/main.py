@@ -616,7 +616,9 @@ def guardar_tiempo_habil(semana: dict | None = None, excepciones: list[dict] | N
 @mcp.tool()
 def dar_link(vista: str = "hoy") -> str:
     """Link de acceso a la app (válido 36 h) para dárselo a Leo. vista: hoy, lecciones, tarjetas, pantalla, hojas, repaso,
-    progreso, proyecto, mejoras, estudios, tiempo."""
+    proyecto, mejoras, estudios (grafo de cursos con su progreso y el detalle por módulo), tiempo."""
+    if vista == "progreso":  # la vista Progreso se juntó con Mis estudios
+        vista = "estudios"
     return link_de_acceso(vista)
 
 
