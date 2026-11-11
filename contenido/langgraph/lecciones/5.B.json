@@ -1,0 +1,145 @@
+{
+ "mision_id": "5.B",
+ "titulo": "Perfil del usuario",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 5.A la memoria era un texto libre (una lista con viñetas). Sirve para meterla en un prompt, pero no puedes preguntar `memoria[\"ubicación\"]` ni validar que esté completa.\n\nLa solución es darle **forma**: un perfil con campos fijos (nombre, ubicación, intereses). El problema nuevo es quién llena y actualiza ese JSON: un LLM. Esta lección muestra que eso falla más de lo que parece y cómo lo mitiga **Trustcall**."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un perfil es un dict con schema",
+   "contenido": "from typing import TypedDict, List\nfrom langgraph.store.memory import InMemoryStore\n\nclass UserProfile(TypedDict):\n    \"\"\"User profile schema with typed fields\"\"\"\n    user_name: str         # The user's preferred name\n    interests: List[str]   # A list of the user's interests\n\nuser_profile: UserProfile = {\n    \"user_name\": \"Lance\",\n    \"interests\": [\"biking\", \"technology\", \"coffee\"],\n}\n\nin_memory_store = InMemoryStore()\nnamespace_for_memory = (\"1\", \"memory\")\nin_memory_store.put(namespace_for_memory, \"user_profile\", user_profile)\n\nprofile = in_memory_store.get(namespace_for_memory, \"user_profile\")\nprint(profile.value)\nprint(profile.value[\"interests\"][0])\n",
+   "notas": "- El Store acepta cualquier dict como value; un `TypedDict` es un dict con tipos declarados.\n- Ahora puedes leer un campo: `profile.value[\"interests\"][0]`.\nSalida real:\n```\n{'user_name': 'Lance', 'interests': ['biking', 'technology', 'coffee']}\nbiking\n```",
+   "resaltar": [
+    4,
+    16
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El LLM llena el schema",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nfrom typing import TypedDict, List\nfrom langchain_core.messages import HumanMessage\nfrom langchain_openai import ChatOpenAI\n\nclass UserProfile(TypedDict):\n    \"\"\"User profile schema with typed fields\"\"\"\n    user_name: str\n    interests: List[str]\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\nmodel_with_structure = model.with_structured_output(UserProfile)\n\nstructured_output = model_with_structure.invoke([HumanMessage(\"My name is Lance, I like to bike.\")])\nprint(structured_output)\n",
+   "notas": "- `with_structured_output` obliga al modelo a responder con la forma del schema y te devuelve el dict ya parseado.\n- Es lo que usa el primer chatbot del notebook en `write_memory`.\nSalida real:\n```\n{'user_name': 'Lance', 'interests': ['biking']}\n```",
+   "resaltar": [
+    13
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Falla 1: un schema grande",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nfrom typing import List, Optional\nfrom pydantic import BaseModel, ValidationError\nfrom langchain_openai import ChatOpenAI\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n\nclass OutputFormat(BaseModel):\n    preference: str\n    sentence_preference_revealed: str\nclass TelegramPreferences(BaseModel):\n    preferred_encoding: Optional[List[OutputFormat]] = None\n    favorite_telegram_operators: Optional[List[OutputFormat]] = None\n    preferred_telegram_paper: Optional[List[OutputFormat]] = None\nclass MorseCode(BaseModel):\n    preferred_key_type: Optional[List[OutputFormat]] = None\n    favorite_morse_abbreviations: Optional[List[OutputFormat]] = None\nclass Semaphore(BaseModel):\n    preferred_flag_color: Optional[List[OutputFormat]] = None\n    semaphore_skill_level: Optional[List[OutputFormat]] = None\nclass TrustFallPreferences(BaseModel):\n    preferred_fall_height: Optional[List[OutputFormat]] = None\n    trust_level: Optional[List[OutputFormat]] = None\n    preferred_catching_technique: Optional[List[OutputFormat]] = None\nclass CommunicationPreferences(BaseModel):\n    telegram: TelegramPreferences\n    morse_code: MorseCode\n    semaphore: Semaphore\nclass UserPreferences(BaseModel):\n    communication_preferences: CommunicationPreferences\n    trust_fall_preferences: TrustFallPreferences\nclass TelegramAndTrustFallPreferences(BaseModel):\n    pertinent_user_preferences: UserPreferences\n\nconversation = \"\"\"Operator: How may I assist with your telegram, sir?\nCustomer: I need to send a message about our trust fall exercise.\nOperator: Certainly. Morse code or standard encoding?\nCustomer: Morse, please. I love using a straight key.\nOperator: Excellent. What's your message?\nCustomer: Tell him I'm ready for a higher fall, and I prefer the diamond formation for catching.\nOperator: Done. Shall I use our \"Daredevil\" paper for this daring message?\nCustomer: Perfect! Send it by your fastest carrier pigeon.\nOperator: It'll be there within the hour, sir.\"\"\"\ntry:\n    r = model.with_structured_output(TelegramAndTrustFallPreferences).invoke(f\"Extract the preferences from the following conversation:\\n<convo>\\n{conversation}\\n</convo>\")\n    print(\"Validó:\", r)\nexcept ValidationError as e:\n    print(\"ValidationError:\", e)\n",
+   "notas": "- Un schema anidado de 4 niveles con muchos campos opcionales.\n- La conversación pide **Morse**, papel **Daredevil**, caída **más alta** y formación **diamante**.\n- Lee la salida en el paso siguiente antes de seguir.",
+   "resaltar": [
+    33,
+    46
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué salió",
+   "contenido": "Notebook original (gpt-4o, 2024): `ValidationError` porque el modelo dejó `semaphore` en `None` y el schema lo pide obligatorio.\n\nMi corrida (gpt-4o-mini, nov 2026) **validó**, pero el contenido está mal:\n```\npreferred_encoding=[OutputFormat(preference='Daredevil paper', ...)]\nfavorite_telegram_operators=[OutputFormat(preference='fastest carrier pigeon', ...)]\n```\nEl papel no es una codificación y una paloma no es un operador. Los modelos actuales casi siempre devuelven JSON con la **forma** correcta; eso no garantiza que cada dato esté en el **campo** correcto."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Falla 2: actualizar desde cero",
+   "contenido": "El primer chatbot del notebook **regenera el perfil completo** en cada turno y lo sobrescribe con `put`. Dos costos:\n- Gasta tokens reescribiendo campos que no cambiaron.\n- Puede **perder** datos: si el modelo omite un campo o una lista, el `put` borra la versión anterior.\n\nLa alternativa es pedir solo el **cambio**. Para eso existe JSON Patch: una lista de operaciones (`add`, `replace`, `remove`) sobre rutas del documento."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "JSON Patch en Python puro",
+   "contenido": "import jsonpatch\n\n# Perfil guardado después de varias conversaciones\nexisting = {\n    \"user_name\": \"Lance\",\n    \"user_location\": \"San Francisco\",\n    \"interests\": [\"biking\", \"bakeries\", \"technology\"],\n}\n\n# Opción 1: regenerar el perfil desde cero viendo solo la conversación nueva\n# (\"I also enjoy coffee\"). Ilustración escrita a mano de lo que puede salir:\nregenerated = {\"user_name\": \"Lance\", \"user_location\": \"\", \"interests\": [\"coffee\"]}\nprint(\"regenerado:\", regenerated)\n\n# Opción 2: un JSON Patch que solo describe el cambio\npatch = [{\"op\": \"add\", \"path\": \"/interests/-\", \"value\": \"coffee\"}]\npatched = jsonpatch.apply_patch(existing, patch)\nprint(\"parcheado: \", patched)\nprint(\"original intacto:\", existing)\n",
+   "notas": "- `regenerated` es una ilustración escrita a mano, no salida de un LLM.\n- El patch solo dice \"agrega coffee al final de interests\"; lo demás no se toca.\nSalida real:\n```\nregenerado: {'user_name': 'Lance', 'user_location': '', 'interests': ['coffee']}\nparcheado:  {'user_name': 'Lance', 'user_location': 'San Francisco', 'interests': ['biking', 'bakeries', 'technology', 'coffee']}\noriginal intacto: {...el mismo de antes...}\n```",
+   "resaltar": [
+    16,
+    17
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Trustcall: crear y actualizar",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nfrom typing import List\nfrom pydantic import BaseModel, Field\nfrom trustcall import create_extractor\nfrom langchain_core.messages import HumanMessage, AIMessage, SystemMessage\nfrom langchain_openai import ChatOpenAI\n\nclass UserProfile(BaseModel):\n    \"\"\"User profile schema with typed fields\"\"\"\n    user_name: str = Field(description=\"The user's preferred name\")\n    interests: List[str] = Field(description=\"A list of the user's interests\")\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\ntrustcall_extractor = create_extractor(model, tools=[UserProfile], tool_choice=\"UserProfile\")\n\n# 1) Crear el perfil\nconversation = [HumanMessage(content=\"Hi, I'm Lance.\"),\n                AIMessage(content=\"Nice to meet you, Lance.\"),\n                HumanMessage(content=\"I really like biking around San Francisco.\")]\nresult = trustcall_extractor.invoke(\n    {\"messages\": [SystemMessage(content=\"Extract the user profile from the following conversation\")] + conversation})\nschema = result[\"responses\"]\nprint(\"creado:\", schema[0].model_dump())\nprint(\"meta:  \", result[\"response_metadata\"])\n\n# 2) Actualizar el perfil: le pasas el documento que ya existe\nupdated_conversation = conversation + [\n    AIMessage(content=\"San Francisco is a great city! Where do you go after biking?\"),\n    HumanMessage(content=\"I really like to go to a bakery after biking.\")]\nresult = trustcall_extractor.invoke(\n    {\"messages\": [SystemMessage(content=\"Update the memory (JSON doc) to incorporate new information from the following conversation\")] + updated_conversation,\n     \"existing\": {\"UserProfile\": schema[0].model_dump()}})\nprint(\"actualizado:\", result[\"responses\"][0].model_dump())\nprint(\"meta:       \", result[\"response_metadata\"])\n",
+   "notas": "- `create_extractor` recibe el schema como **tool**; `tool_choice` obliga a usarlo.\n- Al actualizar le das `existing`: el documento actual, con el nombre del schema como llave.\n- Por dentro, Trustcall pide al modelo un **JSON Patch** y, si el resultado no valida, le pide que lo corrija.\n- Devuelve `responses` (objetos Pydantic) y `response_metadata`.",
+   "resaltar": [
+    15,
+    33
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real de Trustcall",
+   "contenido": "```\ncreado: {'user_name': 'Lance', 'interests': ['biking', 'San Francisco']}\nmeta:   [{'id': 'call_pvxV...'}]\nactualizado: {'user_name': 'Lance', 'interests': ['biking', 'San Francisco', 'baking']}\nmeta:        [{'id': 'call_QCQL...', 'json_doc_id': 'UserProfile'}]\n```\n- `json_doc_id` aparece en la actualización: dice qué documento existente se modificó.\n- `biking` y `San Francisco` se conservaron: eso es lo que gana el patch.\n- Pero Lance dijo que va a una **bakery**, y quedó `baking` (hornear). Válido para el schema, incorrecto de significado."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El chatbot con Trustcall",
+   "contenido": "graph LR\n  START([START]) --> call_model\n  call_model --> write_memory\n  write_memory --> END([END])\n  class write_memory clave",
+   "notas": "Mismo grafo que en 5.A. Solo cambia `write_memory`:\n- lee el perfil del Store,\n- se lo pasa a Trustcall como `existing`,\n- guarda `responses[0].model_dump()` con `put`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Chatbot con perfil",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nfrom pydantic import BaseModel, Field\nfrom trustcall import create_extractor\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nfrom langchain_core.runnables.config import RunnableConfig\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.store.base import BaseStore\nfrom langgraph.store.memory import InMemoryStore\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n\nclass UserProfile(BaseModel):\n    \"\"\" Profile of a user \"\"\"\n    user_name: str = Field(description=\"The user's preferred name\")\n    user_location: str = Field(description=\"The user's location\")\n    interests: list = Field(description=\"A list of the user's interests\")\n\ntrustcall_extractor = create_extractor(model, tools=[UserProfile], tool_choice=\"UserProfile\")\n\nMODEL_SYSTEM_MESSAGE = \"\"\"You are a helpful assistant with memory that provides information about the user. \nIf you have memory for this user, use it to personalize your responses.\nHere is the memory (it may be empty): {memory}\"\"\"\nTRUSTCALL_INSTRUCTION = \"\"\"Create or update the memory (JSON doc) to incorporate information from the following conversation:\"\"\"\n\ndef call_model(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    user_id = config[\"configurable\"][\"user_id\"]\n    existing_memory = store.get((\"memory\", user_id), \"user_memory\")\n    if existing_memory and existing_memory.value:\n        d = existing_memory.value\n        formatted_memory = (f\"Name: {d.get('user_name', 'Unknown')}\\n\"\n                            f\"Location: {d.get('user_location', 'Unknown')}\\n\"\n                            f\"Interests: {', '.join(d.get('interests', []))}\")\n    else:\n        formatted_memory = None\n    system_msg = MODEL_SYSTEM_MESSAGE.format(memory=formatted_memory)\n    response = model.invoke([SystemMessage(content=system_msg)] + state[\"messages\"])\n    return {\"messages\": response}\n\ndef write_memory(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    user_id = config[\"configurable\"][\"user_id\"]\n    namespace = (\"memory\", user_id)\n    existing_memory = store.get(namespace, \"user_memory\")\n    existing_profile = {\"UserProfile\": existing_memory.value} if existing_memory else None\n    result = trustcall_extractor.invoke({\"messages\": [SystemMessage(content=TRUSTCALL_INSTRUCTION)] + state[\"messages\"],\n                                         \"existing\": existing_profile})\n    updated_profile = result[\"responses\"][0].model_dump()\n    store.put(namespace, \"user_memory\", updated_profile)\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"call_model\", call_model)\nbuilder.add_node(\"write_memory\", write_memory)\nbuilder.add_edge(START, \"call_model\")\nbuilder.add_edge(\"call_model\", \"write_memory\")\nbuilder.add_edge(\"write_memory\", END)\nstore = InMemoryStore()\ngraph = builder.compile(checkpointer=MemorySaver(), store=store)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\", \"user_id\": \"1\"}}\nfor text in [\"Hi, my name is Lance\", \"I like to bike around San Francisco\", \"I also enjoy going to bakeries\"]:\n    graph.invoke({\"messages\": [HumanMessage(text)]}, config)\n    print(text, \"->\", store.get((\"memory\", \"1\"), \"user_memory\").value)\nconfig = {\"configurable\": {\"thread_id\": \"2\", \"user_id\": \"1\"}}\nout = graph.invoke({\"messages\": [HumanMessage(\"What bakeries do you recommend for me?\")]}, config)\nprint(\"thread 2:\", out[\"messages\"][-1].content[:400])\n",
+   "notas": "Código del notebook con gpt-4o-mini. Salida real:\n```\nHi, my name is Lance -> {'user_name': 'Lance', 'user_location': '', 'interests': []}\nI like to bike around San Francisco -> {..., 'user_location': 'San Francisco', 'interests': ['biking']}\nI also enjoy going to bakeries -> {..., 'interests': ['biking', 'going to bakeries']}\nthread 2: Since you're in San Francisco and enjoy visiting bakeries, ...\n```",
+   "resaltar": [
+    46,
+    50
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Campos vacíos",
+   "contenido": "En el chatbot con perfil del paso 11, el primer turno de Lance solo dice su nombre. ¿Por qué el perfil guardado trae `'user_location': ''` y `'interests': []` en vez de no traer esas keys?",
+   "respuesta": "Porque en `UserProfile` los tres campos son **obligatorios** (`str`, `list`, sin default). Para que el JSON valide, el modelo tiene que poner algo, y pone un valor vacío. Si quieres \"todavía no sé\", el schema debe decirlo: `Optional[str] = None`, como hace el `Profile` del agente de 5.D.",
+   "ref": 11
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin existing",
+   "contenido": "Es el chatbot con perfil del paso 11 con una línea cambiada en `write_memory`: `existing_profile = None` siempre. Haces dos turnos en el **thread 1** (nombre; bici en SF) y uno en el **thread 2**: \"I also enjoy going to bakeries\". ¿Qué intereses quedan guardados al final?\n\n```python\nfrom dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nfrom pydantic import BaseModel, Field\nfrom trustcall import create_extractor\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nfrom langchain_core.runnables.config import RunnableConfig\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.store.base import BaseStore\nfrom langgraph.store.memory import InMemoryStore\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n\nclass UserProfile(BaseModel):\n    \"\"\" Profile of a user \"\"\"\n    user_name: str = Field(description=\"The user's preferred name\")\n    user_location: str = Field(description=\"The user's location\")\n    interests: list = Field(description=\"A list of the user's interests\")\n\ntrustcall_extractor = create_extractor(model, tools=[UserProfile], tool_choice=\"UserProfile\")\n\nMODEL_SYSTEM_MESSAGE = \"\"\"You are a helpful assistant with memory that provides information about the user. \nIf you have memory for this user, use it to personalize your responses.\nHere is the memory (it may be empty): {memory}\"\"\"\nTRUSTCALL_INSTRUCTION = \"\"\"Create or update the memory (JSON doc) to incorporate information from the following conversation:\"\"\"\n\ndef call_model(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    user_id = config[\"configurable\"][\"user_id\"]\n    existing_memory = store.get((\"memory\", user_id), \"user_memory\")\n    if existing_memory and existing_memory.value:\n        d = existing_memory.value\n        formatted_memory = (f\"Name: {d.get('user_name', 'Unknown')}\\n\"\n                            f\"Location: {d.get('user_location', 'Unknown')}\\n\"\n                            f\"Interests: {', '.join(d.get('interests', []))}\")\n    else:\n        formatted_memory = None\n    system_msg = MODEL_SYSTEM_MESSAGE.format(memory=formatted_memory)\n    response = model.invoke([SystemMessage(content=system_msg)] + state[\"messages\"])\n    return {\"messages\": response}\n\ndef write_memory(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    user_id = config[\"configurable\"][\"user_id\"]\n    namespace = (\"memory\", user_id)\n    existing_memory = store.get(namespace, \"user_memory\")\n    existing_profile = None   # antes: {\"UserProfile\": existing_memory.value} if existing_memory else None\n    result = trustcall_extractor.invoke({\"messages\": [SystemMessage(content=TRUSTCALL_INSTRUCTION)] + state[\"messages\"],\n                                         \"existing\": existing_profile})\n    updated_profile = result[\"responses\"][0].model_dump()\n    store.put(namespace, \"user_memory\", updated_profile)\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"call_model\", call_model)\nbuilder.add_node(\"write_memory\", write_memory)\nbuilder.add_edge(START, \"call_model\")\nbuilder.add_edge(\"call_model\", \"write_memory\")\nbuilder.add_edge(\"write_memory\", END)\nstore = InMemoryStore()\ngraph = builder.compile(checkpointer=MemorySaver(), store=store)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\", \"user_id\": \"1\"}}\nfor text in [\"Hi, my name is Lance\", \"I like to bike around San Francisco\"]:\n    graph.invoke({\"messages\": [HumanMessage(text)]}, config)\n    print(text, \"->\", store.get((\"memory\", \"1\"), \"user_memory\").value)\nconfig = {\"configurable\": {\"thread_id\": \"2\", \"user_id\": \"1\"}}\ngraph.invoke({\"messages\": [HumanMessage(\"I also enjoy going to bakeries\")]}, config)\nprint(\"final:\", store.get((\"memory\", \"1\"), \"user_memory\").value)\n```",
+   "respuesta": "Salida real (gpt-4o-mini):\n```\nHi, my name is Lance -> {'user_name': 'Lance', 'user_location': '', 'interests': []}\nI like to bike around San Francisco -> {'user_name': 'Lance', 'user_location': 'San Francisco', 'interests': ['biking']}\nfinal: {'user_name': 'Lance', 'user_location': 'San Francisco', 'interests': ['bakeries']}\n```\nSe **perdió** `biking` (en 3 corridas siempre se perdió; una dio `['baking', 'bakeries']`). En el thread 1 no se notaba, porque el checkpointer le daba a Trustcall todo el historial. En el thread 2 el historial es nuevo: sin `existing`, Trustcall crea un perfil desde cero y el `put` borra el anterior. (`Lance` y `San Francisco` sobrevivieron porque `call_model` lee el perfil del Store y los menciona en su respuesta, que sí entra al historial del thread 2.)"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "JSON válido = JSON correcto",
+   "contenido": "Trustcall devolvió un perfil que pasa la validación de Pydantic sin errores. ¿Puedes confiar en que los datos son correctos?",
+   "respuesta": "No. La validación revisa **tipos y forma**, no significado. Lo viste dos veces: `baking` en vez de bakery, y la paloma guardada como operador de telégrafo. Trustcall reduce pérdidas (patch) y errores de forma (se autocorrige), pero el contenido lo decide el LLM y puede equivocarse. Por eso conviene schemas chicos y revisar las memorias."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un **perfil** es un solo documento con schema; se guarda con una key fija y se sobrescribe en cada `put`.\n- `with_structured_output` llena un schema, pero en schemas grandes falla la forma o, peor, el contenido.\n- Regenerar el perfil completo gasta tokens y puede perder datos. **Trustcall** pide un JSON Patch sobre `existing` y se autocorrige si no valida.\n- JSON válido no es JSON correcto. Relación: el `response_format` de `create_agent` (curso 01) también es structured output; aquí lo usas para escribir memoria."
+  }
+ ],
+ "fuentes": [
+  "module-5/memoryschema_profile.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué regenerar el perfil completo en cada turno puede borrar datos?",
+   "reverso": "Porque el `put` sobrescribe. Si el modelo omite un campo o un interés al reescribir, la versión anterior se pierde."
+  },
+  {
+   "frente": "¿Qué le pide Trustcall al modelo en lugar del perfil completo cuando le das `existing`?",
+   "reverso": "Un JSON Patch: solo las operaciones (`add`, `replace`, `remove`) sobre lo que cambió. Lo demás queda igual."
+  },
+  {
+   "frente": "Un perfil generado por un LLM pasa la validación de Pydantic. ¿Qué te garantiza eso y qué no?",
+   "reverso": "Garantiza la forma y los tipos. No garantiza el significado: un dato puede estar en el campo equivocado o mal interpretado (bakery → baking)."
+  },
+  {
+   "frente": "¿Por qué `with_structured_output` falla más con schemas grandes y anidados?",
+   "reverso": "El modelo tiene que generar todo el árbol de una vez; es más fácil que omita un campo obligatorio o ponga datos en el lugar equivocado."
+  },
+  {
+   "frente": "En el chatbot con perfil, ¿por qué olvidar pasar `existing` no se nota en el mismo thread pero sí en uno nuevo?",
+   "reverso": "En el mismo thread el checkpointer le da todo el historial a Trustcall. En un thread nuevo solo ve los mensajes nuevos y crea el perfil desde cero."
+  },
+  {
+   "frente": "Tu schema de perfil tiene `user_location: str` obligatorio y el usuario no dijo dónde vive. ¿Qué guarda el LLM?",
+   "reverso": "Un valor de relleno, como `''`, para que valide. Si quieres representar \"no sé\", usa `Optional[str] = None`."
+  }
+ ]
+}

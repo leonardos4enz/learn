@@ -1,0 +1,135 @@
+{
+ "mision_id": "5.C",
+ "titulo": "Subagents asíncronos y el Sales Assistant avanzado",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Los subagents de 4.A son **síncronos**: el padre se queda esperando hasta que vuelve el más lento. Si un análisis\ntarda 20 minutos, tu chat se congela 20 minutos.\n\nLo que quieres: lanzar el trabajo largo, recibir un recibo al instante, seguir platicando y preguntar después\n\"¿ya quedó?\". Eso es un **async subagent**: otro agente que corre en **otro servidor** (un deployment como el de 5.A)\ny al que el padre le habla por el SDK."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Síncrono contra asíncrono",
+   "contenido": "| | Subagent síncrono | Async subagent |\n|---|---|---|\n| Se invoca con | `task` | `start_async_task` y sus 4 hermanas |\n| Corre | en el mismo proceso | en un servidor (Agent Protocol), vía LangGraph SDK |\n| El padre | espera el resultado | sigue al instante con un `task_id` |\n| Se rastrea | no hace falta | `async_tasks` en el state del padre |\n| Úsalo si | necesitas el resultado para seguir | es largo y no quieres bloquear |\n\nNo confundas con 4.B: **sync/async** es *cómo corre* cada llamada; **dinámico** es *quién decide cuántas*. Se combinan."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El lab: el supervisor (main_agent)",
+   "contenido": "# python/m5/async_lab/main_agent/agent.py\n\"\"\"M5.4 Lab: the main agent, delegating to a separate, specialized deployment.\n\nTHE IDEA\nThis agent stays light: it pulls the shared model from the course's\nmodels.py and depends on the same shared environment every other lab in\nthe course uses. It delegates all sales analysis to an async\nsubagent, \"analyst\", running as its OWN deployment on port 2025 (see\n../specialized_agent). That deployment carries a heavier dependency\n(pandas) this agent never needs to install.\n\nRUN\n  Start ../specialized_agent first (see its own docstring), then:\n    cd python/m5/async_lab/main_agent\n    uv run langgraph dev\nChat with it in the Studio window that opens. Ask it to run two analyses\nat once (e.g. by region and by product), then keep chatting, it should\nreport two task_ids right away. From there you can update one task with\nnew instructions, cancel the other, and check on what's left.\n\"\"\"\n\nfrom deepagents import AsyncSubAgent, create_deep_agent\nfrom models import model\n\nsubagents = [\n    AsyncSubAgent(\n        name=\"analyst\",\n        description=(\n            \"Runs sales analysis grouped by region or by product, returning total \"\n            \"revenue and units sold per group, ranked by revenue - that's all the \"\n            \"data available, so don't ask it for anything else (e.g. average \"\n            \"transaction value, transaction counts, or growth metrics). Slow (it's \"\n            \"a heavyweight pandas job), so it lives on its own deployment instead \"\n            \"of running in-process here. Launch one task per grouping if you need \"\n            \"both.\"\n        ),\n        graph_id=\"agent\",\n        url=\"http://127.0.0.1:2025\",\n    ),\n]\n\n# langgraph.json points at this module-level variable: \"./agent.py:graph\"\ngraph = create_deep_agent(model=model, subagents=subagents)",
+   "notas": "Archivo del curso. Un `AsyncSubAgent` no trae prompt ni tools: **apunta** a un grafo desplegado. `graph_id` es\nla llave de `graphs` en el `langgraph.json` del otro servidor y `url` su dirección. Va en el mismo `subagents=` que\nlos dicts síncronos; el middleware se agrega solo. La `description` dice qué **no** pedirle, para que no invente datos.",
+   "resaltar": [
+    37,
+    38
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El lab: el deployment especializado",
+   "contenido": "# python/m5/async_lab/specialized_agent/agent.py\n\"\"\"M5.4 Lab: the \"specialized\" deployment.\n\nTHE IDEA\nThis is a second, independent deployment, not a folder inside the shared\ncourse environment. It has its own pyproject.toml and its own model setup,\nso pandas (needed for the analysis tool below) is installed only here,\nnever in the shared environment every other lab in the course depends on.\nIts langgraph.json also declares \"dependencies\": [\".\"] instead of the usual\n[\"../..\"], which is what makes that isolation real.\n\nRUN\n  cd python/m5/async_lab/specialized_agent\n  uv run langgraph dev --port 2025\nLeave this running, then start ../main_agent in a second terminal. The main\nagent reaches this one over HTTP at http://127.0.0.1:2025, exactly like any\nother remote deployment.\n\"\"\"\n\nimport time\n\nimport pandas as pd\nfrom langchain.chat_models import init_chat_model\nfrom langchain_core.tools import tool\n\nfrom deepagents import create_deep_agent\n\nSALES = pd.DataFrame(\n    {\n        \"region\": [\"West\", \"West\", \"East\", \"East\", \"Central\", \"Central\"],\n        \"product\": [\"Widget\", \"Gadget\", \"Widget\", \"Gadget\", \"Widget\", \"Gadget\"],\n        \"units_sold\": [1200, 850, 980, 1400, 630, 720],\n        \"revenue\": [36000, 42500, 29400, 70000, 18900, 36000],\n    }\n)\n\n\n@tool\ndef analyze_sales(group_by: str = \"region\") -> str:\n    \"\"\"Run a full sales breakdown, grouped by \"region\" or by \"product\", ranked highest revenue first.\n\n    This is a slow, heavyweight analysis job, not something you'd want\n    blocking the main agent's own model calls.\n    \"\"\"\n    time.sleep(20)  # stands in for a genuinely slow job (a big pandas pipeline, a model call, etc.)\n    key = group_by if group_by in (\"region\", \"product\") else \"region\"\n    grouped = SALES.groupby(key)[[\"units_sold\", \"revenue\"]].sum().sort_values(\"revenue\", ascending=False)\n    lines = [\n        f\"{name}: ${int(row['revenue']):,} revenue, {int(row['units_sold']):,} units\"\n        for name, row in grouped.iterrows()\n    ]\n    return \"\\n\".join(lines)\n\n\n# Separate environment, so no shared models.py: edit this string to switch providers.\nmodel = init_chat_model(\"anthropic:claude-haiku-4-5\")\n\n# langgraph.json points at this module-level variable: \"./agent.py:graph\"\ngraph = create_deep_agent(model=model, tools=[analyze_sales])",
+   "notas": "Archivo del curso, con su propio `pyproject.toml` (solo aquí se instala pandas) y\n`\"dependencies\": [\".\"]` en su `langgraph.json`. `time.sleep(20)` simula el trabajo pesado. Se sirve con\n`uv run langgraph dev --port 2025`. No lo corrí tal cual: pide `ANTHROPIC_API_KEY` y pandas, que no está en el `.venv`\ndel curso.",
+   "resaltar": [
+    45
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las cinco tools",
+   "contenido": "Al configurar un `AsyncSubAgent`, el padre gana cinco tools, **además** de `task`:\n\n- `start_async_task(description, subagent_type)`: crea un thread y un run en el otro servidor; devuelve el `task_id` ya.\n- `check_async_task(task_id)`: estado actual y, si terminó, el resultado.\n- `update_async_task`: manda nuevas instrucciones; **interrumpe** el run y empieza otro en el mismo thread (mismo `task_id`).\n- `cancel_async_task`: lo detiene.\n- `list_async_tasks`: el estado de todas.\n\nCada tarea queda como `AsyncTask` en `state[\"async_tasks\"]`, así que sobrevive al resumen del historial (3.A). Las\ndescripciones de las tools le enseñan al modelo: lanzar y parar; revisar solo si se lo piden; nunca confiar en un estado viejo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Ejemplo resuelto: el deployment, con modelo falso",
+   "contenido": "# Deployment \"especializado\" con modelo falso: corre en su propio langgraph dev.\nimport time\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langchain_core.tools import tool\nfrom deepagents import create_deep_agent\n\nSALES = [\n    (\"West\", \"Widget\", 1200, 36000), (\"West\", \"Gadget\", 850, 42500),\n    (\"East\", \"Widget\", 980, 29400), (\"East\", \"Gadget\", 1400, 70000),\n    (\"Central\", \"Widget\", 630, 18900), (\"Central\", \"Gadget\", 720, 36000),\n]\n\n\n@tool\ndef analyze_sales(group_by: str = \"region\") -> str:\n    \"\"\"Run a full sales breakdown, grouped by \"region\" or by \"product\".\"\"\"\n    time.sleep(8)  # simula un trabajo lento (el lab usa 20 s)\n    col = 1 if group_by == \"product\" else 0\n    tot = {}\n    for row in SALES:\n        u, r = tot.get(row[col], (0, 0))\n        tot[row[col]] = (u + row[2], r + row[3])\n    orden = sorted(tot.items(), key=lambda kv: -kv[1][1])\n    return \"\\n\".join(f\"{k}: ${r:,} revenue, {u:,} units\" for k, (u, r) in orden)\n\n\nclass Analista(BaseChatModel):\n    \"\"\"Modelo falso: llama analyze_sales una vez y devuelve su resultado.\"\"\"\n\n    @property\n    def _llm_type(self):\n        return \"analista\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        last = messages[-1]\n        if last.type == \"tool\":\n            msg = AIMessage(content=last.content)\n        else:\n            g = \"product\" if \"product\" in last.content else \"region\"\n            msg = AIMessage(content=\"\", tool_calls=[{\"name\": \"analyze_sales\", \"args\": {\"group_by\": g}, \"id\": \"a1\"}])\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ngraph = create_deep_agent(model=Analista(), tools=[analyze_sales])",
+   "notas": "Mi versión del especializado para probar sin keys: mismo `analyze_sales` (sin pandas, `sleep(8)`) y un modelo\nfalso que llama la tool una vez y devuelve su resultado. La serví con `langgraph dev --no-browser --port 2078` y un\n`langgraph.json` con `\"dependencies\": [\".\"]` y `\"graphs\": {\"agent\": \"./agent.py:graph\"}`.",
+   "resaltar": [
+    20
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Ejemplo resuelto: el supervisor lanza y revisa",
+   "contenido": "import re\nimport time\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom deepagents import AsyncSubAgent, create_deep_agent\n\n\nclass Supervisor(BaseChatModel):\n    \"\"\"Modelo falso del agente principal.\n\n    - Si el usuario pide \"analiza\", lanza la tarea con start_async_task.\n    - Si pide \"¿ya?\", revisa la tarea con check_async_task.\n    - Si lo último es un ToolMessage, repite lo que dijo la tool.\n    \"\"\"\n\n    task_id: str = \"\"\n\n    @property\n    def _llm_type(self):\n        return \"supervisor\"\n\n    def bind_tools(self, tools, **kw):\n        print(\"Tools del supervisor:\", [t.name for t in tools])\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        last = messages[-1]\n        if last.type == \"tool\":\n            m = re.search(r\"task_id: (\\S+)\", last.content)\n            if m:\n                self.task_id = m.group(1)\n            msg = AIMessage(content=f\"(tool) {last.content[:160]}\")\n        elif \"analiza\" in last.content:\n            msg = AIMessage(content=\"\", tool_calls=[{\n                \"name\": \"start_async_task\",\n                \"args\": {\"subagent_type\": \"analyst\", \"description\": \"Analyze sales by region.\"},\n                \"id\": \"s1\"}])\n        else:\n            msg = AIMessage(content=\"\", tool_calls=[{\n                \"name\": \"check_async_task\", \"args\": {\"task_id\": self.task_id}, \"id\": f\"c{len(messages)}\"}])\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\nsubagents = [\n    AsyncSubAgent(\n        name=\"analyst\",\n        description=\"Runs sales analysis grouped by region or by product. Slow.\",\n        graph_id=\"agent\",\n        url=\"http://127.0.0.1:2078\",\n    ),\n]\n\nagent = create_deep_agent(model=Supervisor(), subagents=subagents, checkpointer=MemorySaver())\ncfg = {\"configurable\": {\"thread_id\": \"jane\"}}\n\nfor pregunta, espera in [(\"analiza las ventas por región\", 0), (\"¿ya?\", 0), (\"¿ya?\", 10)]:\n    time.sleep(espera)\n    t0 = time.time()\n    r = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": pregunta}]}, cfg)\n    print(f\"\\n> {pregunta}  ({time.time() - t0:.1f} s)\")\n    print(r[\"messages\"][-1].content)\n    print(\"async_tasks en el state:\", {k[:8]: v[\"status\"] for k, v in r[\"async_tasks\"].items()})",
+   "notas": "El supervisor corre en el script (con `invoke`) y su async subagent está en el servidor del paso 6. Salida real:\n```\nTools del supervisor: ['ls', 'read_file', 'write_file', 'edit_file', 'delete', 'glob', 'grep', 'task',\n  'start_async_task', 'check_async_task', 'update_async_task', 'cancel_async_task', 'list_async_tasks']\n\n> analiza las ventas por región  (0.1 s)\n(tool) Launched async subagent. task_id: 01a1cb9c-858c-7dc1-8ddd-61b8030dd131\nasync_tasks en el state: {'01a1cb9c': 'running'}\n\n> ¿ya?  (0.0 s)\n(tool) {\"status\": \"pending\", \"thread_id\": \"01a1cb9c-858c-7dc1-8ddd-61b8030dd131\"}\nasync_tasks en el state: {'01a1cb9c': 'pending'}\n\n> ¿ya?  (0.0 s)\n(tool) {\"status\": \"success\", \"thread_id\": \"01a1cb9c-...\", \"result\": \"East: $99,400 revenue, 2,380 units\\nWest: $78,500 ...\nasync_tasks en el state: {'01a1cb9c': 'success'}\n```\nEl lanzamiento tardó 0.1 s aunque el análisis tarda 8. La primera revisión llegó en `pending` (el run aún estaba en\nla cola); 10 s después, `success` con el resultado.",
+   "resaltar": [
+    38,
+    43,
+    52
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Dos servidores, un supervisor",
+   "contenido": "graph LR\n  U([usuario]) --> S[supervisor]\n  S -->|start_async_task| H[servidor 2078: thread + run]\n  H -.->|corre solo, 8 s| H\n  S -->|task_id al instante| U\n  U -->|más tarde: ya?| S\n  S -->|check_async_task| H\n  class H clave",
+   "notas": "Nada pasa \"solo\" entre el lanzamiento y la revisión: revisar es otra ida y vuelta que dispara el usuario. El\n`task_id` es el `thread_id` del run en el otro servidor."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Avanzado (5.5): un sandbox por thread",
+   "contenido": "async def _sandbox_backend_for_thread(thread_id: str) -> LangSmithSandbox:\n    \"\"\"Look up (or create) this thread's sandbox and seed it if it's new.\"\"\"\n    sandbox, freshly_created = await asyncio.to_thread(_lookup_or_create, f\"thread-{thread_id}\")\n    backend = LangSmithSandbox(sandbox)\n    if freshly_created:\n        await asyncio.to_thread(_seed_skills_and_memory, backend)\n    return backend\n\n\n# Thread-scoped sandbox pattern:\n# https://docs.langchain.com/langsmith/graph-rebuild#context-manager-factory\n#\n# The factory accepts ServerRuntime so the server can signal whether it is\n# processing an actual run (execution_runtime is non-None) or handling\n# introspection calls (get_schema, get_graph, assistants.read, …). When\n# execution_runtime is None we skip sandbox setup and fall back to an\n# in-memory backend — same graph topology, no sandbox, no real filesystem\n# access at all. Real runs get their own thread-scoped sandbox looked up by\n# thread_id.\n@contextlib.asynccontextmanager\nasync def make_graph(config: RunnableConfig, runtime: ServerRuntime):\n    if runtime.execution_runtime:\n        thread_id = config.get(\"configurable\", {}).get(\"thread_id\")\n        backend = await _sandbox_backend_for_thread(thread_id)\n    else:\n        backend = StateBackend()\n\n    client = MultiServerMCPClient({\"mock-mail\": MAIL_SERVER})\n    mail_tools = await client.get_tools()\n    middleware = [CodeInterpreterMiddleware(ptc=[\"execute\", \"write_file\"])]\n    if _enable_search:\n        middleware.append(build_async_research_middleware())\n    yield create_deep_agent(\n        model=strong_model,\n        tools=[markdown_to_html] + mail_tools,\n        system_prompt=SYSTEM_PROMPT,\n        subagents=build_subagents(backend, mail_tools=mail_tools),\n        skills=[\"/skills\"],\n        memory=[\"/AGENTS.md\"],\n        backend=backend,\n        middleware=middleware,\n        name=\"chinook-sales-assistant\",\n    )",
+   "notas": "Parte final de `m5/sales_assistant_sandbox/agent.py` (las funciones completas; arriba están los imports y\n`_lookup_or_create`). Es **opcional y avanzado**: pide `LANGSMITH_API_KEY` con cuota de sandboxes y `ANTHROPIC_API_KEY`;\nno lo corrí. `make_graph` es una fábrica *context manager*: busca o crea el sandbox del thread y lo usa como backend.\nCon `runtime.execution_runtime` vacío (Studio solo leyendo el esquema) usa `StateBackend`. El newsletter va como async\nsubagent registrado en el **mismo** `langgraph.json` (`\"newsletter-agent\": \"./newsletter_agent_graph.py:graph\"`), sin `url`:\n```python\n# python/m5/sales_assistant_sandbox/async_research.py\n\"\"\"AsyncSubAgentMiddleware wiring for the newsletter-agent async subagent.\"\"\"\n\nfrom deepagents.middleware.async_subagents import AsyncSubAgentMiddleware\n\n\ndef build_async_research_middleware() -> AsyncSubAgentMiddleware:\n    \"\"\"`AsyncSubAgentMiddleware`, wired to the co-deployed newsletter-agent\n    graph, using the stock `start_async_task` tool unmodified — newsletter-agent\n    doesn't need any parent-thread context passed in, so there's nothing to add\n    to the launch call.\"\"\"\n    return AsyncSubAgentMiddleware(\n        async_subagents=[\n            {\n                \"name\": \"newsletter-agent\",\n                \"description\": (\n                    \"Research this week's featured music genres and assemble the \"\n                    \"styled HTML newsletter in the background. Launch it once per \"\n                    \"newsletter request and keep working; check back on it later \"\n                    \"with `check_async_task`/`list_async_tasks` to get the finished \"\n                    \"HTML.\"\n                ),\n                \"graph_id\": \"newsletter-agent\",\n            }\n        ]\n    )\n```",
+   "resaltar": [
+    22,
+    26
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Revisar más tarde",
+   "contenido": "En el script del paso 7, cambias la lista de preguntas a `[(\"analiza las ventas por región\", 0), (\"¿ya?\", 10)]`:\nla única revisión llega 10 s después. ¿Qué devuelve `check_async_task` y qué queda en `async_tasks`?",
+   "respuesta": "`{\"status\": \"success\", ..., \"result\": \"East: $99,400 revenue, 2,380 units\\nWest: $78,500 ...\\nCentral: $54,900 ...\"}`\ny `async_tasks` con `'success'`. El análisis tardó 8 s y ya terminó. El estado en el state solo se actualiza cuando\n**llamas** `check_async_task`: por eso la regla es nunca repetir un \"running\" viejo del historial; siempre volver a revisar.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: cambiar de opinión",
+   "contenido": "El supervisor lanzó un análisis \"por región\". Un minuto después el usuario dice: \"mejor solo la región West\". El agente\nllama `update_async_task(task_id, \"Solo West\")`. ¿Qué pasa?\n\n- A) Se crea una tarea nueva con otro `task_id`; la anterior sigue corriendo.\n- B) El run actual se interrumpe y empieza otro en el mismo thread; el `task_id` no cambia y el subagent ve el historial más la instrucción nueva.\n- C) La instrucción se encola y se aplica cuando termine el run actual.\n- D) Se cancela la tarea; hay que llamar `start_async_task` otra vez.",
+   "respuesta": "**B.** `update_async_task` interrumpe el run en curso y lanza uno nuevo **en el mismo thread** del otro servidor. Como es\nel mismo thread, el subagent ve la conversación completa más la instrucción nueva, y el `task_id` (que es ese\n`thread_id`) sigue igual. A no: no se crea otra tarea. C no: no espera. D no: eso es `cancel_async_task`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Servidor caído",
+   "contenido": "Apagas el servidor especializado (el del paso 6) y el usuario pide un análisis. Leyendo el código de la librería,\n`start_async_task` hace `client.threads.create()` y `client.runs.create(...)` dentro de un `try`, y en el `except`\ndevuelve el texto `\"Failed to launch async subagent '<nombre>': <error>\"`. ¿El supervisor se cae?",
+   "respuesta": "No. La tool devuelve ese texto como `ToolMessage` y el supervisor sigue respondiendo (puede decirle al usuario que el\nanalista no está disponible). No se agrega nada a `async_tasks` porque no hubo `task_id`. Si el servidor se cae\n**después** de lanzar, el supervisor tampoco se bloquea: solo no puede revisar hasta que vuelva."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un async subagent es **otro grafo desplegado** (`graph_id` + `url`); el padre recibe un `task_id` al instante y no espera.\n- Cinco tools: `start`, `check`, `update`, `cancel`, `list_async_tasks`, además de `task`. Puedes mezclar sync y async.\n- Las tareas viven en `state[\"async_tasks\"]`; un estado del historial puede estar viejo: revisar = llamar la tool.\n- `update_async_task` reinicia el run en el mismo thread y conserva el `task_id`.\n- 5.5 (opcional): sandbox por thread con una fábrica *context manager* y el newsletter como async subagent en el mismo deployment.\n\nRelación: el otro lado del `runs.wait` de 5.A; aquí el padre usa `runs.create` y no espera.\nDónde buscarlo en docs: docs.langchain.com → Deep Agents → *Async subagents*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m5/m5.4-async-subagents.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m5/m5.5-sandbox-async-agent.html",
+  "python/m5/async_lab/main_agent/agent.py",
+  "python/m5/async_lab/specialized_agent/agent.py",
+  "python/m5/sales_assistant_sandbox/agent.py",
+  "python/m5/sales_assistant_sandbox/async_research.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Lanzas 4 subagents síncronos en paralelo y uno tarda 20 min. ¿Puede el usuario seguir platicando?",
+   "reverso": "No: el padre espera al más lento. Para no bloquear necesitas async subagents en otro servidor."
+  },
+  {
+   "frente": "¿Qué devuelve `start_async_task` y cuánto tarda?",
+   "reverso": "Un `task_id` (el thread del run remoto), casi al instante: crea el run y no espera a que termine."
+  },
+  {
+   "frente": "Hace 10 turnos `check_async_task` dijo `running`. El usuario pregunta si ya quedó. ¿Qué hace el agente?",
+   "reverso": "Vuelve a llamar `check_async_task`: el estado del historial puede estar viejo."
+  },
+  {
+   "frente": "¿Por qué las tareas async sobreviven a que se resuma el historial?",
+   "reverso": "Porque se guardan como `AsyncTask` en `state[\"async_tasks\"]`, no solo en los mensajes."
+  },
+  {
+   "frente": "¿Qué hace `update_async_task` con el run en curso?",
+   "reverso": "Lo interrumpe y arranca otro en el mismo thread; el `task_id` no cambia y el subagent ve el historial más la instrucción nueva."
+  },
+  {
+   "frente": "Sync/async contra dinámico: ¿son lo mismo?",
+   "reverso": "No. Sync/async es cómo corre cada llamada; dinámico (4.B) es quién decide cuántas. Se pueden combinar."
+  }
+ ]
+}

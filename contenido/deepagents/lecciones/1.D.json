@@ -1,0 +1,119 @@
+{
+ "mision_id": "1.D",
+ "titulo": "Mensajes, threads, checkpointers y HITL",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora cada `invoke` empezaba de cero. Dos problemas:\n\n1. **Memoria de la conversación.** En el turno 2 el usuario pregunta \"¿cuál era mi color favorito?\" y el agente no tiene cómo saberlo.\n2. **Acciones peligrosas.** En 1.C viste que una tool puede actuar (mandar un correo, borrar un archivo). Quieres que el agente se **detenga** antes de hacerlo, que una persona decida y que luego siga desde ahí, aunque pasen horas.\n\nLas dos se resuelven con lo mismo que ya dominas de LangGraph: un **checkpointer** y un **`thread_id`**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que ya sabes, en Deep Agents",
+   "contenido": "En LangGraph 1.B (`agent-memory`) compilaste con `MemorySaver()` y llamaste con `{\"configurable\": {\"thread_id\": \"1\"}}`. Aquí es igual: `create_deep_agent(..., checkpointer=MemorySaver())`.\n\n- **Mensajes:** el estado `messages` se acumula como con `add_messages`: `human` (tu input), `ai` (texto o `tool_calls`), `tool` (resultado de una tool).\n- **`thread_id`:** una **dirección**. Mismo id = misma conversación.\n- **Checkpointer:** el **almacén**. Uno solo guarda muchos hilos, cada uno por separado.\n\n`MemorySaver` vive en la RAM del proceso: se pierde al terminar. En producción se cambia por uno persistente (p. ej. `PostgresSaver`) sin tocar el resto. La memoria **entre** hilos es otra cosa (un store; lo verás en 3.C)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Mismo hilo vs hilo nuevo",
+   "contenido": "from deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langgraph.checkpoint.memory import MemorySaver\n\nfrom guion import ModeloGuion\n\nmodel = ModeloGuion(guion=[\n    AIMessage(\"Anotado: azul.\"),\n    AIMessage(\"Tu color favorito es azul.\"),\n    AIMessage(\"No sé cuál es tu color favorito.\"),\n])\n\nagent = create_deep_agent(\n    model=model,\n    checkpointer=MemorySaver(),\n)\n\nthread_a = {\"configurable\": {\"thread_id\": \"m1-7-thread-a\"}}\nthread_b = {\"configurable\": {\"thread_id\": \"m1-7-thread-b\"}}\n\nagent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"Remember that my favorite colour is blue.\"}]},\n    config=thread_a,\n)\nagent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"What is my favorite colour?\"}]},\n    config=thread_a,\n)\nagent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"What is my favorite colour?\"}]},\n    config=thread_b,\n)\n\nfor i, recibidos in enumerate(model.llamadas, 1):\n    print(f\"Llamada {i}, el modelo recibe:\", [m.type for m in recibidos])\n\nprint(\"Thread A guarda:\", len(agent.get_state(thread_a).values[\"messages\"]), \"mensajes\")\nprint(\"Thread B guarda:\", len(agent.get_state(thread_b).values[\"messages\"]), \"mensajes\")",
+   "notas": "Es `m1/m1.7_messages_threads_checkpointers.py` con el modelo de guion de 1.A (copia `guion.py` junto al script), para ver qué recibe el modelo en cada llamada.\nSalida real:\n`Llamada 1, el modelo recibe: ['system', 'human']`\n`Llamada 2, el modelo recibe: ['system', 'human', 'ai', 'human']`\n`Llamada 3, el modelo recibe: ['system', 'human']`\n`Thread A guarda: 4 mensajes` · `Thread B guarda: 2 mensajes`\nEn la llamada 2 el modelo ve el turno 1 porque el checkpointer se lo devolvió. La memoria no está en el LLM: está en el estado guardado que se le **reenvía**.",
+   "resaltar": [
+    15,
+    19
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Un checkpointer, muchos hilos",
+   "contenido": "graph LR\n  CP[(MemorySaver)] --> A[\"thread_id m1-7-thread-a: 4 mensajes\"]\n  CP --> B[\"thread_id m1-7-thread-b: 2 mensajes\"]\n  class CP clave",
+   "notas": "El checkpointer es el tablero; cada `thread_id` es un hilo con su propio estado.\nUn `thread_id` nuevo empieza vacío aunque use el mismo checkpointer.\nY el mismo `thread_id` en **otro** checkpointer tampoco encuentra nada: la memoria vive en la instancia, no en el string."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Time travel: volver a un checkpoint anterior",
+   "contenido": "from deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langgraph.checkpoint.memory import MemorySaver\n\nfrom guion import ModeloGuion\n\nmodel = ModeloGuion(guion=[AIMessage(\"Anotado.\"), AIMessage(\"Es azul.\"), AIMessage(\"Anotado.\")])\nagent = create_deep_agent(model=model, checkpointer=MemorySaver())\nthread = {\"configurable\": {\"thread_id\": \"viaje\"}}\n\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Mi color es azul.\"}]}, thread)\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"¿Cuál es mi color?\"}]}, thread)\n\nhistory = list(agent.get_state_history(thread))   # más reciente primero\nprint(\"Checkpoints guardados:\", len(history))\nfor snap in history:\n    print(len(snap.values.get(\"messages\", [])), \"mensajes | next =\", snap.next)\n\n# reanudar desde el checkpoint que terminó el turno 1\nfin_turno_1 = next(s for s in history if len(s.values.get(\"messages\", [])) == 2 and not s.next)\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Mejor verde.\"}]}, fin_turno_1.config)\nprint(\"Último estado:\", [m.text for m in agent.get_state(thread).values[\"messages\"]])\nprint(\"Checkpoints después:\", len(list(agent.get_state_history(thread))))",
+   "notas": "El checkpointer guarda un checkpoint por cada paso, no solo el último. `get_state_history` los devuelve del más reciente al más viejo.\nPython: `get_state_history` da un *generador*; `list(...)` lo vuelve lista para poder contarlo e indexarlo. `next(s for s in history if ...)` devuelve el **primer** elemento que cumple la condición: aquí, el checkpoint con 2 mensajes y `next` vacío (el fin del turno 1).\nSalida real: `Checkpoints guardados: 8` (4 por turno), luego `Último estado: ['Mi color es azul.', 'Anotado.', 'Mejor verde.', 'Anotado.']` y `Checkpoints después: 12`.\nInvocar con `fin_turno_1.config` siguió desde ahí: la pregunta del turno 2 quedó en otra rama y **no se borró** (de 8 pasó a 12).",
+   "resaltar": [
+    14,
+    20
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Human-in-the-Loop: las cuatro piezas",
+   "contenido": "HITL pausa el agente **antes** de que corra una tool sensible.\n\n| Pieza | Qué hace |\n|---|---|\n| `interrupt_on` | Qué tools se pausan. `{\"send_email\": True}` permite las 4 decisiones; `{\"allowed_decisions\": [...]}` las limita. |\n| `checkpointer` | Guarda la corrida en pausa. |\n| `thread_id` | Dónde quedó guardada. Reanudas con el **mismo**. |\n| `Command(resume=...)` | Reanuda con la decisión humana. |\n\nDecisiones:\n\n- `approve`: corre con los args del modelo.\n- `edit`: corre con args cambiados (cambios pequeños: uno grande puede hacer que el modelo replanee).\n- `reject`: no corre; el modelo recibe tu mensaje como resultado con error.\n- `respond`: no corre; tu mensaje se vuelve el resultado **exitoso** de la tool. Es para tools tipo `ask_user`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "send_email con aprobación",
+   "contenido": "import sys\n\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.tools import tool\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.types import Command\n\nfrom guion import ModeloGuion\n\nDECISION = sys.argv[1] if len(sys.argv) > 1 else \"reject\"\n\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to a recipient.\"\"\"\n    return f\"Email sent to {to} with subject {subject!r}. Body: {body}\"\n\n\nmodel = ModeloGuion(guion=[\n    AIMessage(\"\", tool_calls=[{\"name\": \"send_email\", \"id\": \"call_1\", \"args\": {\n        \"to\": \"jane@example.com\", \"subject\": \"Running late\",\n        \"body\": \"I will be 10 minutes late.\"}}]),\n    AIMessage(\"Hecho.\"),\n])\n\nagent = create_deep_agent(\n    model=model,\n    tools=[send_email],\n    interrupt_on={\"send_email\": True},\n    checkpointer=MemorySaver(),\n)\n\nconfig = {\"configurable\": {\"thread_id\": \"m1-8-hitl-demo\"}}\n\nresult = agent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"Send an email to jane@example.com saying I will be 10 minutes late.\"}]},\n    config=config,\n    version=\"v2\",\n)\n\npending = result.interrupts[0].value\nprint(\"Pausa en:\", [r[\"name\"] for r in pending[\"action_requests\"]])\nprint(\"Decisiones permitidas:\", pending[\"review_configs\"][0][\"allowed_decisions\"])\nprint(\"Mensajes guardados hasta ahora:\", [m.type for m in agent.get_state(config).values[\"messages\"]])\n\ndecisiones = {\n    \"approve\": {\"type\": \"approve\"},\n    \"edit\": {\"type\": \"edit\", \"edited_action\": {\"name\": \"send_email\", \"args\": {\n        \"to\": \"jane@example.com\", \"subject\": \"Running late\", \"body\": \"I will be 15 minutes late.\"}}},\n    \"reject\": {\"type\": \"reject\", \"message\": \"User rejected this email draft.\"},\n}\nresult = agent.invoke(Command(resume={\"decisions\": [decisiones[DECISION]]}), config=config, version=\"v2\")\n\ntool_msg = next(m for m in result.value[\"messages\"] if m.type == \"tool\")\nprint(f\"{DECISION}: ToolMessage = {tool_msg.content!r} | status = {tool_msg.status}\")\nprint(\"Mensajes al final:\", [m.type for m in result.value[\"messages\"]])",
+   "notas": "Es `m1/m1.8_hitl.py` con el modelo de guion; en vez de `input()` eliges la decisión al correrlo: `python d3.py approve` (o `edit`, `reject`).\nSalida real (las tres corridas): `Pausa en: ['send_email']`, `Decisiones permitidas: ['approve', 'edit', 'reject', 'respond']`, `Mensajes guardados hasta ahora: ['human', 'ai']` (la tool aún no corre). Después:\n`approve: ToolMessage = \"Email sent to jane@example.com ... 10 minutes late.\" | status = success`\n`edit: ToolMessage = \"... 15 minutes late.\" | status = success`\n`reject: ToolMessage = 'User rejected this email draft.' | status = error`",
+   "resaltar": [
+    30,
+    53
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué hace Command(resume=...)",
+   "contenido": "Cuando el modelo pide `send_email`, el `HumanInTheLoopMiddleware` llama a `interrupt()` de LangGraph: el grafo se detiene a mitad del paso y el checkpointer guarda todo, incluida la tool call pendiente.\n\n`Command(resume=...)` le dice a LangGraph: \"no empieces un turno nuevo; continúa el que está en pausa\". Carga el checkpoint de ese `thread_id`, repite el paso y esta vez `interrupt()` devuelve tu valor.\n\nEl middleware lee `interrupt(...)[\"decisions\"]`, por eso el valor es `{\"decisions\": [...]}` con **una decisión por cada tool call pendiente**.\n\nCon `version=\"v2\"`, `invoke` devuelve un objeto con `.interrupts` y `.value` (el estado). `interrupt()` a mano lo verás en el módulo 3 de LangGraph."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "respond para bloquear un correo",
+   "contenido": "Agregas `respond` al diccionario del paso 7 y lo corres con `python d4.py respond`:\n\n```python\nimport sys\n\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.tools import tool\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.types import Command\n\nfrom guion import ModeloGuion\n\nDECISION = sys.argv[1] if len(sys.argv) > 1 else \"reject\"\n\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to a recipient.\"\"\"\n    return f\"Email sent to {to} with subject {subject!r}. Body: {body}\"\n\n\nmodel = ModeloGuion(guion=[\n    AIMessage(\"\", tool_calls=[{\"name\": \"send_email\", \"id\": \"call_1\", \"args\": {\n        \"to\": \"jane@example.com\", \"subject\": \"Running late\",\n        \"body\": \"I will be 10 minutes late.\"}}]),\n    AIMessage(\"Hecho.\"),\n])\n\nagent = create_deep_agent(\n    model=model,\n    tools=[send_email],\n    interrupt_on={\"send_email\": True},\n    checkpointer=MemorySaver(),\n)\n\nconfig = {\"configurable\": {\"thread_id\": \"m1-8-hitl-demo\"}}\n\nresult = agent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"Send an email to jane@example.com saying I will be 10 minutes late.\"}]},\n    config=config,\n    version=\"v2\",\n)\n\npending = result.interrupts[0].value\nprint(\"Pausa en:\", [r[\"name\"] for r in pending[\"action_requests\"]])\nprint(\"Decisiones permitidas:\", pending[\"review_configs\"][0][\"allowed_decisions\"])\nprint(\"Mensajes guardados hasta ahora:\", [m.type for m in agent.get_state(config).values[\"messages\"]])\n\ndecisiones = {\n    \"approve\": {\"type\": \"approve\"},\n    \"edit\": {\"type\": \"edit\", \"edited_action\": {\"name\": \"send_email\", \"args\": {\n        \"to\": \"jane@example.com\", \"subject\": \"Running late\", \"body\": \"I will be 15 minutes late.\"}}},\n    \"reject\": {\"type\": \"reject\", \"message\": \"User rejected this email draft.\"},\n    \"respond\": {\"type\": \"respond\", \"message\": \"No lo mandes.\"},\n}\nresult = agent.invoke(Command(resume={\"decisions\": [decisiones[DECISION]]}), config=config, version=\"v2\")\n\ntool_msg = next(m for m in result.value[\"messages\"] if m.type == \"tool\")\nprint(f\"{DECISION}: ToolMessage = {tool_msg.content!r} | status = {tool_msg.status}\")\nprint(\"Mensajes al final:\", [m.type for m in result.value[\"messages\"]])\n```\n\n¿Qué ToolMessage queda y con qué `status`? ¿Se mandó el correo? ¿Qué entiende el modelo?",
+   "respuesta": "Salida real: `respond: ToolMessage = 'No lo mandes.' | status = success`.\nEl correo **no** se mandó (la tool no corrió), pero el modelo recibe tu texto como el resultado **exitoso** de `send_email`: puede creer que la acción ya pasó. Para bloquear una tool con efectos usa `reject` (`status = error`). `respond` es para tools donde tu respuesta **es** el resultado, como `ask_user`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: HITL sin checkpointer",
+   "contenido": "Configuras `interrupt_on` pero olvidas el checkpointer:\n\n```python\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.tools import tool\nfrom langgraph.types import Command\n\nfrom guion import ModeloGuion\n\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to a recipient.\"\"\"\n    return f\"Email sent to {to} with subject {subject!r}. Body: {body}\"\n\n\nmodel = ModeloGuion(guion=[\n    AIMessage(\"\", tool_calls=[{\"name\": \"send_email\", \"id\": \"call_1\", \"args\": {\n        \"to\": \"jane@example.com\", \"subject\": \"Running late\",\n        \"body\": \"I will be 10 minutes late.\"}}]),\n    AIMessage(\"Hecho.\"),\n])\n\nagent = create_deep_agent(\n    model=model,\n    tools=[send_email],\n    interrupt_on={\"send_email\": True},\n    # sin checkpointer\n)\n\nconfig = {\"configurable\": {\"thread_id\": \"m1-8-hitl-demo\"}}\n\nresult = agent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"Send an email to jane@example.com saying I will be 10 minutes late.\"}]},\n    config=config,\n    version=\"v2\",\n)\nprint(\"Pausas:\", len(result.interrupts))\n\ntry:\n    agent.invoke(Command(resume={\"decisions\": [{\"type\": \"approve\"}]}), config=config, version=\"v2\")\nexcept Exception as e:\n    print(type(e).__name__, \"->\", e)\n```\n\n¿Qué pasa?\n\nA) No pausa nunca: sin checkpointer `interrupt_on` se ignora.\nB) Pausa, pero al reanudar con `Command` da `RuntimeError`, porque no hay dónde estaba guardada la pausa.\nC) Funciona igual: el `thread_id` guarda el estado por sí solo.\nD) Se aprueba sola después de un tiempo.",
+   "respuesta": "**B.** Salida real: `Pausas: 1` y luego `RuntimeError -> Cannot use Command(resume=...) without checkpointer`.\nEl `thread_id` es solo una dirección (C no); sin almacén no hay pausa que recuperar. A no: la pausa sí ocurre. D no: nada se aprueba solo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Mismo thread_id, otro checkpointer",
+   "contenido": "Un agente guarda el color en `thread_a`. Luego creas **otro** agente con su **propio** `MemorySaver()` y le preguntas con el mismo `thread_a`:\n\n```python\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langgraph.checkpoint.memory import MemorySaver\n\nfrom guion import ModeloGuion\n\nthread_a = {\"configurable\": {\"thread_id\": \"m1-7-thread-a\"}}\n\nmodel = ModeloGuion(guion=[AIMessage(\"Anotado: azul.\")])\nagent = create_deep_agent(model=model, checkpointer=MemorySaver())\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Remember that my favorite colour is blue.\"}]}, config=thread_a)\n\n# Un agente nuevo, con su PROPIO MemorySaver, y el mismo thread_id\nmodel2 = ModeloGuion(guion=[AIMessage(\"No lo sé.\")])\nagent2 = create_deep_agent(model=model2, checkpointer=MemorySaver())\nagent2.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"What is my favorite colour?\"}]}, config=thread_a)\n\nprint(\"agent2, el modelo recibe:\", [m.type for m in model2.llamadas[0]])\nprint(\"agent  guarda en thread_a:\", len(agent.get_state(thread_a).values[\"messages\"]), \"mensajes\")\nprint(\"agent2 guarda en thread_a:\", len(agent2.get_state(thread_a).values[\"messages\"]), \"mensajes\")\n```\n\n¿Qué recibe el modelo de `agent2` y cuántos mensajes guarda cada agente en `thread_a`?",
+   "respuesta": "Salida real: `agent2, el modelo recibe: ['system', 'human']`, `agent  guarda en thread_a: 2 mensajes`, `agent2 guarda en thread_a: 2 mensajes`.\n`agent2` no ve el turno de `agent`: cada `MemorySaver` es un almacén distinto y el mismo `thread_id` apunta a hilos distintos en cada uno. La memoria vive en la instancia del checkpointer, no en el string del id (ni en el modelo)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `thread_id` = dirección; checkpointer = almacén con muchos hilos. Es lo de LangGraph 1.B: `MemorySaver`, `thread_id` y mensajes que se acumulan como con `add_messages`.\n- La memoria no está en el LLM: el checkpointer le reenvía el historial del hilo en cada llamada.\n- `get_state_history` lista todos los checkpoints; invocar con el `config` de uno viejo sigue desde ahí sin borrar nada.\n- HITL = `interrupt_on` + checkpointer + mismo `thread_id` + `Command(resume={\"decisions\": [...]})`.\n- Para bloquear una acción, `reject`; `respond` solo para tools tipo `ask_user` (el modelo lo lee como éxito).\n\nDónde buscarlo en docs: *Deep Agents → Human-in-the-loop* y *LangGraph → Persistence*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.7-messages-threads-checkpointers.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.8-hitl.html",
+  "lca-deepagents/python/m1/m1.7_messages_threads_checkpointers.py",
+  "lca-deepagents/python/m1/m1.8_hitl.py",
+  "lca-deepagents/python/m1/m1.8_hitl_respond.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué diferencia hay entre `thread_id` y checkpointer?",
+   "reverso": "`thread_id` es la dirección de una conversación; el checkpointer es el almacén que guarda el estado de muchos hilos. Sin almacén, la dirección no sirve."
+  },
+  {
+   "frente": "Dos agentes con su propio `MemorySaver()` usan el mismo `thread_id`. ¿Comparten historial?",
+   "reverso": "No. Cada `MemorySaver` es un almacén distinto; la memoria vive en la instancia, no en el string del id."
+  },
+  {
+   "frente": "Invocas con el `config` de un checkpoint viejo de `get_state_history`. ¿Qué pasa con los más nuevos?",
+   "reverso": "Nada: se conservan. El hilo sigue desde ese punto en una rama nueva (time travel)."
+  },
+  {
+   "frente": "¿Qué cuatro piezas necesita el HITL de Deep Agents?",
+   "reverso": "`interrupt_on` (qué tools pausan), un checkpointer (guarda la pausa), el mismo `thread_id` y `Command(resume={\"decisions\": [...]})`."
+  },
+  {
+   "frente": "¿Por qué no usar `respond` para bloquear un `send_email`?",
+   "reverso": "Porque `respond` entrega tu texto como resultado exitoso de la tool: el modelo puede creer que el correo se mandó. Para bloquear, `reject`."
+  },
+  {
+   "frente": "Pones `interrupt_on` pero no checkpointer. ¿Qué pasa al reanudar?",
+   "reverso": "La pausa ocurre, pero `Command(resume=...)` falla con `RuntimeError`: no hay dónde quedó guardada la corrida."
+  }
+ ]
+}

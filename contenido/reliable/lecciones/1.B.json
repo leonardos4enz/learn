@@ -1,0 +1,126 @@
+{
+ "mision_id": "1.B",
+ "titulo": "Analizar tu agente",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Emma ya está trazada. Ahora hay que **usarla** contra lo que debe saber hacer y ver dónde se rompe.\n\nEl problema es que la respuesta final casi nunca dice qué falló. Una respuesta vaga como \"no pude obtener esa información\" puede venir de una tool mal llamada, de una tabla que no existe o de un prompt mal escrito. Sin el trace, adivinas. Con el trace, ves el paso exacto donde se desvió, lo arreglas y vuelves a correr: el loop Build ↔ Test."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El loop en 3 pasos",
+   "contenido": "1. **PRD** (Product Requirements Document): una página con el propósito, las tools, las reglas y los escenarios. Es la \"descripción del puesto\" de Emma y va alineado con su system prompt.\n2. **Correr, observar, depurar**: corres un escenario, miras el trace, arreglas, vuelves a correr. Cada arreglo es volver a Build; cada corrida, volver a Test.\n3. **Anotar los failure modes**: lo que se rompió se vuelve eval en el Módulo 2.\n\nReglas del PRD de Emma: SQL para inventario y knowledge base para políticas (nunca inventar), **nunca revelar cantidades exactas** (\"in stock\", no \"31 units\"), tono profesional, declinar con amabilidad lo fuera de alcance. Escenarios: inventario, políticas, mixtas (las dos tools) y fuera de alcance."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La falla de v1: la respuesta contra el trace",
+   "contenido": "Le preguntas a `agent_v1.py`: *Do you have spiral notebooks in stock?* La respuesta:\n\n> I'm sorry, I couldn't retrieve that information right now. Could you tell me more about what you need?\n\nNo dice qué pasó. El trace (la lista `messages` que devuelve `chat`) sí lo dice:\n\n```\nuser      -> Do you have spiral notebooks in stock?\nassistant -> {\"query\": \"SELECT name, quantity FROM products WHERE name LIKE '%notebook%'\"}\ntool      -> Error: no such table: products\nassistant -> I'm sorry, I couldn't retrieve that information right now. Could you tell me more about what you need?\n```\n\nEl modelo **inventó** una tabla `products`. Lo reproduje corriendo el `chat` real de `agent_v1.py` con un LLM falso que hace esa query; con `gpt-5-nano` la query exacta puede variar."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La tool, contra la base real",
+   "contenido": "import sqlite3\n\nDB = r\"C:/ruta/a/tus/cursos/04 Building Reliable Agents with LangSmith/lca-reliable-agents/python/officeflow-agent/inventory/inventory.db\"\n\ndef query_database(query: str, db_path: str) -> str:\n    \"\"\"Execute SQL query against the inventory database.\"\"\"\n    try:\n        conn = sqlite3.connect(db_path)\n        cursor = conn.cursor()\n        cursor.execute(query)\n        results = cursor.fetchall()\n        conn.close()\n        return str(results)\n    except Exception as e:\n        return f\"Error: {str(e)}\"\n\n# v1: el modelo adivina el schema\nprint(\"1)\", query_database(\"SELECT name, quantity FROM products WHERE name LIKE '%notebook%'\", DB))\n\n# v2: primero descubre el schema\nprint(\"2)\", query_database('SELECT name FROM sqlite_master WHERE type=\"table\"', DB))\nprint(\"3)\", query_database(\"PRAGMA table_info(items)\", DB))\nprint(\"4)\", query_database(\"PRAGMA table_info(stock_levels)\", DB))\n\n# ...y con eso arma la consulta correcta\nprint(\"5)\", query_database(\n    \"SELECT i.sku_label, s.available_units FROM items i \"\n    \"JOIN stock_levels s ON i.item_id = s.item_id \"\n    \"WHERE LOWER(i.sku_label) LIKE '%notebook%'\", DB))",
+   "notas": "`query_database` es copia exacta de la tool de Emma: SQL puro contra `inventory.db`, sin LLM, así que es **determinista**. Salida real:\n1) `Error: no such table: products`\n2) `[('items',), ('stock_levels',)]`\n3) `items`: `item_id`, `sku_label` · 4) `stock_levels`: `item_id`, `available_units`\n5) `[('Spiral Notebooks (3-pack)', 31)]`\nLa base tiene 5 productos repartidos en 2 tablas y **sin precios**. Sin descubrir el schema, el modelo no tiene cómo saberlo.",
+   "resaltar": [
+    18,
+    21,
+    28
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El arreglo v2 va en la descripción de la tool",
+   "contenido": "QUERY_DATABASE_TOOL = {\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"query_database\",\n        \"description\": \"SQL query to get information about our inventory for customers like products, quantities and prices.\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"query\": {\n                    \"type\": \"string\",\n                    \"description\": \"\"\"SQL query to execute against the inventory database.\n\nYOU DO NOT KNOW THE SCHEMA. ALWAYS discover it first:\n1. Query 'SELECT name FROM sqlite_master WHERE type=\"table\"' to see available tables\n2. Use 'PRAGMA table_info(table_name)' to inspect columns for each table\n3. Only after understanding the schema, construct your search queries\"\"\"\n                }\n            },\n            \"required\": [\"query\"]\n        }\n    }\n}",
+   "notas": "El modelo decide cómo llamar una tool leyendo su **descripción**: es parte del prompt. v2 le dice que no conoce el schema y le da los pasos 2–4 del script anterior. Es el único cambio de v1 a v2.\nLa página del curso muestra además un bloque *SEARCH BEST PRACTICES* (usar `LIKE '%palabra%'` y `LOWER()`); el `agent_v2.py` del repo no lo tiene. Aquí va el del repo.",
+   "resaltar": [
+    13,
+    15
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres formas de depurar",
+   "contenido": "| Flujo | Cuándo conviene | En Emma |\n|---|---|---|\n| **Trace UI** | ver qué pasó en una corrida | v1: la query a `products` |\n| **Playground** | el error está en un paso tardío: \"congelas\" los pasos anteriores y reintentas solo ese, cambiando prompt o modelo | v2 decía \"31 units\": se probó el prompt de v3 sin volver a correr todo |\n| **LangSmith CLI + coding agent** | depurar desde la terminal o el editor: el agente baja los traces con la CLI y propone el arreglo | v3 fallaba en políticas: se encontró el problema del RAG y salió v4 |\n\nSi tu agente falla en el paso 30 de una corrida de 2 minutos, volver a correr los 29 anteriores en cada intento es lento: para eso es el Playground."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "v2 → v3: la regla de stock va en el system prompt",
+   "contenido": "v2 ya encuentra el producto, pero contesta \"we have 31 units\": viola el PRD.\n\nEl arreglo de v3 es una sección en el **system prompt**: *NEVER reveal specific stock quantities*, con rangos: más de 20 → \"in stock\"; 10–20 → \"running low\"; 5–9 → \"only a few left\"; 1–4 → \"almost sold out\"; 0 → \"out of stock\".\n\nEs una regla de **comportamiento** (qué decirle al cliente), por eso va en el prompt y no en la tool. La tool debe seguir devolviendo el número exacto: Emma lo necesita para elegir la frase correcta."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "v3 → v4: el RAG cortaba las políticas en pedazos",
+   "contenido": "from pathlib import Path\nfrom typing import List\n\nDOC = Path(r\"C:/ruta/a/tus/cursos/04 Building Reliable Agents with LangSmith/lca-reliable-agents/python/officeflow-agent/knowledge_base/documents/returns_policy.md\")\n\ndef chunk_text(text: str, chunk_size: int = 200, overlap: int = 20) -> List[str]:\n    \"\"\"Split text into chunks with overlap.\"\"\"\n    chunks = []\n    start = 0\n    while start < len(text):\n        end = start + chunk_size\n        chunk = text[start:end]\n        if chunk.strip():\n            chunks.append(chunk)\n        start = end - overlap\n    return chunks\n\ntext = DOC.read_text(encoding=\"utf-8\")\nchunks = chunk_text(text)\nprint(\"Caracteres del documento:\", len(text))\nprint(\"Chunks de 200:\", len(chunks))\nfor i, c in enumerate(chunks[:3]):\n    print(f\"--- chunk {i} ---\")\n    print(repr(c))\nfor frase in (\"60 days\", \"RMA number\", \"5-7 business days\"):\n    donde = [i for i, c in enumerate(chunks) if frase in c]\n    print(f\"'{frase}' aparece en los chunks {donde}\")",
+   "notas": "v3 fallaba en preguntas de políticas. `chunk_text` corta cada documento en pedazos de 200 caracteres, y la búsqueda devuelve solo los 2 más parecidos (`top_k=2`). Cada chunk empieza 20 caracteres antes de donde terminó el anterior (`start = end - overlap`). Salida real:\n`Caracteres del documento: 2917` · `Chunks de 200: 17`\nel chunk 0 termina en `All returns ` y el 1 empieza en `rchase. All returns require an RMA number`\n`'60 days'` en [0], `'RMA number'` en [1, 6], `'5-7 business days'` en [8].\nLa política queda repartida en pedazos cortados a media palabra. v4 indexa los **5 documentos completos** y regenera los embeddings si un documento cambió.",
+   "resaltar": [
+    12,
+    15
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Anota los failure modes",
+   "contenido": "| Falla concreta | Failure mode | Arreglo |\n|---|---|---|\n| query a una tabla `products` que no existe | uso incorrecto de tools | descripción de la tool (v2) |\n| \"we have 31 units\" | revela información sensible | system prompt (v3) |\n| política de devoluciones incompleta | recuperación (RAG) deficiente | documentos completos (v4) |\n\nHasta aquí todo se probó **a mano**. Si mañana cambias el prompt para que Emma sea más breve, ¿quién te avisa si \"31 units\" vuelve? Esa es la transición del Módulo 2: cada failure mode se vuelve un evaluator que corre en cada cambio."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué devuelve la tool?",
+   "contenido": "Emma, ya con el schema descubierto, manda estas tres queries:\n\n```python\nimport sqlite3\nDB = r\"C:/ruta/a/tus/cursos/04 Building Reliable Agents with LangSmith/lca-reliable-agents/python/officeflow-agent/inventory/inventory.db\"\ndef query_database(query: str, db_path: str) -> str:\n    try:\n        conn = sqlite3.connect(db_path)\n        cursor = conn.cursor()\n        cursor.execute(query)\n        results = cursor.fetchall()\n        conn.close()\n        return str(results)\n    except Exception as e:\n        return f\"Error: {str(e)}\"\nprint(query_database(\"SELECT sku_label FROM items WHERE sku_label LIKE '%pen%'\", DB))\nprint(query_database(\"SELECT * FROM items WHERE sku_label LIKE '%desk%'\", DB))\nprint(query_database(\"SELECT sku_label, price FROM items\", DB))\n```\n\n¿Qué imprime cada línea? Si lo corres 10 veces, ¿cambia algo?",
+   "respuesta": "Salida real:\n`[('Blue Ballpoint Pens (12-pack)',)]` (en SQLite `LIKE` no distingue mayúsculas en texto ASCII: `pen` encuentra `Pens`)\n`[]` (no hay escritorios)\n`Error: no such column: price` (la base no tiene precios)\nY no cambia nunca: la tool es SQL puro, determinista. Lo que no es determinista es **qué query elige el modelo**. Por eso, cuando el resultado está mal, el trace te dice si falló la query o la interpretación."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Con qué depuras?",
+   "contenido": "Una versión de Emma hace 12 tool calls antes de contestar, y la respuesta final suena demasiado informal. Quieres probar 5 variantes del system prompt **solo para esa última respuesta**, sin volver a correr las 12 tool calls cada vez. ¿Qué usas?\n\nA) La Trace UI.\nB) El Playground.\nC) Un experiment con `evaluate()`.\nD) El Insights Agent.",
+   "respuesta": "**B.** El Playground abre esa llamada al LLM con todos los mensajes anteriores ya fijos (las 12 tool calls y sus resultados), y te deja cambiar el prompt o el modelo y reintentar solo ese paso. A te deja **ver** la corrida, no reintentarla. C corre el agente completo sobre un dataset (útil después, para confirmar el arreglo). D agrupa cientos de traces de producción; no sirve para iterar sobre un paso."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Dónde va el arreglo?",
+   "contenido": "El PRD dice: si el cliente pregunta por algo que no vendemos, Emma lo dice claro. En v4, ante *Do you sell standing desks?* Emma a veces contesta \"Yes, we have desks available!\". En el trace ves que la query fue `SELECT * FROM items WHERE sku_label LIKE '%desk%'` y regresó `[]`.\n\n¿El arreglo va en la tool, en su descripción o en el system prompt? ¿Por qué no en los otros?",
+   "respuesta": "En el **system prompt**: una regla de comportamiento como \"si la base no regresa resultados, di que no lo tenemos; nunca inventes productos\". La tool funcionó bien (`[]` es la respuesta correcta) y la query fue buena, así que ni el código de la tool ni su descripción tienen la culpa: la falla está en cómo el modelo **interpretó** el resultado. Sin el trace, habrías sospechado de la query."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- PRD → escenarios (inventario, políticas, mixtas, fuera de alcance) → correr, mirar el trace, arreglar, repetir.\n- La respuesta final es el síntoma; el trace muestra la causa (la query a `products`, el error de la tool).\n- Tres flujos: Trace UI (ver), Playground (reintentar un paso con los anteriores fijos), CLI + coding agent (depurar desde el editor).\n- Dónde va cada arreglo: cómo usar una tool → su descripción (v2); qué decirle al cliente → system prompt (v3); datos que llegan mal → el código del RAG (v4).\n- Anota los failure modes: en el Módulo 2 se vuelven evals que atrapan regresiones.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Playground* y *LangSmith CLI*; en smith.langchain.com, tu tracing project → un trace → *Playground*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-1/analyzing-your-agent",
+  "officeflow-agent/agent_v1.py",
+  "officeflow-agent/agent_v2.py",
+  "officeflow-agent/agent_v3.py",
+  "officeflow-agent/agent_v4.py",
+  "officeflow-agent/inventory/inventory.db",
+  "officeflow-agent/knowledge_base/documents/returns_policy.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Emma responde \"no pude obtener esa información\". ¿Por qué no basta la respuesta final para depurar?",
+   "reverso": "Es el síntoma, no la causa. El trace muestra la tool call (SELECT ... FROM products) y el error que regresó (no such table)."
+  },
+  {
+   "frente": "¿Cuándo usarías el Playground en vez de volver a correr el agente?",
+   "reverso": "Cuando falla un paso tardío: congelas los pasos anteriores y reintentas solo ese, cambiando prompt o modelo."
+  },
+  {
+   "frente": "¿Por qué el arreglo de \"no revelar cantidades\" va en el system prompt y no en la tool SQL?",
+   "reverso": "Es una regla de qué decirle al cliente. La tool debe seguir devolviendo el número para que Emma elija la frase (in stock, running low...)."
+  },
+  {
+   "frente": "¿Por qué v3 contestaba mal las políticas aunque la knowledge base tenía la respuesta?",
+   "reverso": "Chunks de 200 caracteres + top_k=2: la respuesta quedaba repartida en pedazos cortados. v4 indexa documentos completos."
+  },
+  {
+   "frente": "La tool SQL regresa [] y Emma dice que sí tienen el producto. ¿Dónde está la falla?",
+   "reverso": "En la interpretación del modelo, no en la tool ni en la query. El arreglo es una regla en el system prompt."
+  },
+  {
+   "frente": "¿Para qué sirve el PRD al probar un agente?",
+   "reverso": "Define qué debe hacer el agente; de ahí salen los escenarios a probar a mano y, después, el dataset."
+  }
+ ]
+}

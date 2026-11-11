@@ -1,0 +1,113 @@
+{
+ "mision_id": "6.B",
+ "titulo": "Tu propia UI",
+ "modulo": "6",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 6.A desplegaste el tutor con la CLI, que trae su propia UI de React en `/app`. Pero ya tienes una UI: la de `deep_tutor`, con registro, login y un chat por módulo.\n\nEn `deep_tutor`, esa UI vivía **dentro** de la deployment como custom routes (`http.app` en `langgraph.json`). La CLI no aloja custom routes.\n\n¿Hay que reescribir la UI para la deployment de la CLI? No. La idea de esta lección es de examen: **una deployment de la CLI es una deployment normal de LangSmith**. Los mismos endpoints, el mismo SDK. Solo cambia dónde corre tu servidor de UI y la URL a la que apunta."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Dónde corre la UI en cada caso",
+   "contenido": "graph LR\n  N[Navegador] --> L[m6/ui/app.py en tu máquina :8000]\n  L -->|SDK: threads, runs.stream| D[Deployment de la CLI: /threads, /runs]\n  N2[Navegador] --> T[deep_tutor: UI como custom routes dentro de la deployment]\n  class L clave",
+   "notas": "Arriba, el camino de esta lección: un servidor FastAPI **local** (puerto 8000) sirve el mismo `index.html` y hace de *proxy* hacia la deployment con el SDK.\nAbajo, `deep_tutor`: la UI y el agente en la misma deployment. El navegador nunca habla directo con el agente en ninguno de los dos."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El servidor de UI local",
+   "contenido": "\"\"\"\nm6/ui/app.py — Local UI server for a CLI-deployed dacli_tutor\n\nThis is a stripped-down variant of python/deep_tutor/ui/app.py for use against\na CLI-deployed agent. The CLI deployment exposes only the standard LangGraph\nAgent Server endpoints (/threads, /runs, /store, etc.) — it does NOT host\ndeep_tutor's custom routes (/register, /login, /chat). So we run THIS UI\nserver locally on the student's machine; it serves the HTML and proxies the\nchat to the CLI deployment via the LangGraph SDK.\n\nThe deployment URL is passed as a command-line argument:\n\n    uv run python app.py https://tutor-xyz.us.langgraph.app\n\nAuth flow\n---------\n/register and /login are stubbed to accept any input and return a canned\nsession. This keeps the index.html UI unchanged from deep_tutor and leaves\nthe auth scaffolding in place — wiring in a real auth provider later\n(Supabase, Clerk, or a code-path handler) is a server-side change only,\nwith no UI rework.\n\"\"\"\n\nimport sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent))\n\nfrom fastapi import FastAPI\nfrom fastapi.responses import FileResponse, StreamingResponse\nfrom pydantic import BaseModel\n\nfrom agent_client import create_client, stream_response\n\n# The CLI's default assistant id is \"agent\" — see project_default_assistant_id\n# memory note. The CLI's generated langgraph.json hardcodes the graph name to\n# \"agent\", so the default assistant created for that graph has id \"agent\".\nASSISTANT_ID = \"agent\"\n\nDEPLOYMENT_URL = sys.argv[1] if len(sys.argv) > 1 else \"http://localhost:2024\"\n\nREPO_ROOT = Path(__file__).resolve().parents[3]\nDEEP_TUTOR_HTML = REPO_ROOT / \"python\" / \"deep_tutor\" / \"ui\" / \"index.html\"\n\napp = FastAPI()\nclient = create_client(DEPLOYMENT_URL)\n\n# Maps email -> thread_id. A stable thread per \"logged-in\" email across page\n# reloads (only while the server is running — restarts wipe the map).\nthreads_by_email: dict[str, str] = {}\n\n\nasync def _get_or_create_thread(email: str) -> str:\n    if email not in threads_by_email:\n        thread = await client.threads.create()\n        threads_by_email[email] = thread[\"thread_id\"]\n    return threads_by_email[email]\n\n\ndef _make_session(thread_id: str, first_name: str = \"Student\", last_name: str = \"\") -> dict:\n    \"\"\"Return the shape the UI expects from /register and /login.\"\"\"\n    return {\n        \"sessions\": [\n            {\"module_id\": \"module-1\", \"assistant_id\": ASSISTANT_ID, \"thread_id\": thread_id},\n        ],\n        \"profile\": {\"first_name\": first_name, \"last_name\": last_name},\n    }\n\n\n@app.get(\"/\")\nasync def index():\n    return FileResponse(DEEP_TUTOR_HTML)\n\n\n@app.get(\"/healthz\")\nasync def healthz():\n    return {\"status\": \"ok\"}\n\n\n@app.get(\"/modules\")\nasync def modules():\n    return {\"modules\": [{\"id\": \"module-1\", \"label\": \"deployment architecture\", \"active\": True}]}\n\n\n# ==========================================================\n# Faked auth — see module docstring for the why\n# ==========================================================\n\nclass RegisterRequest(BaseModel):\n    first_name: str = \"Student\"\n    last_name: str = \"\"\n    email: str = \"student@example.com\"\n    goals: str = \"\"\n\n\n@app.post(\"/register\")\nasync def register(req: RegisterRequest):\n    thread_id = await _get_or_create_thread(req.email)\n    return _make_session(thread_id, first_name=req.first_name, last_name=req.last_name)\n\n\nclass LoginRequest(BaseModel):\n    email: str\n\n\n@app.post(\"/login\")\nasync def login(req: LoginRequest):\n    thread_id = await _get_or_create_thread(req.email)\n    return _make_session(thread_id)\n\n\n# ==========================================================\n# Chat — real; talks to the CLI deployment via the SDK\n# ==========================================================\n\nclass ChatRequest(BaseModel):\n    message: str\n    assistant_id: str\n    thread_id: str\n\n\n@app.post(\"/chat\")\nasync def chat(req: ChatRequest):\n    return StreamingResponse(\n        stream_response(client, req.thread_id, req.assistant_id, req.message),\n        media_type=\"text/plain\",\n    )\n\n\n@app.get(\"/resources\")\nasync def resources():\n    \"\"\"Debug tab — list assistants and threads.\"\"\"\n    assistants = await client.assistants.search(limit=100)\n    threads = await client.threads.search(limit=100)\n    return {\"assistants\": assistants, \"threads\": threads}\n\n\nif __name__ == \"__main__\":\n    import uvicorn\n    print(f\"m6 UI server starting; chatting with {DEPLOYMENT_URL}\")\n    uvicorn.run(app, host=\"0.0.0.0\", port=8000)",
+   "notas": "`python/m6/ui/app.py`. **No se corrió aquí** (es un servidor y necesita una deployment). Fíjate en:\n- `ASSISTANT_ID = \"agent\"`: el assistant por defecto de la CLI. Uno solo, en vez de uno por módulo como en `deep_tutor`.\n- `DEPLOYMENT_URL` sale de `sys.argv[1]`: es lo único que cambia entre local y nube.\n- `/register` y `/login` son **stubs**: aceptan cualquier email. `threads_by_email` es un dict en memoria.",
+   "resaltar": [
+    38,
+    40,
+    50
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El cliente del SDK",
+   "contenido": "\"\"\"\nagent_client.py — LangGraph SDK client for the m6 local UI server\n\nTrimmed from python/deep_tutor/ui/agent_client.py — the dacli_tutor variant uses\nthe CLI's default \"agent\" assistant (no per-module assistant creation), so\ncreate_student_sessions isn't needed here. The streaming pattern is identical.\n\"\"\"\n\nimport os\nfrom collections.abc import AsyncGenerator\n\nfrom dotenv import load_dotenv\nfrom langgraph_sdk import get_client\nfrom langgraph_sdk.client import LangGraphClient\n\nload_dotenv(override=True)  # prefer .env file\n\n\ndef create_client(deployment_url: str) -> LangGraphClient:\n    \"\"\"Create a LangGraph client connected to the deployment.\"\"\"\n    api_key = os.environ.get(\"LANGSMITH_API_KEY\", \"\")\n    return get_client(url=deployment_url, api_key=api_key)\n\n\nasync def stream_response(\n    client: LangGraphClient,\n    thread_id: str,\n    assistant_id: str,\n    message: str,\n) -> AsyncGenerator[str, None]:\n    \"\"\"Send a message and stream the agent's response.\"\"\"\n    async for event in client.runs.stream(\n        thread_id,\n        assistant_id,\n        input={\"messages\": [{\"role\": \"user\", \"content\": message}]},\n        stream_mode=\"messages-tuple\",\n    ):\n        if event.event != \"messages\":\n            continue\n        message_chunk, _metadata = event.data\n        if message_chunk.get(\"type\") != \"AIMessageChunk\":\n            continue  # skip tool calls / tool results — show only the agent's reply\n        content = message_chunk.get(\"content\", \"\")\n        if isinstance(content, list):\n            content = \"\".join(\n                b.get(\"text\", \"\") for b in content\n                if isinstance(b, dict) and b.get(\"type\") == \"text\"\n            )\n        if content:\n            yield content",
+   "notas": "`python/m6/ui/agent_client.py`. Es el mismo de `deep_tutor` sin la creación de assistants por módulo.\n`create_client` manda la LangSmith API key (`x-api-key`), que es lo que pide una deployment sin `[auth]`. La de m6.2 usa `anonymous`, que no pide nada; con `supabase` pasarías el JWT del usuario, como en 5.C.\n`stream_mode=\"messages-tuple\"` manda cada pedazo de mensaje como `(chunk, metadata)` mientras se genera.",
+   "resaltar": [
+    19,
+    36,
+    41
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué deja pasar stream_response",
+   "contenido": "import asyncio\nfrom collections import namedtuple\nfrom collections.abc import AsyncGenerator\n\nEvent = namedtuple(\"Event\", [\"event\", \"data\"])\n\n\nclass FakeRuns:\n    \"\"\"Imita client.runs.stream con stream_mode=\"messages-tuple\": (chunk, metadata).\"\"\"\n    async def stream(self, thread_id, assistant_id, input, stream_mode):\n        print(f\"stream(thread={thread_id}, assistant={assistant_id}, mode={stream_mode})\")\n        yield Event(\"metadata\", {\"run_id\": \"r1\"})\n        yield Event(\"messages\", ({\"type\": \"AIMessageChunk\", \"content\": \"\", \"tool_calls\": [{\"name\": \"read_file\"}]}, {}))\n        yield Event(\"messages\", ({\"type\": \"tool\", \"content\": \"1  ---\\n2  name: module-1\"}, {}))\n        yield Event(\"messages\", ({\"type\": \"AIMessageChunk\", \"content\": \"Hola, \"}, {}))\n        yield Event(\"messages\", ({\"type\": \"AIMessageChunk\", \"content\": [{\"type\": \"text\", \"text\": \"empecemos.\"}]}, {}))\n\n\nclass FakeClient:\n    runs = FakeRuns()\n\n\n# Igual que stream_response de python/m6/ui/agent_client.py\nasync def stream_response(client, thread_id: str, assistant_id: str, message: str) -> AsyncGenerator[str, None]:\n    async for event in client.runs.stream(\n        thread_id,\n        assistant_id,\n        input={\"messages\": [{\"role\": \"user\", \"content\": message}]},\n        stream_mode=\"messages-tuple\",\n    ):\n        if event.event != \"messages\":\n            continue\n        message_chunk, _metadata = event.data\n        if message_chunk.get(\"type\") != \"AIMessageChunk\":\n            continue  # skip tool calls / tool results — show only the agent's reply\n        content = message_chunk.get(\"content\", \"\")\n        if isinstance(content, list):\n            content = \"\".join(\n                b.get(\"text\", \"\") for b in content\n                if isinstance(b, dict) and b.get(\"type\") == \"text\"\n            )\n        if content:\n            yield content\n\n\nasync def main():\n    async for piece in stream_response(FakeClient(), \"t-123\", \"agent\", \"hola\"):\n        print(repr(piece))\n\nasyncio.run(main())",
+   "notas": "Copio `stream_response` tal cual y la alimento con un cliente **falso** que imita los eventos de `runs.stream`. Salida real:\n`stream(thread=t-123, assistant=agent, mode=messages-tuple)`\n`'Hola, '` · `'empecemos.'`\nSe descartan: el evento `metadata`, el chunk con `tool_calls` (contenido vacío) y el mensaje `tool`. Si `content` es una lista de bloques (como responde Anthropic), une solo los de tipo `text`.",
+   "resaltar": [
+    31,
+    34,
+    37
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué cambió respecto a deep_tutor",
+   "contenido": "| | `deep_tutor` | UI para la CLI (`m6/ui`) |\n|---|---|---|\n| Dónde corre la UI | Dentro de la deployment (custom routes) | En tu máquina, puerto 8000 |\n| Assistants | Uno por módulo, creados en `/register` | Uno solo: `\"agent\"` |\n| Perfil y sesiones | En el Store, por namespace del email | Stub: un dict en memoria (`threads_by_email`) |\n| Usuarios | Independientes de la auth (en 5.C se agregó Supabase) | Integrados con `[auth]` de la CLI |\n| `index.html` | `deep_tutor/ui/index.html` | **El mismo archivo**, sin cambios |\n\nEl `index.html` no cambia porque las rutas que llama (`/register`, `/login`, `/chat`, `/resources`) siguen existiendo: ahora las sirve el servidor local."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Correrlo y apagar la deployment",
+   "contenido": "Según m6.3 (no se corrió aquí):\n\n```\ncd lca-deployment/python/m6/ui\nuv run python app.py https://<tu-deployment-de-la-cli>\n```\n\ny abres `http://localhost:8000` (en Windows: `start http://localhost:8000`; la página usa `open`, que es de macOS).\n\nPara practicar sin plan Plus, el mismo `app.py` puede apuntar a `deepagents dev` en `http://localhost:2024`, que es el valor por defecto.\n\nAl terminar el curso, **borra la deployment**: cobra mientras exista.\n\n```\nuv run langgraph deploy list\nuv run langgraph deploy delete <DEPLOYMENT_ID>\n```"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: misma UI, otra deployment",
+   "contenido": "Tienes un frontend que funciona contra una deployment hecha con `langgraph deploy` (código propio). Lo quieres usar contra una deployment hecha con `deepagents deploy`. Tu frontend solo usa el SDK (`threads.create`, `runs.stream`). ¿Qué tienes que cambiar como mínimo?\n\nA) Reescribirlo con el SDK especial de la CLI.\nB) La URL de la deployment, el `assistant_id` que usas y el header de auth que pida su `[auth]`.\nC) Nada, ni siquiera la URL.\nD) Agregar custom routes a la deployment de la CLI.",
+   "respuesta": "**B.** Una deployment de la CLI expone la misma API del Agent Server, así que el código del SDK sirve tal cual. Cambias la URL, usas el assistant que exista ahí (`\"agent\"`) y mandas lo que pida su `[auth]` (`x-api-key`, Bearer o nada).\nA: no hay SDK especial. C: la URL sí cambia. D: la CLI no aloja custom routes; si tu UI las necesita, corre aparte."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Reiniciar el servidor local",
+   "contenido": "Con el `app.py` del paso 3 corriendo, Jane hace login con `jane@example.com` y conversa un rato. Apagas `app.py` y lo vuelves a arrancar (la deployment sigue igual). Jane hace login otra vez con el mismo email. ¿Ve su conversación anterior? ¿Qué pasó con el thread viejo?",
+   "respuesta": "No la ve. `threads_by_email` es un dict en la memoria del proceso: al reiniciar queda vacío, así que `_get_or_create_thread` crea un **thread nuevo**.\nEl thread viejo **sigue existiendo** en la deployment (con su checkpointer), solo que nadie guarda su id. Lo verías en `/resources`. `deep_tutor` evitaba esto guardando las sesiones en el Store (4.B).",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: dónde corren las custom routes",
+   "contenido": "Un compañero dice: \"Desplegué con `deepagents deploy` y agregué un `POST /feedback` a la deployment, como hacíamos con `http.app`\". ¿Qué es correcto?\n\nA) Es posible: la CLI lee `http.app` de `deepagents.toml`.\nB) No es posible con la CLI: no aloja custom routes. Esa ruta va en un servidor aparte que hable con la deployment por el SDK, o se usa el camino con código.\nC) Es posible si `[frontend] enabled = true`.\nD) Es posible solo con `[auth] provider = \"anonymous\"`.",
+   "respuesta": "**B.** La CLI solo publica los endpoints estándar del Agent Server (threads, runs, store, MCP, A2A…). Por eso en esta lección la UI corre como servidor local.\nA y C: no existen esas opciones. D: la auth no tiene nada que ver con montar rutas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Una deployment de la CLI **es** una deployment de LangSmith: mismo Agent Server, mismos endpoints, mismo SDK. Cambia la URL.\n- La CLI no aloja custom routes; una UI que las necesite corre como servidor aparte (aquí, FastAPI local en el puerto 8000) que hace de proxy con el SDK.\n- La CLI trae un solo assistant por defecto, `\"agent\"`.\n- `stream_mode=\"messages-tuple\"` manda `(chunk, metadata)`; la UI muestra solo los `AIMessageChunk` con texto.\n- Al terminar: `langgraph deploy list` y `langgraph deploy delete <id>`, porque la deployment cobra mientras existe.\n\nCon esto cierras el dominio **Deploy** del LCAE: desplegar (M1), conectarte (M2), la UI (M3), memoria (M4), auth (M5) y la CLI (M6).\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Agent Server API* y *LangGraph SDK*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m6/m6.3-bring-your-own-ui.html",
+  "lca-deployment/python/m6/ui/app.py",
+  "lca-deployment/python/m6/ui/agent_client.py",
+  "lca-deployment/thinkific/src/m6/m6.3-bring-your-own-ui.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué tu cliente del SDK funciona igual contra una deployment de la CLI?",
+   "reverso": "Porque es una deployment normal de LangSmith: mismo Agent Server y mismos endpoints. Solo cambian la URL, el assistant y la auth."
+  },
+  {
+   "frente": "¿Por qué la UI de deep_tutor no puede vivir dentro de una deployment de la CLI?",
+   "reverso": "La CLI no aloja custom routes (no hay http.app). La UI corre aparte y le habla a la deployment por el SDK."
+  },
+  {
+   "frente": "¿Qué assistant usas contra una deployment de la CLI y por qué?",
+   "reverso": "\"agent\": la CLI siempre llama al grafo agent y su assistant por defecto tiene ese id."
+  },
+  {
+   "frente": "En m6/ui/app.py reinicias el servidor. ¿Qué pasa con las conversaciones?",
+   "reverso": "threads_by_email se vacía y el login crea threads nuevos. Los viejos siguen en la deployment, pero nadie guarda su id."
+  },
+  {
+   "frente": "¿Por qué hay que borrar una deployment al terminar de practicar?",
+   "reverso": "Cobra mientras exista. langgraph deploy list para ver el id y langgraph deploy delete <id>."
+  }
+ ]
+}

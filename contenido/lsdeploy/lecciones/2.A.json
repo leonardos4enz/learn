@@ -1,0 +1,135 @@
+{
+ "mision_id": "2.A",
+ "titulo": "Conectarte y assistants",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En LangGraph tenías el objeto `graph` en tu proceso y llamabas `graph.invoke(...)`. Con el agente desplegado **ya no tienes ese objeto**: vive en un contenedor de LangSmith.\n\nDos preguntas:\n\n1. ¿Cómo lo llamas? Por HTTP, con el **LangGraph SDK**.\n2. ¿Cómo haces que el mismo grafo se porte distinto (módulo 1 para unos, módulo 2 para otros) sin volver a desplegar? Con **assistants**."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Recuerda: el invoke local",
+   "contenido": "from dataclasses import dataclass\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.runtime import Runtime\n\n@dataclass\nclass ContextSchema:\n    module_id: str = \"module-1\"\n    store_namespace: str = \"\"\n\ndef tutor(state: MessagesState, runtime: Runtime[ContextSchema]):\n    # Hace de LLM: contesta con el módulo que viene en el context\n    n = len(state[\"messages\"])\n    return {\"messages\": [(\"ai\", f\"Estás en {runtime.context.module_id} (veo {n} mensajes)\")]}\n\nbuilder = StateGraph(MessagesState, context_schema=ContextSchema)\nbuilder.add_node(\"tutor\", tutor)\nbuilder.add_edge(START, \"tutor\")\nbuilder.add_edge(\"tutor\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nconfig = {\"configurable\": {\"thread_id\": \"abc-123\"}}\nfor pregunta, modulo in [(\"¿Qué módulo es?\", \"module-1\"), (\"¿Y ahora?\", \"module-2\")]:\n    result = graph.invoke(\n        {\"messages\": [(\"user\", pregunta)]},\n        context={\"module_id\": modulo, \"store_namespace\": \"jane@example_com\"},\n        config=config,\n    )\n    print(result[\"messages\"][-1].content)",
+   "notas": "Un grafo sin LLM (el node contesta con el módulo del context) y con `MemorySaver`. Las tres piezas de cada llamada:\n- `input`: el estado inicial (mensajes).\n- `context`: los valores tipados del `context_schema`.\n- `config`: la plomería de LangGraph; aquí, el `thread_id` (como en `agent-memory` de LangGraph M1).\nSalida real:\n`Estás en module-1 (veo 1 mensajes)`\n`Estás en module-2 (veo 3 mensajes)`\nMismo thread, así que el segundo turno ve los 3 mensajes; el context cambió solo en esa llamada.",
+   "resaltar": [
+    26,
+    27
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Lo mismo, pero por HTTP",
+   "contenido": "graph LR\n  c[\"client.runs.wait(thread_id,<br/>assistant_id, input)\"] -->|\"POST /threads/{id}/runs/wait\"| api[API server]\n  api -->|encola el run| q[(Cola Redis)]\n  q --> w[\"Worker:<br/>graph.invoke(input, config)\"]\n  w -->|\"resultado por HTTP / SSE\"| c\n  class w clave",
+   "notas": "El invoke **sigue existiendo**: lo hace un worker del lado del servidor, después de que el API server encola el run.\nLas tres piezas del paso 2 se reparten: `input` va en el run; `thread_id` es un argumento (ya no va dentro de `config`); el `context` lo pone el **assistant**.\n`client.runs.wait` equivale a `graph.invoke`; `client.runs.stream` equivale a `graph.astream`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: lo que manda el SDK",
+   "contenido": "import asyncio, json\nimport httpx\nfrom langgraph_sdk import get_client\n\ndef fake_server(request: httpx.Request) -> httpx.Response:\n    \"\"\"Hace de deployment: imprime cada request HTTP que manda el SDK.\"\"\"\n    body = json.loads(request.content) if request.content else None\n    print(request.method, request.url.path, \"| x-api-key:\", request.headers.get(\"x-api-key\"))\n    if body:\n        print(\"   body:\", body)\n    if request.url.path == \"/threads\":\n        return httpx.Response(200, json={\"thread_id\": \"t-123\"})\n    if request.url.path == \"/assistants\":\n        return httpx.Response(200, json={\"assistant_id\": \"a-456\", \"name\": body[\"name\"]})\n    return httpx.Response(200, json={\"messages\": [{\"type\": \"ai\", \"content\": \"Hola\"}]})\n\nasync def main():\n    client = get_client(url=\"https://tutor-xyz.us.langgraph.app\", api_key=\"lsv2_FALSA\")\n    client.http.client._transport = httpx.MockTransport(fake_server)  # nada sale a la red\n\n    thread = await client.threads.create()\n    assistant = await client.assistants.create(\n        graph_id=\"tutor\",\n        name=\"Tutor — Module 1\",\n        context={\"module_id\": \"module-1\", \"store_namespace\": \"\"},\n    )\n    result = await client.runs.wait(\n        thread[\"thread_id\"],\n        assistant[\"assistant_id\"],\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"¿Qué módulo es?\"}]},\n    )\n    print(\"result:\", result)\n\nasyncio.run(main())",
+   "notas": "No hay servidor: `MockTransport` de httpx hace de deployment e imprime cada request, así que nada sale a la red (`langgraph_sdk` 0.4.12). Salida real:\n`POST /threads | x-api-key: lsv2_FALSA`\n`POST /assistants | x-api-key: lsv2_FALSA` con `body: {'graph_id': 'tutor', 'context': {...}, 'name': 'Tutor — Module 1'}`\n`POST /threads/t-123/runs/wait` con `body: {'input': {...}, 'assistant_id': 'a-456'}`\nCada método del SDK es un request HTTP a una ruta integrada del Agent Server.",
+   "resaltar": [
+    19,
+    22,
+    27
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué es un assistant",
+   "contenido": "Un **assistant** es un **registro de configuración** encima de un graph desplegado. No es código ni otro grafo. Guarda:\n\n- `graph_id`, `name`, `metadata` y un número de `version`.\n- `context`: los valores que lee **tu código** (el `context_schema`: `module_id`, `store_namespace`).\n- `config`: la plomería **del framework** (`recursion_limit`, `tags`).\n\nCada graph trae un **assistant por defecto** que se llama igual que el graph: por eso en m2.1 basta con pasar `\"tutor\"` como `assistant_id`.\n\nBorrar un assistant borra solo ese registro: no apaga contenedores ni ahorra cómputo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Los tres records de un run",
+   "contenido": "La base de datos de la deployment guarda tres *records* (aparte del checkpointer y el Store):\n\n| Record | Guarda |\n|---|---|\n| **Assistant** | context, config, versión |\n| **Thread** | metadata, status, fechas; su estado vive en el checkpointer |\n| **Run** | `thread_id`, `assistant_id`, status, input, `multitask_strategy` |\n\nUn `runs.wait(thread_id, assistant_id, input)` hace esto:\n1. Busca el **assistant** y saca su context y config.\n2. Carga el **thread** desde el checkpointer.\n3. Crea un **run** con status `pending`.\n4. Un worker corre el grafo y agrega checkpoints al thread.\n5. Marca el run como `success`.\n\nLa respuesta no se guarda en el run: queda en el último checkpoint del thread."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: `update` reemplaza el context",
+   "contenido": "import os\n# Las mismas variables que pone `langgraph dev`: runtime en memoria, sin Postgres ni Redis\nos.environ.update(LANGGRAPH_RUNTIME_EDITION=\"inmem\", REDIS_URI=\"fake\",\n                  DATABASE_URI=\":memory:\", MIGRATIONS_PATH=\"__inmem\")\nimport asyncio, uuid\nimport langgraph_api.graph as lg_graphs\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph_runtime_inmem.database import connect\nfrom langgraph_runtime_inmem.ops import Assistants\n\n# Un grafo eco registrado como \"tutor\" (así el servidor sabe que el graph_id existe)\ndef eco(state: MessagesState):\n    return {\"messages\": [(\"ai\", \"eco\")]}\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"eco\", eco)\nbuilder.add_edge(START, \"eco\")\nbuilder.add_edge(\"eco\", END)\nlg_graphs.GRAPHS[\"tutor\"] = builder.compile()\n\nasync def first(gen):\n    async for item in gen:\n        return item\n\nasync def main():\n    aid = uuid.uuid4()\n    async with connect() as conn:\n        a = await first(await Assistants.put(\n            conn, aid, graph_id=\"tutor\", name=\"Tutor M1\", config={}, metadata={}, if_exists=\"raise\",\n            context={\"module_id\": \"module-1\", \"store_namespace\": \"jane@example_com\"}))\n        print(\"create:\", a[\"context\"], \"| version\", a[\"version\"])\n        a = await first(await Assistants.patch(conn, aid, context={\"module_id\": \"module-2\"}))\n        print(\"update:\", a[\"context\"], \"| version\", a[\"version\"])\n\nasyncio.run(main())",
+   "notas": "Llamo directo a las operaciones del runtime **en memoria** que usa `langgraph dev` (`langgraph_runtime_inmem`), sin levantar el servidor. Salida real:\n`create: {'module_id': 'module-1', 'store_namespace': 'jane@example_com'} | version 1`\n`update: {'module_id': 'module-2'} | version 2`\n`store_namespace` **desapareció**: el update reemplaza el context completo, no lo mezcla. Y cada update crea una **versión** nueva del assistant.\nEl SDK hace lo mismo con `client.assistants.update(assistant_id, context={...})` (un `PATCH /assistants/{id}`).",
+   "resaltar": [
+    31
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: el context de un run no se guarda",
+   "contenido": "import asyncio, json\nimport httpx\nfrom langgraph_sdk import get_client\n\ndef fake_server(request: httpx.Request) -> httpx.Response:\n    print(request.method, request.url.path, json.loads(request.content))\n    return httpx.Response(200, json={})\n\nasync def main():\n    client = get_client(url=\"https://tutor-xyz.us.langgraph.app\", api_key=\"lsv2_FALSA\")\n    client.http.client._transport = httpx.MockTransport(fake_server)\n    await client.runs.wait(\n        \"t-123\", \"a-456\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"¿Qué módulo es?\"}]},\n        context={\"module_id\": \"module-2\", \"store_namespace\": \"\"},\n        multitask_strategy=\"enqueue\",\n    )\n    await client.assistants.update(\"a-456\", context={\"module_id\": \"module-2\"})\n\nasyncio.run(main())",
+   "notas": "Mismo truco del paso 4: el `MockTransport` imprime el request. Salida real:\n`POST /threads/t-123/runs/wait {'input': {...}, 'context': {'module_id': 'module-2', 'store_namespace': ''}, 'assistant_id': 'a-456', 'multitask_strategy': 'enqueue'}`\n`PATCH /assistants/a-456 {'context': {'module_id': 'module-2'}}`\nEl context de un run viaja **dentro del run**: vale para esa ejecución y no toca el assistant. Para cambiar el assistant hace falta el `PATCH`.",
+   "resaltar": [
+    15,
+    16,
+    18
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Double texting: dos mensajes al mismo thread",
+   "contenido": "El usuario manda otro mensaje mientras el run anterior **sigue corriendo** en el mismo thread. El parámetro `multitask_strategy` del run decide qué pasa:\n\n| Valor | Qué hace con el run nuevo |\n|---|---|\n| `reject` | Lo rechaza (HTTP 409, \"Thread is already running a task\"). |\n| `enqueue` | Lo pone en cola y corre cuando termina el anterior. |\n| `interrupt` | Interrumpe el anterior (queda `interrupted`, con lo que avanzó) y corre el nuevo. |\n| `rollback` | Cancela el anterior, **lo borra** y corre el nuevo. |\n\nVerificado en el código de `langgraph-api` 0.17: si no pasas nada, usa `enqueue`. Revisa en la doc (\"Double texting\") cuál es el default de tu versión."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: ¿qué es un assistant?",
+   "contenido": "Tu compañero dice: \"Para tener un tutor del módulo 2 hay que crear un assistant, y eso despliega una copia del grafo\". ¿Qué es correcto?\n\n- **A)** Sí: cada assistant es un grafo desplegado con su propio código.\n- **B)** No: un assistant es un registro de configuración (context y config) encima de un graph ya desplegado; no despliega código.\n- **C)** No: un assistant es un thread con historial.\n- **D)** No: un assistant es una instancia del modelo corriendo en la deployment.",
+   "respuesta": "**B.** Crear un assistant es escribir un registro en la base de datos (`POST /assistants`, paso 4). El código es el mismo graph `tutor`; el assistant solo aporta el context que ese código lee.\nA es el malentendido típico. C confunde assistant con thread. D: el modelo no es parte del assistant; lo llama el código del grafo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: update sin un campo",
+   "contenido": "Un assistant tiene `context = {\"module_id\": \"module-1\", \"store_namespace\": \"jane@example_com\"}`. Llamas:\n\n```python\nawait client.assistants.update(assistant_id, context={\"module_id\": \"module-3\"})\n```\n\n¿Qué queda guardado en el assistant?\n\n- **A)** `{\"module_id\": \"module-3\", \"store_namespace\": \"jane@example_com\"}`\n- **B)** `{\"module_id\": \"module-3\"}`\n- **C)** Falla porque falta `store_namespace`.\n- **D)** `{\"module_id\": \"module-1\", \"store_namespace\": \"jane@example_com\"}`, porque el update solo aplica al siguiente run.",
+   "respuesta": "**B.** El update reemplaza el context completo (lo comprobaste en el paso 7: `store_namespace` desapareció). Para conservarlo tienes que mandar los dos campos.\nA sería un merge, que no es lo que pasa con el context (la `metadata` sí se mezcla). C: el `ContextSchema` tiene valores por defecto, así que no falla. D confunde update con override de un run.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: el usuario escribe dos veces",
+   "contenido": "Tu chat manda los runs con `multitask_strategy=\"reject\"`. El usuario escribe \"hola\", y antes de que el agente responda escribe \"¿sigues ahí?\" en el mismo thread. ¿Qué pasa con el segundo mensaje?\n\n- **A)** Se encola y corre al terminar el primero.\n- **B)** El servidor lo rechaza con un 409; el primer run sigue.\n- **C)** Interrumpe el primer run y corre él.\n- **D)** Se borra el primer run y corre el segundo.",
+   "respuesta": "**B.** `reject` no acepta runs nuevos mientras el thread está ocupado: responde 409 (\"Thread is already running a task\"). Tu UI tendría que avisar o reintentar.\nA es `enqueue`, C es `interrupt` y D es `rollback`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `client.runs.wait(thread_id, assistant_id, input)` es el `graph.invoke` desplegado: POST → cola → worker → invoke. `runs.stream` es el `astream`.\n- Un **assistant** es configuración (context + config + versión) sobre un graph; cada graph trae uno por defecto con su mismo nombre.\n- `assistants.update` **reemplaza** el context y crea una versión nueva; el context que pasas en un run vale solo para ese run.\n- Un run combina tres records: assistant (cómo), thread (qué conversación) y run (qué pasó).\n- Double texting: `multitask_strategy` = `reject`, `enqueue`, `interrupt` o `rollback`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Assistants*, *Agent Server API* (runs, threads) y *Double texting*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m2/m2.1-connecting.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m2/m2.2-assistants.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m4/m4.4-records.html",
+  "lca-deployment/thinkific/src/m2/m2.1-connecting.md",
+  "lca-deployment/thinkific/src/m2/m2.2-assistants.md",
+  "lca-deployment/thinkific/src/m2/_invoke-vs-run-reference.md",
+  "lca-deployment/thinkific/src/m4/m4.4-records.md",
+  "lca-deployment/python/m2/m2.1-connecting.py",
+  "lca-deployment/python/m2/m2.2-assistants.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué es el equivalente desplegado de `graph.invoke(input, context=..., config=...)`?",
+   "reverso": "`client.runs.wait(thread_id, assistant_id, input=...)`. El invoke sigue pasando, pero dentro de un worker, después de que el API server encola el run."
+  },
+  {
+   "frente": "¿Crear un assistant despliega código?",
+   "reverso": "No. Es un registro de configuración (context, config, versión) encima de un graph ya desplegado. Se crea con un `POST /assistants`."
+  },
+  {
+   "frente": "Haces `assistants.update(id, context={\"module_id\": \"module-3\"})` y antes había también `store_namespace`. ¿Qué queda?",
+   "reverso": "Solo `{\"module_id\": \"module-3\"}`. El update reemplaza el context completo (y crea una versión nueva del assistant)."
+  },
+  {
+   "frente": "Pasas `context=` en un `runs.wait`. ¿Cambia el assistant?",
+   "reverso": "No. Ese context viaja dentro del run y vale solo para esa ejecución. Para cambiar el assistant hace falta `assistants.update` (PATCH)."
+  },
+  {
+   "frente": "¿Por qué puedes pasar `\"tutor\"` como `assistant_id` sin crear nada?",
+   "reverso": "Porque cada graph desplegado trae un assistant por defecto que se llama igual que el graph."
+  },
+  {
+   "frente": "Llega un segundo mensaje al mismo thread mientras el primero corre. ¿Qué hacen `enqueue`, `interrupt`, `rollback` y `reject`?",
+   "reverso": "enqueue: lo encola. interrupt: corta el anterior (queda interrupted) y corre el nuevo. rollback: cancela y borra el anterior. reject: 409 al nuevo."
+  }
+ ]
+}

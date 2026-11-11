@@ -1,0 +1,108 @@
+{
+ "mision_id": "2.A",
+ "titulo": "El entorno y los filesystem backends",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En el Módulo 1 tu agente ya tenía `write_file` y `read_file`, pero no te preguntaste **dónde** quedan esos archivos. Importa: si el agente escribe un reporte, ¿lo encuentras en tu disco? ¿Lo ve en otro hilo? ¿Puede pisar un archivo que no debía tocar?\n\nDeep Agents separa dos cosas que es fácil confundir:\n\n1. Lo que el agente **ve**: siempre las mismas tools de archivos.\n2. Dónde **viven** de verdad esos archivos: lo decide el **backend**.\n\nEn esta lección eliges el backend y le pones permisos que el modelo no se puede saltar."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El entorno: tres capacidades",
+   "contenido": "Un Deep Agent trabaja dentro de un **entorno** con tres capacidades:\n\n| Capacidad | Tool | ¿Siempre está? | ¿Quién la da? |\n|---|---|---|---|\n| Filesystem | `ls`, `read_file`, `write_file`, `edit_file`, `delete`, `glob`, `grep` | Sí | El backend |\n| Shell | `execute` | No | Un backend con shell |\n| Intérprete | `eval` | No | Un middleware aparte |\n\nEl **backend** es la capa que implementa el filesystem y, si lo soporta, el shell. El intérprete **no** pasa por el backend: es otra tool dentro del loop del agente.\n\nShell e intérprete son la lección 2.B. Aquí te quedas con el filesystem."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El backend por defecto: StateBackend",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom deepagents import create_deep_agent\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"write_file\", {\"file_path\": \"/notas.md\", \"content\": \"Cliente: Acme\"}, \"1\"),\n    AIMessage(content=\"Listo, guardé la nota.\"),\n    llamar(\"read_file\", {\"file_path\": \"/notas.md\"}, \"2\"),\n    AIMessage(content=\"No encontré la nota.\"),\n])\n\n# Sin backend= : Deep Agents usa StateBackend()\nagent = create_deep_agent(model=modelo, checkpointer=MemorySaver())\nhilo_a = {\"configurable\": {\"thread_id\": \"A\"}}\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Guarda la nota\"}]}, hilo_a)\nprint(\"Tools que ve el modelo:\", modelo.tools)\nprint(\"Hilo A, archivos en el state:\", list(r[\"files\"].keys()))\n\nhilo_b = {\"configurable\": {\"thread_id\": \"B\"}}\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Lee la nota\"}]}, hilo_b)\nprint(\"Hilo B, read_file devuelve:\", r[\"messages\"][-2].content)",
+   "notas": "`ModeloConGuion` hace de LLM: devuelve los mensajes de su `guion` en orden, sin red ni key. Así ves qué hace el backend sin gastar tokens. Salida real:\n`Tools que ve el modelo: ['ls', 'read_file', 'write_file', 'edit_file', 'delete', 'glob', 'grep', 'task']`\n`Hilo A, archivos en el state: ['/notas.md']`\n`Hilo B, read_file devuelve: Error: File '/notas.md' not found`\nSin `backend=`, los archivos viven en `state[\"files\"]` **del hilo**, igual que `messages` con el checkpointer (1.D y LangGraph M1). No hay `execute`: `StateBackend` no tiene shell.",
+   "resaltar": [
+    41,
+    49
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Los backends de archivos",
+   "contenido": "Todos exponen las **mismas tools**; cambia dónde se guardan los datos.\n\n| Backend | Dónde viven los archivos | Úsalo para |\n|---|---|---|\n| `StateBackend()` (default) | En el state del hilo actual | Borradores del hilo |\n| `FilesystemBackend(root_dir, virtual_mode=True)` | En tu disco, bajo `root_dir` | Trabajar con archivos reales |\n| `CompositeBackend(default=..., routes={...})` | Enruta por prefijo de ruta a otros backends | Mezclar: borradores en el state y una carpeta en disco |\n| `StoreBackend` | En un store de LangGraph, entre hilos | Memoria de largo plazo (lección 3.C) |\n\n`virtual_mode=True` hace de `root_dir` la raíz: las rutas con `..` que se salen se rechazan.\n\nOjo con el nombre: \"el filesystem del agente\" son las tools; `FilesystemBackend` es **uno** de los backends. Elegir \"un filesystem backend\" no significa elegir `FilesystemBackend`."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "CompositeBackend enruta por prefijo",
+   "contenido": "graph LR\n  A[\"Agente: write_file / read_file\"] --> C{CompositeBackend}\n  C -->|\"/reference/...\"| F[\"FilesystemBackend: carpeta reference/ en disco\"]\n  C -->|\"todo lo demás\"| S[\"StateBackend: state del hilo\"]\n  class C clave",
+   "notas": "El agente no sabe que hay dos backends: llama `write_file(\"/reference/promo.md\")` igual que `write_file(\"/borrador.md\")`.\n`CompositeBackend` mira el prefijo de la ruta: si empieza con una de sus `routes`, va a ese backend; si no, cae al `default`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "CompositeBackend con un permiso de solo lectura",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom pathlib import Path\nfrom deepagents import FilesystemPermission, create_deep_agent\nfrom deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\n\nreference_dir = Path(__file__).parent / \"reference\"\nreference_dir.mkdir(exist_ok=True)\n(reference_dir / \"precios.md\").write_text(\"Jazz: 0.99 por track\\n\", encoding=\"utf-8\")\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"read_file\", {\"file_path\": \"/reference/precios.md\"}, \"1\"),\n    llamar(\"write_file\", {\"file_path\": \"/reference/promo.md\", \"content\": \"20% en Jazz\"}, \"2\"),\n    llamar(\"write_file\", {\"file_path\": \"/borrador.md\", \"content\": \"20% en Jazz\"}, \"3\"),\n    AIMessage(content=\"Fin.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    backend=CompositeBackend(\n        default=StateBackend(),\n        routes={\n            \"/reference/\": FilesystemBackend(root_dir=str(reference_dir), virtual_mode=True),\n        },\n    ),\n    permissions=[\n        FilesystemPermission(operations=[\"write\"], paths=[\"/reference/**\"], mode=\"deny\"),\n    ],\n)\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Lee los precios y anota la promo\"}]})\nfor m in r[\"messages\"]:\n    if m.type == \"tool\":\n        print(f\"{m.name}:\", m.content.strip())\nprint(\"Archivos en el state:\", list(r[\"files\"].keys()))\nprint(\"Archivos en disco:\", sorted(p.name for p in reference_dir.iterdir()))",
+   "notas": "El guion pide tres cosas: leer `/reference/precios.md`, escribir `/reference/promo.md` y escribir `/borrador.md`. Salida real (carpeta `reference/` recién creada):\n`read_file: 1  Jazz: 0.99 por track`\n`write_file: Error: permission denied for write on /reference/promo.md`\n`write_file: Updated file /borrador.md`\n`Archivos en el state: ['/borrador.md']` · `Archivos en disco: ['precios.md']`\nLeer en `/reference/` sí pasa: la regla solo cubre `\"write\"`. `/borrador.md` cae en el `StateBackend`.",
+   "resaltar": [
+    51,
+    55
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo se evalúan los permisos",
+   "contenido": "Cada `FilesystemPermission` tiene tres campos:\n\n- `operations`: `\"read\"` (cubre `ls`, `read_file`, `glob`, `grep`) o `\"write\"` (cubre `write_file`, `edit_file`, `delete`).\n- `paths`: patrones glob. `/reference/**` es \"cualquier cosa debajo de `/reference/`, a cualquier profundidad\".\n- `mode`: `\"allow\"` (default), `\"deny\"` o `\"interrupt\"` (pausa para que un humano apruebe, como el HITL de 1.D).\n\nLas reglas se revisan **en orden** y **gana la primera que coincide**. Si ninguna coincide, se permite.\n\nPor qué permisos y no una frase en el system prompt: el prompt es una sugerencia que el modelo puede ignorar; el permiso lo aplica el código antes de tocar el archivo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos reglas en orden",
+   "contenido": "Quieres que `/reference/` sea de solo lectura, **excepto** la subcarpeta `/reference/borradores/`. Escribes las reglas así y el guion intenta escribir `/reference/borradores/idea.md`:\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom pathlib import Path\nfrom deepagents import FilesystemPermission, create_deep_agent\nfrom deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\n\nreference_dir = Path(__file__).parent / \"reference\"\nreference_dir.mkdir(exist_ok=True)\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"write_file\", {\"file_path\": \"/reference/borradores/idea.md\", \"content\": \"idea\"}, \"1\"),\n    AIMessage(content=\"Fin.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    backend=CompositeBackend(\n        default=StateBackend(),\n        routes={\n            \"/reference/\": FilesystemBackend(root_dir=str(reference_dir), virtual_mode=True),\n        },\n    ),\n    permissions=[\n        FilesystemPermission(operations=[\"write\"], paths=[\"/reference/**\"], mode=\"deny\"),\n        FilesystemPermission(operations=[\"write\"], paths=[\"/reference/borradores/**\"], mode=\"allow\"),\n    ],\n)\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Guarda la idea\"}]})\nprint(\"write_file:\", r[\"messages\"][-2].content)\n```\n\n¿Qué devuelve `write_file`?",
+   "respuesta": "Salida real: `write_file: Error: permission denied for write on /reference/borradores/idea.md`.\nGana la **primera** regla que coincide, no la más específica. `/reference/borradores/idea.md` ya coincide con `/reference/**` (deny), así que la regla `allow` nunca se revisa. Para que funcione, pon la regla angosta primero: `allow` en `/reference/borradores/**` y después `deny` en `/reference/**`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos rutas, dos hilos",
+   "contenido": "Mismo `CompositeBackend` del paso 6, ahora **sin permisos** y con `MemorySaver`. En el hilo 1 el agente escribe `/reference/cliente.md` y `/borrador.md`. En el hilo 2 intenta leer los dos:\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom pathlib import Path\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom deepagents import FilesystemPermission, create_deep_agent\nfrom deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\n\nreference_dir = Path(__file__).parent / \"reference\"\nreference_dir.mkdir(exist_ok=True)\n\nmodelo = ModeloConGuion(guion=[\n    # Hilo 1: escribe un archivo en cada ruta\n    llamar(\"write_file\", {\"file_path\": \"/reference/cliente.md\", \"content\": \"Acme\"}, \"1\"),\n    llamar(\"write_file\", {\"file_path\": \"/borrador.md\", \"content\": \"Acme\"}, \"2\"),\n    AIMessage(content=\"Guardado.\"),\n    # Hilo 2: intenta leer los dos\n    llamar(\"read_file\", {\"file_path\": \"/reference/cliente.md\"}, \"3\"),\n    llamar(\"read_file\", {\"file_path\": \"/borrador.md\"}, \"4\"),\n    AIMessage(content=\"Fin.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    backend=CompositeBackend(\n        default=StateBackend(),\n        routes={\n            \"/reference/\": FilesystemBackend(root_dir=str(reference_dir), virtual_mode=True),\n        },\n    ),\n    checkpointer=MemorySaver(),\n)\n\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Guarda\"}]}, {\"configurable\": {\"thread_id\": \"1\"}})\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Lee\"}]}, {\"configurable\": {\"thread_id\": \"2\"}})\nfor m in r[\"messages\"]:\n    if m.type == \"tool\":\n        print(m.content.strip())\n```\n\n¿Qué imprime cada `read_file` del hilo 2?",
+   "respuesta": "Salida real: `1  Acme` para `/reference/cliente.md` y `Error: File '/borrador.md' not found`.\n`/reference/` está enrutado a `FilesystemBackend`: el archivo quedó en tu disco y cualquier hilo lo ve. `/borrador.md` cayó en el `StateBackend`, que es parte del state del **hilo 1**; el hilo 2 tiene su propio state, vacío. La ruta decide la persistencia, no la tool."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: leer un repo sin tocarlo",
+   "contenido": "Tu agente analiza un repo local. Debe **leer** los archivos reales de `/repo/` pero **nunca** modificarlos, y sus notas de trabajo no deben ensuciar tu disco. ¿Qué configuración cumple las dos cosas?\n\nA) `FilesystemBackend(root_dir=\"repo\")` y en el system prompt: \"No modifiques nada en /repo/\".\n\nB) `CompositeBackend(default=StateBackend(), routes={\"/repo/\": FilesystemBackend(root_dir=\"repo\", virtual_mode=True)})` más `FilesystemPermission(operations=[\"write\"], paths=[\"/repo/**\"], mode=\"deny\")`.\n\nC) Solo `StateBackend()`, porque es el default y nunca toca el disco.\n\nD) El mismo `CompositeBackend` de B, sin permisos: `virtual_mode=True` ya impide escribir en el repo.",
+   "respuesta": "**B.** El `CompositeBackend` manda `/repo/` al disco y las notas al state del hilo; el permiso `deny` sobre `\"write\"` lo aplica el código.\nA: el prompt no se hace cumplir y las notas irían al disco. C: el state empieza vacío, el agente no puede leer el repo. D: `virtual_mode=True` solo rechaza rutas que se salen de `root_dir`; dentro de la raíz se puede escribir."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El agente siempre ve las mismas tools de archivos; el **backend** decide dónde viven los datos.\n- `StateBackend` (default): archivos en el state del hilo; otro hilo no los ve (como `messages` con el checkpointer).\n- `FilesystemBackend(root_dir, virtual_mode=True)`: archivos reales en disco, sin salir de `root_dir`. No agrega `execute`.\n- `CompositeBackend`: enruta por prefijo; lo que no coincide va al `default`.\n- `FilesystemPermission`: en orden, gana la primera regla que coincide; si ninguna coincide, se permite. Va en código, no en el prompt.\n\nDónde buscarlo en docs: docs.langchain.com → Deep Agents → *Backends* (filesystem backends) y *Permissions*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m2/m2.1-the-deep-agent-environment.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m2/m2.2-filesystem-backends.html",
+  "lca-deepagents/python/m2/m2.2_agent.py",
+  "lca-deepagents/python/m2/m2.2_homework.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Cambias `StateBackend` por `FilesystemBackend`. ¿Cambian las tools que ve el modelo?",
+   "reverso": "No. Ve las mismas (`ls`, `read_file`, `write_file`...). Solo cambia dónde se guardan los archivos: ahora en disco, bajo `root_dir`."
+  },
+  {
+   "frente": "Con el backend por defecto, el agente escribe `/notas.md` en el hilo A. ¿Lo puede leer en el hilo B?",
+   "reverso": "No. `StateBackend` guarda los archivos en el state del hilo A; el hilo B tiene su propio state, como pasa con `messages` y el checkpointer."
+  },
+  {
+   "frente": "Un `CompositeBackend` enruta `/reference/` a disco. ¿Adónde va `write_file('/borrador.md')`?",
+   "reverso": "Al backend `default` (p. ej. `StateBackend`), porque su ruta no empieza con ningún prefijo de `routes`."
+  },
+  {
+   "frente": "Reglas: `deny` write en `/a/**` y después `allow` write en `/a/b/**`. ¿Se puede escribir `/a/b/x.md`?",
+   "reverso": "No. Gana la primera regla que coincide, no la más específica. La regla angosta tiene que ir primero."
+  },
+  {
+   "frente": "¿Por qué usar `FilesystemPermission` y no escribir \"no toques /reference\" en el system prompt?",
+   "reverso": "El permiso lo aplica el código antes de tocar el archivo: el modelo no lo puede saltar. El prompt es solo una sugerencia."
+  },
+  {
+   "frente": "¿`virtual_mode=True` impide que el agente escriba en `root_dir`?",
+   "reverso": "No. Solo hace de `root_dir` la raíz y rechaza rutas que se salen (`..`). Para bloquear escrituras dentro necesitas un permiso `deny`."
+  }
+ ]
+}

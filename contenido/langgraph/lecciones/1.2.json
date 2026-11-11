@@ -1,0 +1,112 @@
+{
+ "mision_id": "1.2",
+ "titulo": "Chain: mensajes, tools y reducers",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En el grafo más simple, el state era un string y cada node lo sobrescribía. Una conversación no funciona así: cada turno **agrega** mensajes y el modelo necesita ver el historial completo.\n\nAdemás, un LLM solo produce texto. Para que \"use\" una función tuya necesita saber que existe y cómo se llama. En esta lección juntas tres cosas: mensajes como state, un reducer que los acumula y un modelo con tools."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Los mensajes",
+   "contenido": "Un chat model recibe y devuelve **mensajes**, no strings sueltos:\n\n- `HumanMessage`: lo que escribe el usuario.\n- `AIMessage`: lo que responde el modelo. Puede traer `tool_calls`.\n- `SystemMessage`: instrucciones de comportamiento.\n- `ToolMessage`: el resultado de ejecutar un tool.\n\nCada mensaje tiene `content` y un `id`. El `id` importa: es lo que usa el reducer para saber si un mensaje es nuevo o es una versión corregida de uno que ya estaba."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Sin reducer, la conversación se borra",
+   "contenido": "from typing_extensions import TypedDict\nfrom langchain_core.messages import AnyMessage, AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END\n\n\nclass SinReducer(TypedDict):\n    messages: list[AnyMessage]\n\n\ndef responder(state):\n    return {\"messages\": [AIMessage(content=\"Hola, ¿en qué te ayudo?\")]}\n\n\nbuilder = StateGraph(SinReducer)\nbuilder.add_node(\"responder\", responder)\nbuilder.add_edge(START, \"responder\")\nbuilder.add_edge(\"responder\", END)\ngraph = builder.compile()\n\nresultado = graph.invoke({\"messages\": [HumanMessage(content=\"Hola\")]})\nfor m in resultado[\"messages\"]:\n    m.pretty_print()",
+   "notas": "Es la regla de `simple-graph`: sin reducer, el update sobrescribe la key.\nEl node devuelve una lista con un solo `AIMessage`, y esa lista **reemplaza** a la que traía el `HumanMessage`.\nSalida real: solo aparece `Ai Message: Hola, ¿en qué te ayudo?`. El \"Hola\" del usuario desapareció.",
+   "resaltar": [
+    7,
+    11
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "add_messages por dentro",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph.message import add_messages\n\ninicial = [\n    AIMessage(content=\"Hello! How can I assist you?\", id=\"1\"),\n    HumanMessage(content=\"I'm looking for information on marine biology.\", id=\"2\"),\n]\n\n# 1) Mensaje con id nuevo: se añade al final\nnuevo = AIMessage(content=\"Sure, what are you interested in?\", id=\"3\")\nfor m in add_messages(inicial, nuevo):\n    print(m.id, type(m).__name__, m.content)\n\nprint(\"---\")\n\n# 2) Mensaje con un id que ya existe: reemplaza al anterior\ncorregido = HumanMessage(content=\"I'm looking for information on whales.\", id=\"2\")\nfor m in add_messages(inicial, corregido):\n    print(m.id, type(m).__name__, m.content)",
+   "notas": "`add_messages` es una función: recibe la lista vieja y el update y devuelve la combinación.\nSalida real del caso 1: ids `1, 2, 3`; el nuevo se **añade** al final.\nSalida real del caso 2: ids `1, 2`, y el 2 ahora dice \"whales\": mismo id = **reemplaza**.\nSi un mensaje no trae id, `add_messages` le pone uno nuevo, así que se añade.",
+   "resaltar": [
+    10,
+    17
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "MessagesState: el reducer ya puesto",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\n\n\ndef responder(state: MessagesState):\n    return {\"messages\": [AIMessage(content=\"Hola, ¿en qué te ayudo?\")]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"responder\", responder)\nbuilder.add_edge(START, \"responder\")\nbuilder.add_edge(\"responder\", END)\ngraph = builder.compile()\n\nresultado = graph.invoke({\"messages\": [HumanMessage(content=\"Hola\")]})\nfor m in resultado[\"messages\"]:\n    m.pretty_print()",
+   "notas": "`MessagesState` ya trae `messages: Annotated[list[AnyMessage], add_messages]`.\nEl node es el mismo que antes; solo cambió el state.\nSalida real: ahora salen los dos mensajes, `Human: Hola` y `Ai: Hola, ¿en qué te ayudo?`.\nSi necesitas más keys, heredas: `class MiState(MessagesState): idioma: str`.",
+   "resaltar": [
+    9
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "bind_tools: el modelo conoce tus funciones",
+   "contenido": "`llm.bind_tools([multiply])` no ejecuta nada. Le manda al modelo el **schema** de la función: nombre, argumentos con sus tipos y la descripción que sale del docstring.\n\nCon eso, cuando la pregunta lo amerita, el modelo responde un `AIMessage` con `content=''` y una lista `tool_calls`: \"quiero llamar a `multiply` con `a=2, b=3`\". Es una **petición**, escrita como datos. Alguien más tiene que ejecutarla."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un grafo de un node con un LLM con tools",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\n\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\n\n\ndef multiply(a: int, b: int) -> int:\n    \"\"\"Multiply a and b.\n\n    Args:\n        a: first int\n        b: second int\n    \"\"\"\n    return a * b\n\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nllm_with_tools = llm.bind_tools([multiply])\n\n\ndef tool_calling_llm(state: MessagesState):\n    return {\"messages\": [llm_with_tools.invoke(state[\"messages\"])]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"tool_calling_llm\", tool_calling_llm)\nbuilder.add_edge(START, \"tool_calling_llm\")\nbuilder.add_edge(\"tool_calling_llm\", END)\ngraph = builder.compile()\n\nfor texto in [\"Hello!\", \"Multiply 2 and 3\"]:\n    resultado = graph.invoke({\"messages\": [HumanMessage(content=texto)]})\n    for m in resultado[\"messages\"]:\n        m.pretty_print()\n    print(\"tool_calls:\", resultado[\"messages\"][-1].tool_calls)\n    print()",
+   "notas": "El node le pasa al LLM **todo** el historial (`state[\"messages\"]`) y devuelve su respuesta en una lista: `add_messages` la añade.\nSalida real con \"Hello!\": `Hello! How can I assist you today?` y `tool_calls: []`.\nSalida real con \"Multiply 2 and 3\": un AIMessage vacío con `tool_calls: [{'name': 'multiply', 'args': {'a': 2, 'b': 3}, ...}]`.\nEl notebook usa `gpt-4o`; aquí `gpt-4o-mini` da lo mismo.",
+   "resaltar": [
+    20,
+    24
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo de chain",
+   "contenido": "graph TD\n  START([START]) --> tool_calling_llm\n  tool_calling_llm --> END([END])\n  class tool_calling_llm clave",
+   "notas": "Un solo node y ningún conditional edge.\nNo hay ningún node que ejecute tools. Guárdalo para la primera pregunta de abajo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: ¿quién multiplica?",
+   "contenido": "Con el grafo de chain del paso 7 le preguntas `\"Multiply 2 and 3\"`. ¿Cuál es el último mensaje del resultado? ¿Aparece un 6 en algún lado?",
+   "respuesta": "El último mensaje es un `AIMessage` con `content=''` y un `tool_call` a `multiply` con `a=2, b=3` (salida real). No aparece ningún 6.\n`bind_tools` solo le enseña al modelo el schema; el modelo **pide** la llamada pero nadie la ejecuta, porque el grafo no tiene un node de tools. Eso lo agrega `router`.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: dos mensajes con el mismo id",
+   "contenido": "El state ya trae dos mensajes con id `a` y `b`, y el node devuelve dos más, uno con id nuevo (`c`) y otro con un id que ya existe (`a`):\n\n```python\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\n\n\ndef responder(state: MessagesState):\n    return {\"messages\": [AIMessage(content=\"buenas\", id=\"c\"), HumanMessage(content=\"hola!!\", id=\"a\")]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"responder\", responder)\nbuilder.add_edge(START, \"responder\")\nbuilder.add_edge(\"responder\", END)\ngraph = builder.compile()\n\nentrada = {\"messages\": [HumanMessage(content=\"hola\", id=\"a\"), AIMessage(content=\"qué tal\", id=\"b\")]}\nresultado = graph.invoke(entrada)\nfor m in resultado[\"messages\"]:\n    print(m.id, type(m).__name__, m.content)\n```\n\n¿Qué imprime, en orden?",
+   "respuesta": "Salida real:\n```\na HumanMessage hola!!\nb AIMessage qué tal\nc AIMessage buenas\n```\nEl id `a` ya existía: se **reemplaza en su lugar** (no se mueve al final). El id `c` es nuevo: se **añade** al final.\n`add_messages` decide mensaje por mensaje según el id."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: heredar de MessagesState",
+   "contenido": "Heredas de `MessagesState` para agregar una key `idioma`. Un node devuelve `{\"idioma\": \"es\"}` y el siguiente `{\"idioma\": \"en\"}`:\n\n```python\nfrom langchain_core.messages import HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\n\n\nclass State(MessagesState):\n    idioma: str\n\n\ndef primero(state: State):\n    return {\"idioma\": \"es\"}\n\n\ndef segundo(state: State):\n    return {\"idioma\": \"en\"}\n\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"primero\", primero)\nbuilder.add_node(\"segundo\", segundo)\nbuilder.add_edge(START, \"primero\")\nbuilder.add_edge(\"primero\", \"segundo\")\nbuilder.add_edge(\"segundo\", END)\ngraph = builder.compile()\n\nresultado = graph.invoke({\"messages\": [HumanMessage(content=\"Hola\")]})\nprint(resultado[\"idioma\"])\n```\n\n¿`idioma` acaba como `\"en\"` o como una lista con los dos?",
+   "respuesta": "Acaba como `\"en\"` (salida real: imprime `en`). Solo `messages` tiene reducer (`add_messages`); `idioma` es una key normal, así que su update **sobrescribe**.\nCada key tiene su propia regla: el reducer se declara por key, no para todo el state."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- La conversación vive en el state como lista de mensajes (`Human`, `AI`, `System`, `Tool`).\n- Sin reducer, cada update **borra** la lista. Con `add_messages`, se **añade** lo nuevo y se **reemplaza** lo que trae un id existente.\n- `MessagesState` es un state con `messages` y `add_messages` ya puestos; heredas de él para agregar keys.\n- `bind_tools` le da al modelo el schema; el modelo devuelve `tool_calls`, no ejecuta nada.\n- En el curso 01, `create_agent` hacía todo esto por dentro. Aquí lo ves pieza por pieza."
+  }
+ ],
+ "fuentes": [
+  "module-1/chain.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Tu grafo de chain tiene `bind_tools([multiply])` pero ningún ToolNode. Preguntas \"Multiply 2 and 3\". ¿Obtienes un 6? ¿Por qué?",
+   "reverso": "No. Obtienes un `AIMessage` con un `tool_call` a `multiply`. `bind_tools` solo le enseña el schema al modelo: el modelo pide la llamada, pero nadie la ejecuta."
+  },
+  {
+   "frente": "¿Qué le manda `bind_tools` al modelo sobre tu función, y de dónde sale cada parte?",
+   "reverso": "Su **schema**: el nombre de la función, los argumentos con sus tipos (de los type hints) y la descripción (del docstring). Con eso el modelo sabe cuándo y cómo pedirla."
+  },
+  {
+   "frente": "Heredas `class State(MessagesState): idioma: str`. ¿`idioma` acumula valores como `messages`?",
+   "reverso": "No. El reducer se declara **por key**: solo `messages` tiene `add_messages`. `idioma` se sobrescribe con cada update."
+  },
+  {
+   "frente": "Con `add_messages`, llega un mensaje con un id que ya estaba en medio de la lista. ¿Dónde queda?",
+   "reverso": "En el **mismo lugar** que el viejo, con el contenido nuevo. Reemplazar no lo mueve al final; solo los ids nuevos se añaden al final."
+  }
+ ]
+}

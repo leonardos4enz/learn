@@ -1,0 +1,15 @@
+[
+ {
+  "id": "lcae",
+  "nombre": "Ruta LCAE",
+  "descripcion": "Certificación LangChain Certified Agent Engineer: Build, Test, Deploy y Monitor.",
+  "cursos": [
+   "langchain",
+   "deepagents",
+   "reliable",
+   "monitoring",
+   "lsdeploy",
+   "lcae"
+  ]
+ }
+]

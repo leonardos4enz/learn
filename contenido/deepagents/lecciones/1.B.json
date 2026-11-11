@@ -1,0 +1,121 @@
+{
+ "mision_id": "1.B",
+ "titulo": "Modelos y system prompt",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Tu agente tiene dos perillas que controlas directo:\n\n1. **Qué LLM** piensa. Quieres probar uno más barato, uno abierto o uno más fuerte sin reescribir el agente.\n2. **Qué le dices** en cada llamada: quién es, de qué habla y de qué no.\n\nLa primera es el `model`; la segunda, el `system_prompt`. Hay una trampa: el system message que recibe el modelo no es solo tu texto. El harness puede agregarle una parte según el modelo. Si no sabes qué se agrega y dónde, no sabes qué está leyendo tu agente."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un solo archivo para el modelo: models.py",
+   "contenido": "from pathlib import Path\n\nfrom dotenv import load_dotenv\n\nload_dotenv(dotenv_path=Path(__file__).resolve().parent / \".env\", override=True)\n\nfrom langchain.chat_models import init_chat_model\n\n# Requires ANTHROPIC_API_KEY in .env\nmodel = init_chat_model(\"anthropic:claude-haiku-4-5\", timeout=60, max_retries=2)\n\n# A more capable model for steps that need stronger reasoning\nstrong_model = init_chat_model(\"anthropic:claude-sonnet-5-5\", timeout=120, max_retries=2)\n\n# Para cambiar de proveedor: comenta la línea activa y descomenta otra\n# model = init_chat_model(\"openai:gpt-6-luna\", use_responses_api=True)\n# model = init_chat_model(\"ollama:qwen2.5:7b\")",
+   "notas": "Son las líneas activas del `python/models.py` del curso (el archivo real trae además muchos modelos comentados: Groq, Ollama, OpenRouter, Azure, Bedrock, Gemini).\n`init_chat_model(\"proveedor:modelo\")`: el prefijo elige el proveedor y el resto el modelo. Cambiar de modelo = cambiar esta línea; todos los labs hacen `from models import model`.\nLo comprobé con una key falsa (construir el objeto no llama a la API): `ChatAnthropic claude-haiku-4-5 | ChatAnthropic claude-sonnet-5-5`.",
+   "resaltar": [
+    10,
+    13
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué pasar el objeto y no el string",
+   "contenido": "`create_deep_agent` también acepta `model=\"anthropic:claude-haiku-4-5\"`. El curso pasa el **objeto** de `models.py` porque así configuras una vez lo que el string no dice: `timeout`, `max_retries` y, para los modelos oficiales de OpenAI, `use_responses_api=True`.\n\nQué cambia al cambiar de modelo:\n\n- **Cambia**: quién razona, el costo, la calidad de las tool calls, y la parte del prompt que agrega el harness para ese modelo (el *perfil*, paso 4).\n- **No cambia**: tus tools, tu `system_prompt`, el checkpointer, el grafo.\n\nOjo con los modelos locales chicos (7B): suelen fallar llamando tools o ignorar el system prompt. Es límite del modelo, no un bug tuyo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo se arma el system message",
+   "contenido": "El system prompt va en **cada** llamada al modelo, antes de la conversación. En la 0.7, `create_deep_agent` lo arma así:\n\n**USER → BASE → SUFFIX**\n\n- **USER**: tu `system_prompt`. Va **primero**.\n- **BASE**: vacío en todos los perfiles que trae la 0.7. Ya no hay un prompt base grande.\n- **SUFFIX**: un texto corto que depende del **perfil del modelo**. Haiku 4.5 agrega tres bloques de guía sobre tools; un modelo sin perfil, nada.\n\nLas instrucciones de cada tool built-in viajan en la descripción de la tool, no en el system prompt.\n\nConsecuencia: si no pasas `system_prompt`, a tu modelo no le llega ninguna persona ni regla sobre tu tarea."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El mayordomo: ¿qué recibe el modelo?",
+   "contenido": "from deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\n\nfrom guion import ModeloGuion\n\nSYSTEM_PROMPT = (\n    \"YOU ARE AN EXTREMELY POSH BRITISH BUTLER. You speak ONLY in the most \"\n    \"refined, formal, over-the-top Victorian English. You say 'indeed', 'quite', \"\n    \"'I dare say', 'one simply must' constantly. You find all things common or \"\n    \"nautical to be utterly beneath you. You NEVER break character under ANY \"\n    \"circumstances.\"\n)\n\nmodel = ModeloGuion(guion=[AIMessage(\"Indeed, an LLM is quite the marvel.\")])\n\nagent = create_deep_agent(\n    model=model,\n    system_prompt=SYSTEM_PROMPT,\n    name=\"butler_agent\",\n)\n\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"What is an LLM?\"}]})\n\nprimero = model.llamadas[0][0]          # el primer mensaje que recibió el modelo\nprint(\"Tipo:\", primero.type)\nprint(\"¿Es exactamente tu texto?\", primero.text == SYSTEM_PROMPT)\nprint(\"Mensajes que recibió:\", [m.type for m in model.llamadas[0]])",
+   "notas": "Es `m1/m1.4_scratch_agent_butler.py` con el modelo de guion de 1.A (copia `guion.py` junto al script) para ver el primer mensaje que recibe el modelo.\nSalida real:\n`Tipo: system`\n`¿Es exactamente tu texto? True`\n`Mensajes que recibió: ['system', 'human']`\nEl modelo de guion no tiene perfil, así que no hay SUFFIX: el system message es tu texto, idéntico.",
+   "resaltar": [
+    18,
+    24
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lo mismo con un Haiku falso: aparece el SUFFIX",
+   "contenido": "from deepagents import create_deep_agent\nfrom langchain_anthropic import ChatAnthropic\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\n\n\nclass HaikuFalso(ChatAnthropic):\n    \"\"\"Se presenta como claude-haiku-4-5, pero no llama a la API: anota y responde 'ok'.\"\"\"\n    recibido: list = []\n\n    def bind_tools(self, tools, **kwargs):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        self.recibido.append(messages)\n        return ChatResult(generations=[ChatGeneration(message=AIMessage(\"ok\"))])\n\n\nmodel = HaikuFalso(model=\"claude-haiku-4-5\", api_key=\"falsa\")  # key falsa: nunca sale a la red\n\nagent = create_deep_agent(model=model, system_prompt=\"Eres un mayordomo.\")\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]})\n\nsystem = model.recibido[0][0]\nprint(system.text[:120])\nprint(\"...\")\nprint(\"Secciones que agregó el harness:\", [l for l in system.text.splitlines() if l.startswith(\"<\") and not l.startswith(\"</\")])\nprint(\"cache_control:\", system.content[-1].get(\"cache_control\"))",
+   "notas": "`HaikuFalso` hereda de `ChatAnthropic` y se llama `claude-haiku-4-5`, así el harness le aplica el perfil de Haiku. Pero sobrescribe `_generate`: nunca sale a la red (por eso basta una key falsa).\nSalida real:\n`Eres un mayordomo.` (tu texto, primero)\n`Secciones que agregó el harness: ['<use_parallel_tool_calls>', '<investigate_before_answering>', '<tool_result_reflection>']`\n`cache_control: {'type': 'ephemeral', 'ttl': '5m'}`\nEse `cache_control` es la marca de prompt caching (paso 8).",
+   "resaltar": [
+    7,
+    19
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El system message con Haiku",
+   "contenido": "graph TB\n  U[\"USER: tu system_prompt\"] --> B[\"BASE: vacío en la 0.7\"]\n  B --> S[\"SUFFIX del perfil de Haiku: 3 bloques sobre tools\"]\n  S --> M[\"mensajes de la conversación\"]\n  class U clave",
+   "notas": "Todo lo que está arriba de \"mensajes\" se reenvía igual en cada llamada.\nSi cambias a un modelo con otro perfil, cambia el SUFFIX; tu parte se queda igual y primero.\nEn LangSmith lo ves como el primer mensaje (System) de cada llamada al LLM."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Prompt caching: pagar menos por lo que se repite",
+   "contenido": "En un loop de agente, el system prompt y las tools se mandan idénticos en cada llamada. El proveedor puede guardar ese trabajo (KV cache) y cobrar mucho menos la próxima vez.\n\nEl harness agrega por su cuenta el middleware de caching de Anthropic (no hace nada con otros proveedores): marca con `cache_control` (TTL 5 min) el último bloque del system message (lo viste en el paso 6) y la última tool. Una marca cachea todo lo anterior a ella.\n\nEl cache se busca por **contenido exacto del prefijo**, no por sesión: dos procesos distintos con el mismo prompt dentro de 5 min comparten cache. En los evals del curso ahorró 49–80 % del costo, y más en conversaciones largas, porque el historial previo también se vuelve prefijo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin system_prompt",
+   "contenido": "Quitas el `system_prompt` y usas el modelo de guion (sin perfil):\n\n```python\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\n\nfrom guion import ModeloGuion\n\nmodel = ModeloGuion(guion=[AIMessage(\"Un LLM es...\")])\n\nagent = create_deep_agent(model=model)   # sin system_prompt\n\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"What is an LLM?\"}]})\n\nprimero = model.llamadas[0][0]\nprint(\"Tipo:\", primero.type)\nprint(\"Texto:\", repr(primero.text))\n```\n\n¿Qué imprime? ¿Hay system message y qué trae?",
+   "respuesta": "Salida real: `Tipo: system` y `Texto: ''`. Hay un system message, pero **vacío**.\nEn la 0.7 no hay prompt base que te salve: sin `system_prompt` no llega ninguna persona ni regla. Con Haiku llegaría solo el SUFFIX (guía genérica sobre tools), que tampoco habla de tu tarea."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: cambias el modelo",
+   "contenido": "Tienes el mayordomo con `HaikuFalso` del paso 6 (tu texto + 3 bloques del perfil). Cambias **solo** el modelo por `ModeloGuion` (sin perfil), como en el paso 5. ¿Qué system message recibe ahora el modelo?\n\nA) Tu texto + los 3 bloques, porque el harness los agrega a cualquier modelo.\nB) Solo tu texto: el SUFFIX depende del perfil del modelo y este no tiene.\nC) Un prompt base grande del harness y después tu texto.\nD) Tu texto, pero movido a un mensaje `human` antes de la pregunta.",
+   "respuesta": "**B.** Salida real del paso 5: `¿Es exactamente tu texto? True`.\nA no: el SUFFIX sale del perfil registrado para ese modelo. C no: en la 0.7 BASE está vacío y tu texto va primero. D no: tu `system_prompt` siempre va en el system message.",
+   "ref": 6
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: caching y un cambio pequeño",
+   "contenido": "Tu agente usa Haiku. Corres el script, cambias la **primera palabra** de tu `system_prompt` y lo vuelves a correr 2 minutos después, en otro proceso. ¿Qué esperas ver en el `usage` de la segunda llamada en LangSmith?\n\nA) Casi todo leído de cache: es el mismo agente y no pasaron 5 minutos.\nB) El system prompt (y lo que va después) procesado de nuevo, porque el cache se busca por prefijo exacto y ese texto cambió.\nC) Todo leído de cache, porque el checkpointer guarda el cache entre procesos.\nD) Un error, porque el TTL no deja reusar un prompt modificado.",
+   "respuesta": "**B.** El cache es por contenido exacto: al cambiar tu texto, el system message ya no coincide y se cobra completo, igual que lo que viene después.\nDetalle: en la API de Anthropic las definiciones de tools van antes del system en el prefijo, así que esa parte sí puede salir del cache.\nA no: no es por \"mismo agente\". C no: el checkpointer guarda el estado del hilo, no el cache del proveedor. D no: no hay error, solo no hay hit."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `init_chat_model(\"proveedor:modelo\")` en un solo `models.py`: cambiar de modelo es cambiar una línea; tools y prompt quedan igual.\n- El system message se arma **USER → BASE → SUFFIX**: tu texto primero, BASE vacío en la 0.7, SUFFIX según el perfil del modelo (Haiku: 3 bloques sobre tools).\n- Sin `system_prompt` no llega nada de tu tarea. Y definir `SYSTEM_PROMPT` no basta: hay que pasarlo con `system_prompt=`.\n- El harness marca el system y la última tool con `cache_control`; el cache es por prefijo exacto y ahorra más mientras más larga la conversación.\n- Es el mismo `system_prompt` de `create_agent` del curso 01; lo nuevo es lo que el harness agrega después.\n\nDónde buscarlo en docs: *Deep Agents → Models* y *Customization → Prompt assembly* (`/oss/python/deepagents/customization#prompt-assembly`)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.3-models.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.4-system-prompt.html",
+  "lca-deepagents/python/models.py",
+  "lca-deepagents/python/m1/m1.4_scratch_agent_butler.py",
+  "lca-deepagents/python/m1/m1.4_scratch_agent_butler_extra_posh.py",
+  "deepagents 0.7: graph.py (docstring de system_prompt) y profiles/harness/_anthropic_haiku_4_5.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Cambias el modelo en `models.py` de Haiku a otro proveedor. ¿Qué cambia en tu agente y qué no?",
+   "reverso": "Cambia quién razona, el costo y el SUFFIX que agrega el perfil del modelo. Tus tools, tu `system_prompt` y el grafo quedan igual."
+  },
+  {
+   "frente": "En la 0.7, ¿qué instrucciones sobre tu tarea recibe el modelo si no pasas `system_prompt`?",
+   "reverso": "Ninguna. No hay prompt base grande: el system message queda vacío o con solo el SUFFIX genérico del perfil."
+  },
+  {
+   "frente": "¿En qué orden arma deepagents el system message y dónde queda tu texto?",
+   "reverso": "USER → BASE → SUFFIX. Tu `system_prompt` (USER) va primero; BASE está vacío en la 0.7; el SUFFIX depende del perfil del modelo."
+  },
+  {
+   "frente": "Escribes `SYSTEM_PROMPT = \"Eres un pirata\"` y el agente no habla como pirata. ¿Qué revisas primero?",
+   "reverso": "Que lo pases a `create_deep_agent(..., system_prompt=SYSTEM_PROMPT)`. Definir la variable no hace que llegue al modelo."
+  },
+  {
+   "frente": "¿Por qué el prompt caching ahorra más en el turno 20 que en el turno 2?",
+   "reverso": "Cada turno reenvía todo lo anterior como prefijo. Una vez cacheado, ese prefijo cuesta una fracción; solo lo nuevo se cobra completo."
+  },
+  {
+   "frente": "¿Por qué dos corridas en procesos distintos pueden compartir el prompt cache?",
+   "reverso": "El cache del proveedor se busca por contenido exacto del prefijo, no por sesión ni checkpointer. Mismo prompt y tools dentro del TTL (5 min) = hit."
+  }
+ ]
+}

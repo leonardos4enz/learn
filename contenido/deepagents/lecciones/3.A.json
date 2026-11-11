@@ -1,0 +1,111 @@
+{
+ "mision_id": "3.A",
+ "titulo": "Resumir y descargar contexto",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Un agente que trabaja horas junta muchos mensajes, y a veces una sola tool devuelve algo enorme (una tabla exportada entera). En los dos casos el contexto se llena: más costo, más latencia y, al final, te pasas de la ventana del modelo.\n\nEn LangGraph 2.D lo resolviste a mano con `trim_messages`, filtros y `RemoveMessage`. Deep Agents trae dos mecanismos ya integrados, uno para cada caso:\n\n- **Summarization**: cuando el historial acumulado crece demasiado, resume lo viejo.\n- **Offloading**: cuando **un** resultado es enorme, lo guarda en un archivo y deja solo un aviso con la ruta.\n\nLa pregunta clave, igual que en 2.D: ¿qué se **borra** y qué deja de **ver** el modelo?"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo funciona summarization",
+   "contenido": "`SummarizationMiddleware` viene por defecto y revisa **cada** llamada al modelo antes de que salga:\n\n1. Cuenta los tokens. Si pasan del **85 %** de `max_input_tokens` (lo saca del `profile` del modelo), se dispara. Se cambia con `trigger=(\"fraction\", 0.5)`.\n2. Hace **otra** llamada al LLM, con el mismo modelo, para resumir lo viejo: intención, hechos y decisiones, archivos creados y siguientes pasos.\n3. El modelo recibe: system prompt + un `HumanMessage` con el resumen + los mensajes recientes.\n4. Los mensajes que salieron se copian a `/conversation_history/{thread_id}.md` (nombre en deepagents 0.7.0), por si el agente necesita un detalle exacto: lo lee con `read_file`.\n\nDeja la marca en una clave privada del state: `_summarization_event`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El demo de 5 turnos, sin LLM",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom deepagents import create_deep_agent\n\n\nclass ModeloEco(BaseChatModel):\n    \"\"\"Hace de LLM: si le piden un resumen, devuelve uno fijo; si no, repite la pregunta.\"\"\"\n    vistos: list = []\n\n    @property\n    def _llm_type(self):\n        return \"eco\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        ultimo = messages[-1].text\n        if \"Context Extraction Assistant\" in ultimo:  # el prompt de resumen del middleware\n            texto = \"RESUMEN: el usuario es Alex, trabaja en Acme Corp.\"\n        else:\n            self.vistos.append(messages)  # solo guardo las llamadas normales del agente\n            texto = f\"Respuesta a: {ultimo}\"\n        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=texto))])\n\n\nmodelo = ModeloEco()\n# Ventana de contexto falsa y chica: resume al pasar ~595 tokens (85 % de 700)\nmodelo.profile = {\"max_input_tokens\": 700}\n\nagent = create_deep_agent(\n    model=modelo,\n    checkpointer=MemorySaver(),\n    system_prompt=\"You are a helpful assistant. Keep every response to one sentence.\",\n)\n\nTHREAD = {\"configurable\": {\"thread_id\": \"demo\"}}\nturnos = [\n    \"My name is Alex. I work at Acme Corp.\",\n    \"What is 2 + 2?\",\n    \"I have been building a distributed cache for three months.\",\n    \"What is the capital of France?\",\n    \"What do you remember about me?\",\n]\n\nfor i, texto in enumerate(turnos, 1):\n    agent.invoke({\"messages\": [HumanMessage(content=texto)]}, THREAD)\n    state = agent.get_state(THREAD).values\n    vio = modelo.vistos[-1][1:]  # lo que vio el modelo, sin el system prompt\n    evento = state.get(\"_summarization_event\")\n    print(f\"Turno {i}: guardados={len(state['messages'])}  el modelo vio={len(vio)} mensajes\", end=\"\")\n    if evento:\n        print(f\"  [RESUMIDO, cutoff={evento['cutoff_index']}]  primero que vio: {vio[0].text[:45]!r}\")\n    else:\n        print()\n\nprint(\"Archivos:\", list(agent.get_state(THREAD).values.get(\"files\", {}).keys()))",
+   "notas": "`ModeloEco` hace de LLM: si recibe el prompt de resumen del middleware devuelve un resumen fijo; si no, responde \"Respuesta a: ...\". Guarda lo que vio en cada llamada normal. Es el mismo guion de `m3/m3.1_summarization.py`, con `invoke` en vez de `ainvoke`. Salida real:\n`Turno 1: guardados=2  el modelo vio=1` · `Turno 2: guardados=4  vio=3`\n`Turno 3: guardados=6  vio=5  [RESUMIDO, cutoff=1]`\n`Turno 4: guardados=8  vio=5  [RESUMIDO, cutoff=3]`\n`Turno 5: guardados=10  vio=5  [RESUMIDO, cutoff=5]`\n`Archivos: ['/conversation_history/demo.md']`\n**Guardados** nunca baja; lo que **ve** el modelo se queda en 5.",
+   "resaltar": [
+    31,
+    52
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que vio el modelo en el turno 5",
+   "contenido": "Esto le llegó al modelo (sin el system prompt), salida real:\n\n1. `human`: *You are in the middle of a conversation that has been summarized. The full conversation history has been saved to /conversation_history/demo.md ... <summary> RESUMEN: el usuario es Alex, trabaja en Acme Corp. </summary>*\n2. `ai`: Respuesta a: I have been building a distributed cache...\n3. `human`: What is the capital of France?\n4. `ai`: Respuesta a: What is the capital of France?\n5. `human`: What do you remember about me?\n\nY `state[\"messages\"]` sigue con los **10** mensajes. El archivo `/conversation_history/demo.md` tiene una sección `## Summarized at ...` por cada vez que se disparó, con los mensajes que salieron.\n\nCon el modelo real del curso, el corte cae en otro lugar (salida original: `summary + messages[4:]`), porque cuenta tokens de otros textos. La idea es la misma."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Conecta con LangGraph 2.D",
+   "contenido": "| | ¿Borra de `state[\"messages\"]`? | ¿Qué ve el modelo? |\n|---|---|---|\n| `RemoveMessage` (2.D) | Sí, para siempre | Lo que quedó |\n| `trim_messages` (2.D) | No | Los últimos que caben; lo demás lo olvida |\n| Summarization (Deep Agents) | **No** | Un resumen de lo viejo + lo reciente |\n\nSummarization se parece a `trim_messages`: solo cambia la petición que sale al modelo. La diferencia es que no tira lo viejo: lo **resume** y deja el original en un archivo. El checkpointer guarda el historial completo, así que puedes auditar todo el hilo.\n\nEn LangGraph 2.E (chatbot-summarization) vas a construir un resumen a mano; ahí sí decides tú si borrar."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Mini-paso: {**perfil, ...} y por qué el objeto",
+   "contenido": "El curso cambia la ventana así: `model.profile = {**model.profile, \"max_input_tokens\": 700}`.\n\n`{**d, \"clave\": valor}` crea un dict **nuevo** con todo lo de `d` y pisa una clave. Ejemplo resuelto (salida real):\n\n```python\nperfil = {\"max_input_tokens\": 200000, \"tool_calling\": True}\nnuevo = {**perfil, \"max_input_tokens\": 700}\nprint(nuevo)   # {'max_input_tokens': 700, 'tool_calling': True}\nprint(perfil)  # {'max_input_tokens': 200000, 'tool_calling': True}\n```\n\nEse `profile` vive en el **objeto** modelo. Por eso hay que pasar `create_deep_agent(model=model)`: si pasas el string `\"anthropic:claude-haiku-4-5\"`, Deep Agents crea un modelo nuevo con su perfil real (200k tokens) y tu cambio no se usa."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Offloading: un resultado enorme",
+   "contenido": "`FilesystemMiddleware` (también por defecto) revisa cada resultado de tool **antes** de que llegue al modelo:\n\n- Si pasa de ~**20 000 tokens** (lo mide como caracteres / 4, o sea ~80 000 caracteres), escribe el resultado completo en `/large_tool_results/<tool_call_id>`.\n- En su lugar deja un aviso: la ruta, cómo leerlo por partes con `read_file(offset, limit)` y una vista previa de las primeras y últimas 5 líneas.\n- Con un mensaje humano gigante (~50 000 tokens) hace lo mismo, en `/conversation_history/`.\n\nNo se aplica a `ls`, `glob`, `grep`, `read_file`, `edit_file` ni `write_file`: ya se recortan solas o devuelven poco. Los archivos van al backend que tenga el agente (con `StateBackend`, al state del hilo)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Offloading de una exportación de 4000 filas",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langchain_core.tools import tool\nfrom deepagents import create_deep_agent\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\n@tool\ndef exportar_clientes() -> str:\n    \"\"\"Exporta la tabla de clientes completa.\"\"\"\n    return \"\\n\".join(f\"{i}, cliente{i}@acme.com, Ciudad {i % 50}\" for i in range(1, 4001))\n\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"exportar_clientes\", {}, \"exp1\"),\n    AIMessage(content=\"Fin.\"),\n])\n\nagent = create_deep_agent(model=modelo, tools=[exportar_clientes])\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Exporta los clientes\"}]})\n\nresultado = exportar_clientes.invoke({})\nprint(\"La tool devolvió:\", len(resultado), \"caracteres (~\", len(resultado) // 4, \"tokens)\")\nvisto = modelo.vistos[1][-1]  # el ToolMessage tal como lo vio el modelo en la 2.ª llamada\nprint(\"El modelo vio:\", len(visto.text), \"caracteres\")\nprint(visto.text)\nprint(\"Archivos en el state:\", list(r[\"files\"].keys()))",
+   "notas": "Salida real:\n`La tool devolvió: 148985 caracteres (~ 37246 tokens)`\n`El modelo vio: 1019 caracteres`\nLo que vio empieza con *Tool result too large, the result of this tool call exp1 was saved in the filesystem at this path: /large_tool_results/exp1*, explica cómo paginar con `read_file` y muestra las filas 1–5, `... [3990 lines truncated] ...` y las filas 3996–4000.\n`Archivos en el state: ['/large_tool_results/exp1']`\nDiferencia con summarization: aquí el `ToolMessage` guardado en `state[\"messages\"]` **también** quedó con el aviso de 1019 caracteres (lo comprobé). El dato completo vive solo en el archivo.",
+   "resaltar": [
+    34,
+    47
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La misma charla con una ventana grande",
+   "contenido": "El demo del paso 3, con un solo cambio: `max_input_tokens` pasa de 700 a 100 000.\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom deepagents import create_deep_agent\n\n\nclass ModeloEco(BaseChatModel):\n    \"\"\"Hace de LLM: si le piden un resumen, devuelve uno fijo; si no, repite la pregunta.\"\"\"\n    vistos: list = []\n\n    @property\n    def _llm_type(self):\n        return \"eco\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        ultimo = messages[-1].text\n        if \"Context Extraction Assistant\" in ultimo:  # el prompt de resumen del middleware\n            texto = \"RESUMEN: el usuario es Alex, trabaja en Acme Corp.\"\n        else:\n            self.vistos.append(messages)  # solo guardo las llamadas normales del agente\n            texto = f\"Respuesta a: {ultimo}\"\n        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=texto))])\n\n\nmodelo = ModeloEco()\n# Ventana de contexto falsa y chica: resume al pasar ~595 tokens (85 % de 700)\nmodelo.profile = {\"max_input_tokens\": 100000}\n\nagent = create_deep_agent(\n    model=modelo,\n    checkpointer=MemorySaver(),\n    system_prompt=\"You are a helpful assistant. Keep every response to one sentence.\",\n)\n\nTHREAD = {\"configurable\": {\"thread_id\": \"demo\"}}\nturnos = [\n    \"My name is Alex. I work at Acme Corp.\",\n    \"What is 2 + 2?\",\n    \"I have been building a distributed cache for three months.\",\n    \"What is the capital of France?\",\n    \"What do you remember about me?\",\n]\n\nfor i, texto in enumerate(turnos, 1):\n    agent.invoke({\"messages\": [HumanMessage(content=texto)]}, THREAD)\n    state = agent.get_state(THREAD).values\n    vio = modelo.vistos[-1][1:]  # lo que vio el modelo, sin el system prompt\n    evento = state.get(\"_summarization_event\")\n    print(f\"Turno {i}: guardados={len(state['messages'])}  el modelo vio={len(vio)} mensajes\", end=\"\")\n    if evento:\n        print(f\"  [RESUMIDO, cutoff={evento['cutoff_index']}]  primero que vio: {vio[0].text[:45]!r}\")\n    else:\n        print()\n\nprint(\"Archivos:\", list(agent.get_state(THREAD).values.get(\"files\", {}).keys()))\n```\n\nEn el turno 5: ¿cuántos mensajes hay guardados, cuántos ve el modelo y qué archivos hay?",
+   "respuesta": "Salida real: `Turno 5: guardados=10  el modelo vio=9 mensajes`, sin `[RESUMIDO]` en ningún turno, y `Archivos: []`.\nEl 85 % de 100 000 son 85 000 tokens; cinco turnos cortos no llegan. Sin disparo, el modelo ve todo el historial (9 mensajes más el system prompt) y no se crea `/conversation_history/demo.md`. Fíjate que **guardados=10** es igual que con 700: summarization nunca cambia lo guardado, solo lo que ve el modelo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Una exportación de 400 filas",
+   "contenido": "El agente del paso 8, pero la tool devuelve 400 filas en vez de 4000:\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langchain_core.tools import tool\nfrom deepagents import create_deep_agent\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\n@tool\ndef exportar_clientes() -> str:\n    \"\"\"Exporta la tabla de clientes completa.\"\"\"\n    return \"\\n\".join(f\"{i}, cliente{i}@acme.com, Ciudad {i % 50}\" for i in range(1, 401))\n\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"exportar_clientes\", {}, \"exp1\"),\n    AIMessage(content=\"Fin.\"),\n])\n\nagent = create_deep_agent(model=modelo, tools=[exportar_clientes])\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Exporta los clientes\"}]})\n\nresultado = exportar_clientes.invoke({})\nprint(\"La tool devolvió:\", len(resultado), \"caracteres (~\", len(resultado) // 4, \"tokens)\")\nvisto = modelo.vistos[1][-1]  # el ToolMessage tal como lo vio el modelo en la 2.ª llamada\nprint(\"El modelo vio:\", len(visto.text), \"caracteres\")\nprint(visto.text)\nprint(\"Archivos en el state:\", list(r[\"files\"].keys()))\n```\n\n¿El modelo ve el aviso con la ruta o la tabla completa? ¿Qué hay en `state[\"files\"]`?",
+   "respuesta": "Salida real: `La tool devolvió: 14103 caracteres (~ 3525 tokens)`, `El modelo vio: 14103 caracteres` (la tabla completa, fila por fila) y `Archivos en el state: []`.\nEl corte es ~20 000 tokens (~80 000 caracteres). 14 103 caracteres están muy por debajo, así que no hay offloading: el resultado entra entero al contexto."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: auditar un hilo largo",
+   "contenido": "Un agente de soporte lleva 60 turnos en un hilo con `MemorySaver` y summarization ya se disparó tres veces. Auditoría te pide **todo** lo que dijo el usuario, palabra por palabra. ¿Dónde lo encuentras?\n\nA) En ningún lado: cada resumen reemplaza los mensajes viejos.\n\nB) En `state[\"messages\"]` del checkpointer, que sigue completo, y también en `/conversation_history/{thread_id}.md`.\n\nC) Solo en el último resumen, que acumula los anteriores.\n\nD) En `/large_tool_results/`, donde el middleware guarda lo que sale de la ventana.",
+   "respuesta": "**B.** Summarization no reescribe `state[\"messages\"]`: cambia lo que se manda al modelo. Además copia los mensajes que salen al archivo `/conversation_history/{thread_id}.md`, con una sección por cada disparo.\nA confunde summarization con `RemoveMessage`. C: un resumen pierde detalle, no es palabra por palabra. D es la carpeta del **offloading** de resultados de tools, no del historial."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Summarization** (historial acumulado): se dispara al 85 % de `max_input_tokens` del `profile` (configurable con `trigger`), hace otra llamada al LLM y manda resumen + recientes.\n- Cambia **lo que ve el modelo**, no `state[\"messages\"]`: es como `trim_messages` de 2.D, no como `RemoveMessage`, y además guarda lo viejo en `/conversation_history/{thread_id}.md`.\n- Para un demo, cambia el `profile` del **objeto** modelo y pásale el objeto, no el string.\n- **Offloading** (un resultado enorme, >~20k tokens): va a `/large_tool_results/<id>` y el modelo recibe un aviso con vista previa; lee el resto con `read_file` por partes.\n- Los dos usan el backend del agente (2.A) para guardar sus archivos.\n\nDónde buscarlo en docs: docs.langchain.com → Deep Agents → *Context engineering* (summarization y offloading)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m3/m3.1-summarization-context-offloading.html",
+  "lca-deepagents/python/m3/m3.1_summarization.py",
+  "lca-deepagents/python/m3/m3.1_homework.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Summarization se disparó. ¿Cambió `state[\"messages\"]`?",
+   "reverso": "No. Cambia lo que se manda al modelo (resumen + recientes). El historial guardado sigue completo, como con `trim_messages` en LangGraph 2.D."
+  },
+  {
+   "frente": "¿En qué se parece summarization a `trim_messages` y en qué no?",
+   "reverso": "Los dos solo achican lo que ve el modelo. `trim_messages` tira lo viejo; summarization lo resume y deja el original en `/conversation_history/{thread_id}.md`."
+  },
+  {
+   "frente": "Con la configuración por defecto, ¿cuándo se dispara summarization?",
+   "reverso": "Cuando los tokens pasan el 85 % de `max_input_tokens` del `profile` del modelo. Se cambia con `trigger=(\"fraction\", x)`."
+  },
+  {
+   "frente": "Bajas `max_input_tokens` en el objeto modelo, pero pasas el string del modelo a `create_deep_agent`. ¿Se dispara el resumen en tu demo?",
+   "reverso": "No. El string crea un modelo nuevo con su perfil real; tu objeto modificado nunca se usa."
+  },
+  {
+   "frente": "Una tool devuelve ~30 000 tokens. ¿Qué ve el modelo?",
+   "reverso": "Un aviso con la ruta `/large_tool_results/<tool_call_id>` y una vista previa (primeras y últimas 5 líneas). El resto lo lee con `read_file` por partes."
+  },
+  {
+   "frente": "Después de resumir, el agente necesita un dato exacto de los primeros turnos. ¿Qué hace?",
+   "reverso": "`read_file` de `/conversation_history/{thread_id}.md`: el resumen trae esa ruta y el archivo tiene los mensajes originales."
+  }
+ ]
+}

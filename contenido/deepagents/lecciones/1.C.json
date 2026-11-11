@@ -1,0 +1,138 @@
+{
+ "mision_id": "1.C",
+ "titulo": "Tools y MCP",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Pídele a un LLM \"tira un dado de 20 caras\" y te inventa un número: no puede generar azar de verdad. Pídele \"¿qué géneros tienen más canciones en mi base de datos?\" y no tiene cómo mirarla. Para actuar necesita **tools**: funciones tuyas que el agente ejecuta cuando el modelo las pide.\n\nSegundo problema: si escribes una tool útil, la quieres usar en varios agentes (o que otros la usen) sin copiar el código. Para eso está **MCP**: la tool vive en un programa aparte y cualquier agente se conecta a ella."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo es una tool",
+   "contenido": "Con `@tool` (de `langchain_core.tools`) una función normal se vuelve tool. El modelo ve tres cosas:\n\n- el **nombre** de la función,\n- el **docstring**, que es la señal más importante para decidir cuándo usarla,\n- los **argumentos** con sus tipos (salen de las anotaciones).\n\nLo que devuelve (un string o algo serializable a JSON) regresa al modelo como resultado.\n\nEn `create_deep_agent`, `tools=[...]` es **aditivo**: se suma a los built-ins (`ls`, `read_file`, `write_file`, `edit_file`, `delete`, `glob`, `grep`, `task`). No reemplaza nada. `delete` es irreversible y recursivo: cuidado con a qué carpeta le das acceso (M2)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Tu primera tool: el dado",
+   "contenido": "import random\n\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.tools import tool\n\nfrom guion import ModeloGuion\n\n\n@tool\ndef roll_dice(sides: int = 6) -> int:\n    \"\"\"Roll a die with the given number of sides and return the result.\"\"\"\n    return random.randint(1, sides)\n\n\nmodel = ModeloGuion(guion=[\n    AIMessage(\"\", tool_calls=[{\"name\": \"roll_dice\", \"args\": {\"sides\": 20}, \"id\": \"call_1\"}]),\n    AIMessage(\"Listo: tiraste el d20.\"),\n])\n\nagent = create_deep_agent(\n    model=model,\n    tools=[roll_dice],\n)\n\nresult = agent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"Roll a 20-sided die for me.\"}]}\n)\n\nprint(\"Tools que vio el modelo:\", model.tools_vistas)\nfor message in result[\"messages\"]:\n    for call in getattr(message, \"tool_calls\", None) or []:\n        print(f\"Model asked for: {call['name']}({call['args']})\")\n    if message.type == \"tool\":\n        print(f\"Tool returned:   {message.content}  (tool_call_id={message.tool_call_id})\")\nprint(f\"Final answer:    {result['messages'][-1].text}\")\nprint(\"Mensajes:\", [m.type for m in result[\"messages\"]])",
+   "notas": "Es `m1/m1.5_first_tool.py` con el modelo de guion de 1.A (copia `guion.py` junto al script): el guion pide `roll_dice(sides=20)` y luego responde.\nSalida real:\n`Tools que vio el modelo: ['ls', ..., 'task', 'roll_dice']` (9: los 8 built-ins + la tuya)\n`Model asked for: roll_dice({'sides': 20})`\n`Tool returned:   8  (tool_call_id=call_1)` (el número cambia en cada corrida)\n`Mensajes: ['human', 'ai', 'tool', 'ai']`\nEl modelo nunca corre `roll_dice`: solo la **pide**. El nodo `tools` corre tu función y responde con un ToolMessage que lleva el mismo `tool_call_id`.",
+   "resaltar": [
+    23,
+    17
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Quién hace qué",
+   "contenido": "sequenceDiagram\n  participant U as Usuario\n  participant M as model (LLM)\n  participant T as nodo tools\n  U->>M: Roll a 20-sided die\n  M->>T: AIMessage con tool_calls: roll_dice(sides=20), id=call_1\n  T->>T: corre tu función de Python\n  T->>M: ToolMessage: 8, tool_call_id=call_1\n  M->>U: AIMessage con la respuesta final",
+   "notas": "Es el mismo loop de LangGraph M1 (`assistant` ⇄ `tools`) y de `create_agent`.\n`tool_calls` es una lista: el modelo puede pedir varias tools en el mismo turno, y si no dependen entre sí el nodo `tools` las corre en paralelo.\nEl `tool_call_id` une cada resultado con su pedido."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Una tool con base de datos: read_sql",
+   "contenido": "from pathlib import Path\n\nfrom langchain_community.utilities import SQLDatabase\nfrom langchain_core.tools import tool\n\nDB_PATH = Path(__file__).parent / \"chinook.db\"   # el chinook.db de python/m1\ndb = SQLDatabase.from_uri(f\"sqlite:///{DB_PATH}\")\n\n\n@tool\ndef read_sql(query: str) -> str:\n    \"\"\"Run a read-only SELECT query against the Chinook music store database.\"\"\"\n    try:\n        return str(db.run(query))\n    except Exception as e:\n        return f\"Error: {e}\"\n\n\nprint(read_sql.name, \"|\", read_sql.description)\nprint(read_sql.args)\nprint(read_sql.invoke({\"query\": \"SELECT g.Name, COUNT(*) AS n FROM Track t JOIN Genre g ON t.GenreId = g.GenreId GROUP BY g.Name ORDER BY n DESC LIMIT 5\"}))\nprint(read_sql.invoke({\"query\": \"SELECT * FROM Generos\"}))",
+   "notas": "Es la tool de `m1/m1.5_scratch_agent_tools.py`, llamada directo (sin agente) para ver qué recibe el modelo. Va en la carpeta `python/m1`, junto a `chinook.db`.\nSalida real:\n`read_sql | Run a read-only SELECT query against the Chinook music store database.`\n`{'query': {'title': 'Query', 'type': 'string'}}`\n`[('Rock', 1297), ('Latin', 579), ('Metal', 374), ('Alternative & Punk', 332), ('Jazz', 130)]`\n`Error: (sqlite3.OperationalError) no such table: Generos ...`\nEl error se **devuelve como texto** en vez de lanzarse: así el modelo lo lee y corrige el SQL (el system prompt del lab se lo pide).",
+   "resaltar": [
+    11,
+    16
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "MCP: la tool vive en otro programa",
+   "contenido": "**MCP** (Model Context Protocol) es un protocolo abierto para que un programa (el **servidor**) exponga tools y cualquier cliente las use.\n\n- Un **servidor MCP** no es una tool: es un programa que expone **una o varias**.\n- `MultiServerMCPClient` (de `langchain-mcp-adapters`) se conecta y `await client.get_tools()` convierte cada una en un `BaseTool` normal.\n- Para el agente son idénticas a tus `@tool`.\n\nEl **transport** dice cómo hablan:\n\n| transport | Para qué |\n|---|---|\n| `stdio` | El cliente lanza el servidor como subproceso local (`command` + `args`). Sin red. |\n| `streamable_http` (también `\"http\"`) | Servidor remoto por `url`. El estándar actual. |\n| `sse` | Legado, deprecado en la spec 2025-03-26. No lo uses para nada nuevo. |\n\nComo hablar con otro programa es I/O, el código MCP es `async`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El servidor: m1.6_dice_server.py",
+   "contenido": "import random\n\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP(\"dice\", log_level=\"WARNING\")  # hide per-request logs\n\n\n@mcp.tool()\ndef roll_dice(sides: int = 6) -> int:\n    \"\"\"Roll a die with the given number of sides and return the result.\"\"\"\n    return random.randint(1, sides)  # the same tool as Lesson 1.5\n\n\nif __name__ == \"__main__\":\n    mcp.run()  # start the server and wait for a client",
+   "notas": "Archivo del curso, sin cambios. La función es la misma de 1.5; solo cambió el decorador: `@mcp.tool()` en vez de `@tool`.\n`mcp.run()` arranca el servidor y espera a un cliente (por stdio, por defecto).\nPara un solo agente, `@tool` es más simple. El servidor vale la pena cuando varios clientes lo reusan.",
+   "resaltar": [
+    8,
+    15
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El cliente: cargar las tools y dárselas al agente",
+   "contenido": "import asyncio\nimport sys\nfrom pathlib import Path\n\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\n\nfrom guion import ModeloGuion\n\nSERVER = Path(__file__).parent / \"m1.6_dice_server.py\"   # el servidor del curso, en python/m1\n\n\nasync def main():\n    client = MultiServerMCPClient({\n        \"dice\": {\n            \"transport\": \"stdio\",\n            \"command\": sys.executable,  # the Python running this script\n            \"args\": [str(SERVER)],\n        }\n    })\n    tools = await client.get_tools()  # starts the server and asks which tools it has\n    print(\"Tools from the server:\", [t.name for t in tools])\n    print(\"Tipo de objeto:\", type(tools[0]).__name__)\n\n    model = ModeloGuion(guion=[\n        AIMessage(\"\", tool_calls=[{\"name\": \"roll_dice\", \"args\": {\"sides\": 20}, \"id\": \"call_1\"}]),\n        AIMessage(\"Listo: tiraste el d20.\"),\n    ])\n    agent = create_deep_agent(model=model, tools=tools)\n    result = await agent.ainvoke(\n        {\"messages\": [{\"role\": \"user\", \"content\": \"Roll a 20-sided die for me.\"}]}\n    )\n    print(\"Tools que vio el modelo:\", model.tools_vistas)\n    print(\"Tool returned:\", result[\"messages\"][2].content)\n    print(\"Final answer:\", result[\"messages\"][-1].text)\n\n\nasyncio.run(main())",
+   "notas": "Es `m1/m1.6_agent_local_mcp.py` con el modelo de guion. `sys.executable` es el Python que corre el script: el cliente lanza el servidor con él.\nSalida real:\n`Tools from the server: ['roll_dice']` · `Tipo de objeto: StructuredTool`\n`Tools que vio el modelo: ['ls', ..., 'task', 'roll_dice']` (igual que en el paso 3)\n`Tool returned: [{'type': 'text', 'text': '10', ...}]` (el número cambia)\nDiferencia: por MCP el resultado llega como bloques de contenido, no como el `int` crudo. El cliente corre el comando que le des: apúntalo solo a servidores en los que confíes.",
+   "resaltar": [
+    17,
+    22
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un servidor remoto: el MCP de la documentación de LangChain",
+   "contenido": "import asyncio\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\n\nasync def main():\n    client = MultiServerMCPClient({\"docs-langchain\": {\"transport\": \"streamable_http\", \"url\": \"https://docs.langchain.com/mcp\"}})\n    tools = await client.get_tools()\n    print(f\"docs-langchain: {len(tools)} tool(s)\")\n    for t in tools:\n        print(\" \", t.name)\n    ALLOWED = {\"search_docs_by_lang_chain\"}\n    tools = [t for t in tools if t.name in ALLOWED]\n    print(\"filtered to:\", [t.name for t in tools])\n\nasyncio.run(main())",
+   "notas": "Es la primera parte de `m1/m1.6_agent_mcp.py` (sin agente). Es un servidor público: no pide login ni key, solo red.\nSalida real (2026-11-11):\n`docs-langchain: 3 tool(s)`\n`  search_docs_by_lang_chain`\n`  query_docs_filesystem_docs_by_lang_chain`\n`  submit_feedback`\n`filtered to: ['search_docs_by_lang_chain']`\nLa página del curso muestra 2 tools: el servidor agregó una después. Por eso conviene la **allowlist**: el agente solo recibe las que tú dejas pasar. El repo escribe `\"transport\": \"http\"`; la página usa `\"streamable_http\"`. Son lo mismo.",
+   "resaltar": [
+    5,
+    11
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Un servidor con dos tools",
+   "contenido": "Agregas una segunda tool al servidor y lo guardas como `dice_coin_server.py`:\n\n```python\nimport random\n\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP(\"dice\", log_level=\"WARNING\")\n\n\n@mcp.tool()\ndef roll_dice(sides: int = 6) -> int:\n    \"\"\"Roll a die with the given number of sides and return the result.\"\"\"\n    return random.randint(1, sides)\n\n\n@mcp.tool()\ndef flip_coin() -> str:\n    \"\"\"Flip a coin and return heads or tails.\"\"\"\n    return random.choice([\"heads\", \"tails\"])\n\n\nif __name__ == \"__main__\":\n    mcp.run()\n```\n\nY lo cargas con el mismo cliente (modelo de guion que solo saluda):\n\n```python\nimport asyncio\nimport sys\nfrom pathlib import Path\n\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\n\nfrom guion import ModeloGuion\n\nSERVER = Path(__file__).parent / \"dice_coin_server.py\"\n\n\nasync def main():\n    client = MultiServerMCPClient({\n        \"dice\": {\n            \"transport\": \"stdio\",\n            \"command\": sys.executable,\n            \"args\": [str(SERVER)],\n        }\n    })\n    tools = await client.get_tools()\n    print(\"Tools from the server:\", [t.name for t in tools])\n\n    model = ModeloGuion(guion=[AIMessage(\"Hola.\")])\n    agent = create_deep_agent(model=model, tools=tools)\n    await agent.ainvoke({\"messages\": [{\"role\": \"user\", \"content\": \"Hola\"}]})\n    print(\"Tools que vio el modelo:\", len(model.tools_vistas), model.tools_vistas)\n\n\nasyncio.run(main())\n```\n\n¿Qué imprime cada `print`?",
+   "respuesta": "Salida real:\n`Tools from the server: ['roll_dice', 'flip_coin']`\n`Tools que vio el modelo: 10 [... 'task', 'roll_dice', 'flip_coin']`\nUn servidor, dos tools: el servidor no es \"una tool\", es quien las expone. Las dos se suman a los 8 built-ins, igual que si las hubieras escrito con `@tool`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: ¿se pierden los built-ins?",
+   "contenido": "Un agente tiene `tools=[read_sql]` (paso 5). El usuario pide: \"guarda el resultado en `resultados.md`\". ¿Qué pasa?\n\nA) No puede: al pasar `tools=` se quitaron los built-ins y ya no existe `write_file`.\nB) Puede pedir `write_file`: `tools=` se suma a los built-ins.\nC) El modelo escribe el archivo por su cuenta, sin pasar por el nodo `tools`.\nD) Primero hay que volver a pasar `write_file` dentro de `tools=[...]`.",
+   "respuesta": "**B.** `tools=` es aditivo; lo viste en el paso 3: 8 built-ins + `roll_dice`.\nA y D no: nada se reemplaza (para quitar un built-in hace falta un perfil con `excluded_tools`). C no: el modelo solo emite `tool_calls`; quien ejecuta es el nodo `tools`.",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: ¿dónde corre la función?",
+   "contenido": "En el cliente MCP del paso 8 (`transport: stdio`), el modelo pide `roll_dice(sides=20)`. ¿Dónde se ejecuta `random.randint(1, sides)`?\n\nA) Dentro del LLM, que genera el número.\nB) En el nodo `tools` del agente, en el mismo proceso que tu script.\nC) En el proceso del servidor MCP, que el cliente lanzó como subproceso; el nodo `tools` le manda la petición y recibe el resultado.\nD) En `docs.langchain.com`, porque las tools MCP siempre son remotas.",
+   "respuesta": "**C.** Con MCP la función vive en el servidor. El nodo `tools` llama al `StructuredTool` que creó el adapter, y este manda la petición al subproceso por stdio.\nA no: el LLM nunca ejecuta código. B sería con `@tool` local (paso 3). D no: `stdio` es local; remoto es `streamable_http`.",
+   "ref": 8
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Una tool = función + nombre + docstring + argumentos tipados. El docstring es lo que el modelo lee para elegirla.\n- `tools=[...]` se **suma** a los built-ins; no reemplaza nada.\n- El LLM solo emite `tool_calls`; el nodo `tools` ejecuta y responde con un ToolMessage con el mismo `tool_call_id` (igual que en LangGraph M1 y `create_agent`).\n- MCP: la tool vive en un servidor aparte; `MultiServerMCPClient.get_tools()` la vuelve un `BaseTool` normal. Un servidor puede exponer varias tools. Filtra con una allowlist.\n- Transports: `stdio` local, `streamable_http` remoto, `sse` legado.\n\nDónde buscarlo en docs: *LangChain → MCP* (langchain-mcp-adapters) y *Deep Agents → Customization* (tools)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.5-tools.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.6-mcp.html",
+  "lca-deepagents/python/m1/m1.5_first_tool.py",
+  "lca-deepagents/python/m1/m1.5_scratch_agent_tools.py",
+  "lca-deepagents/python/m1/m1.6_dice_server.py",
+  "lca-deepagents/python/m1/m1.6_agent_local_mcp.py",
+  "lca-deepagents/python/m1/m1.6_agent_mcp.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Pasas `tools=[mi_tool]` a `create_deep_agent`. ¿Qué pasa con `read_file` y `write_file`?",
+   "reverso": "Siguen ahí. `tools=` es aditivo: tu tool se suma a los built-ins."
+  },
+  {
+   "frente": "Cuando el modelo \"usa\" una tool, ¿qué produce él y qué produce el agente?",
+   "reverso": "El modelo produce un AIMessage con `tool_calls` (nombre, args, id). El nodo `tools` corre la función y produce un ToolMessage con el mismo `tool_call_id`."
+  },
+  {
+   "frente": "Tu agente confunde dos tools parecidas. ¿Qué cambias primero?",
+   "reverso": "Los docstrings: que cada uno diga con claridad cuándo usar esa tool. Es la señal principal que lee el modelo para elegir."
+  },
+  {
+   "frente": "¿Por qué `read_sql` devuelve `f\"Error: {e}\"` en vez de dejar que la excepción suba?",
+   "reverso": "Así el error llega al modelo como resultado de la tool y puede corregir el SQL y reintentar, en vez de que se caiga la corrida."
+  },
+  {
+   "frente": "¿Un servidor MCP es una tool?",
+   "reverso": "No. Es un programa aparte que expone una o varias tools. `get_tools()` convierte cada una en un `BaseTool` normal para el agente."
+  },
+  {
+   "frente": "¿Cuándo usas `transport: \"stdio\"` y cuándo `\"streamable_http\"`?",
+   "reverso": "`stdio`: el cliente lanza el servidor como subproceso en tu máquina (`command` + `args`). `streamable_http`: servidor remoto por `url`. `sse` es legado."
+  }
+ ]
+}

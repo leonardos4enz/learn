@@ -1,0 +1,108 @@
+{
+ "mision_id": "5.A",
+ "titulo": "Capstone: repaso de runs, threads, tags, metadata y feedback",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "El capstone junta todo el curso sobre un agente de soporte de ACME (\"Ace\") que habla con clientes simulados (Wile E. Coyote, Elmer Fudd, Yosemite Sam…): leer trazas y threads, costos por cliente, Insights, evaluadores de PII y de tarjetas, y un evaluador de satisfacción por thread comparado con el thumbs up/down.\n\nPara hacerlo bien necesitas tener claro el **vocabulario de observabilidad** (run, traza, thread; tags, metadata, feedback) y **cómo llega cada dato a la traza** desde el código. El agente usa la API de OpenAI **sin** LangChain, así que todo eso se pone a mano con `@traceable`. Esta lección es el repaso; las respuestas del quiz las sacas tú de los datos."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Run, traza, thread",
+   "contenido": "| Concepto | Qué es | En el capstone |\n|---|---|---|\n| **Run** | Una llamada a una función con `@traceable`: nombre, inputs, outputs, tiempo, tags, metadata, costo | Cada `chat()`, `_call_llm()`, `query_database()` |\n| **Root run** | Un run sin padre: la entrada | Cada `csa.chat(...)` |\n| **Child run** | Un run dentro de otro | Las llamadas LLM y tools dentro de `chat()` |\n| **Trace** | El árbol completo desde una raíz. `trace_id` = id de la raíz | Un turno del agente |\n| **Thread** | Varias trazas de la misma conversación, unidas por un id en la metadata | Toda la conversación |\n\nUna conversación de 4 turnos = **4 trazas** en **1 thread**. Una traza **no** es una conversación. Es lo mismo que en LangGraph: cada `invoke` es una traza; el `thread_id` del checkpointer une los turnos."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El árbol de un turno",
+   "contenido": "graph TD\n  C[\"chat() — root run\"] --> Q1[\"query_database() — tool\"]\n  C --> L1[\"_call_llm() — llm\"]\n  C --> Q2[\"query_database() — tool (si vuelve a consultar)\"]\n  C --> L2[\"_call_llm() — llm, respuesta final\"]\n  class C clave",
+   "notas": "Cada caja es un run. Juntas son **una** traza, porque comparten la raíz `chat()`.\nLos costos se suman hacia arriba: el trace tree te da el total de la traza y el desglose por hijo. Ahí buscas cuánto cuesta un `query_database`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Tags, metadata y `langsmith_extra`",
+   "contenido": "from langsmith import traceable, get_current_run_tree, tracing_context\n\nMODELO = \"gpt-5-nano\"\n\n@traceable(name=\"query_database\", run_type=\"tool\")\ndef query_database(query: str) -> str:\n    run = get_current_run_tree()\n    if run:                                         # uso 3: costo fijo de un tool\n        run.set(usage_metadata={\"total_cost\": 0.002})   # valor de ejemplo\n    return \"[('Anvil 100 lb', 847.5)]\"              # base de datos falsa\n\n@traceable(run_type=\"llm\", name=\"chat_completion\")\ndef _call_llm(messages: list) -> str:\n    run = get_current_run_tree()\n    if run:                                         # uso 2: datos para calcular costo\n        run.extra = {\n            **(run.extra or {}),\n            \"metadata\": {\n                **(run.extra or {}).get(\"metadata\", {}),\n                \"ls_provider\": \"openai\",\n                \"ls_model_name\": MODELO,\n            },\n        }\n    return \"El yunque de 100 lb cuesta $847.50\"     # LLM falso\n\n@traceable(name=\"Agent\")\ndef chat(question: str, langsmith_extra: dict | None = None) -> dict:\n    run = get_current_run_tree()\n    run_id = str(run.id) if run else None           # uso 1: guardar el id para feedback\n    datos = query_database(\"SELECT name, price FROM products\")\n    respuesta = _call_llm([question, datos])\n    return {\"answer\": respuesta, \"run_id\": run_id}\n\nbase_meta = {\"session_id\": \"conv-1\", \"scenario\": 10, \"customer_name\": \"Elmer Fudd\"}\nbase_tags = [\"Elmer Fudd\", \"scenario:10\"]\ncsa_extra = {\"langsmith_extra\": {\"metadata\": {**base_meta, \"agent_name\": \"csa\"},\n                                 \"tags\": [*base_tags, \"csa\"]}}\n\nraices = []\nwith tracing_context(enabled=\"local\"):\n    resultado = chat(\"¿Cuánto cuesta el yunque?\",\n                     langsmith_extra={**csa_extra[\"langsmith_extra\"], \"on_end\": raices.append})\n\ndef mostrar(run, nivel=0):\n    md = {k: v for k, v in (run.extra or {}).get(\"metadata\", {}).items() if k != \"ls_method\"}\n    print(\"  \" * nivel + f\"{run.name} [{run.run_type}] tags={run.tags} metadata={md}\")\n    for hijo in run.child_runs:\n        mostrar(hijo, nivel + 1)\n\nmostrar(raices[0])\nprint(\"run_id devuelto == id de la raíz:\", resultado[\"run_id\"] == str(raices[0].id))",
+   "notas": "Reproduce el patrón de `agent.py`, `database_tool.py` y `test_conversation.py` con LLM y base de datos **falsos** y tracing local.\n- `langsmith_extra` es un kwarg especial: `@traceable` lo intercepta y aplica sus `tags` y `metadata` a la traza (en el código real se arma como `csa_extra` y se pasa con `**csa_extra`).\n- Los **3 usos de `get_current_run_tree()`**: guardar `run.id` para el feedback, poner `ls_provider`/`ls_model_name` para que haya costo, y `total_cost` fijo en el tool (aquí 0.002, un valor de ejemplo; el del capstone lo buscas en la traza).\n- Salida real:\n```\nAgent [chain] tags=['Elmer Fudd', 'scenario:10', 'csa'] metadata={'session_id': 'conv-1', 'scenario': 10, 'customer_name': 'Elmer Fudd', 'agent_name': 'csa'}\n  query_database [tool] tags=['Elmer Fudd', 'scenario:10', 'csa'] metadata={..., 'usage_metadata': {'total_cost': 0.002}}\n  chat_completion [llm] tags=['Elmer Fudd', 'scenario:10', 'csa'] metadata={..., 'ls_provider': 'openai', 'ls_model_name': 'gpt-5-nano'}\nrun_id devuelto == id de la raíz: True\n```\nFíjate: los hijos **heredan** tags y metadata de la raíz.",
+   "resaltar": [
+    29,
+    21,
+    9
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tags vs metadata vs feedback",
+   "contenido": "| | Forma | Para qué | En el capstone |\n|---|---|---|---|\n| **Tags** | Lista de strings sueltos | **Filtrar** trazas y threads | `\"Elmer Fudd\"`, `\"scenario:10\"`, `\"csa\"` |\n| **Metadata** | Pares clave/valor | Filtrar y **Group by** en dashboards | `customer_name`, `scenario`, `session_id`, `agent_name` |\n| **Feedback** | Objeto **aparte**, ligado a un run por su id | Calificar: humanos, botones, evaluadores | `thumbs_up_down` = 1 o 0 |\n\nPara \"costo por cliente\" en el dashboard usas **metadata** (`customer_name`). Para \"cuántos threads tienen un tag que contiene X\" usas el **filtro de tags** en la vista de threads.\n\nEl feedback no vive dentro de la traza: se crea después con `create_feedback(run_id=..., key=\"thumbs_up_down\", score=...)`, una vez por turno del agente (por eso `chat()` devuelve su `run_id`)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo se generaron las trazas (y por qué importa)",
+   "contenido": "Dos agentes conversan: **Ace** (soporte, `gpt-5-nano`, o `gpt-5-mini` en escenarios marcados) con dos tools (SQL a la base de inventario y búsqueda en la base de conocimiento), y un **cliente simulado** (`gpt-5`) que sigue un escenario de `scenarios.tsv`. Hay 27 escenarios: specs, pedidos, devoluciones, quejas, verificación de PII.\n\nCada escenario dice si el cliente debe terminar **satisfecho**. Ese valor, no la conversación real, es el que se usa para el `thumbs_up_down`. Por eso, al comparar el evaluador de satisfacción por thread contra el thumbs up/down, **no esperes** que coincidan siempre: uno lee la conversación, el otro viene del guion. Es el \"alinear con humanos\" de 3.A, visto desde el otro lado.\n\nEl archivo que subes solo trae las trazas de **Ace** (las del cliente simulado no vienen). Se agrupan en threads por la metadata **`session_id`**, una de las llaves que LangSmith usa para formar threads (junto con `thread_id` y `conversation_id`)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Checklist del capstone (comandos corregidos)",
+   "contenido": "1. Crea el proyecto **`ACME-capstone`** y **antes** de subir trazas configura 3 evaluadores (así califican al llegar y no hay backfill):\n   - **PII leakage** (el prompt de 4.A).\n   - **Credit card**: escribe tu propio prompt a partir del de PII; en la sección Human deja solo el **output** del agente.\n   - **Satisfacción por thread**: prompt default del evaluador de thread; quita el Input del Human prompt y deja `output.output`. Pruébalo con el panel de test.\n2. Sube las trazas (la página dice `upload_traces.py`, pero el script real es otro y exige ambos argumentos):\n```bash\ncd lca-production-monitoring/python/capstone\nuv run python upload_csa_traces.py --input capstone_traces.jsonl --project ACME-capstone\n```\n3. Trazas: costo de un `query_database` (trace tree). Vista **thread**: filtro por tag.\n4. Dashboard: Group by metadata `customer_name`.\n5. Insights (plan Plus; 15+ min; gasta tu key), modo Auto.\n6. Lee los chips de PII y de tarjeta; compara satisfacción vs thumbs."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: cuántas trazas y threads",
+   "contenido": "En el capstone, Ace tiene una conversación de **6 turnos** con un cliente (6 llamadas a `csa.chat()`, todas con la misma `session_id` en la metadata), y en cada turno consulta la base una vez y llama al LLM dos veces. ¿Qué ves en LangSmith?\n\n- **A)** 1 traza con 6 hijos, en 1 thread.\n- **B)** 6 trazas, cada una con 3 child runs, unidas en 1 thread.\n- **C)** 6 threads de una traza cada uno, porque cada turno es independiente.\n- **D)** 18 trazas (6 tools + 12 LLM) en 1 thread.",
+   "respuesta": "**B.** Cada `csa.chat()` es una raíz → una traza por turno (6), con su tool y sus 2 llamadas LLM como **hijos**. La `session_id` compartida las une en **un** thread.\n- A: confunde traza con conversación; cada turno abre su propia raíz.\n- C: la metadata compartida es justo lo que las junta en un thread.\n- D: los tools y las llamadas LLM son child runs, no trazas."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin `ls_model_name`",
+   "contenido": "En el `_call_llm` del paso 4, alguien borra el bloque que pone la metadata:\n\n```python\n@traceable(run_type=\"llm\", name=\"chat_completion\")\ndef _call_llm(messages: list) -> str:\n    return \"El yunque de 100 lb cuesta $847.50\"     # en el capstone: client.chat.completions.create(...)\n```\n\nEl código real llama a OpenAI **directo** (sin LangChain y sin `wrap_openai`). ¿Qué pasa con el costo de esas llamadas en el dashboard? ¿Y con el costo de `query_database`?",
+   "respuesta": "Las llamadas LLM se quedan **sin costo**: sin `ls_provider` y `ls_model_name` LangSmith no puede buscar el precio en la model pricing table (lo viste en 1.A). Como no hay LangChain ni `wrap_openai` que los ponga solos, nadie más los agrega.\n`query_database` **sí** sigue con costo: su `total_cost` es un valor literal y no depende de la tabla de precios. El costo total por cliente saldría subestimado y dominado por los tools.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Tag o metadata?",
+   "contenido": "Quieres dos cosas en el capstone:\n\n1. Un chart del dashboard con el costo **partido por cliente**.\n2. Contar en la vista de threads cuántas conversaciones son del escenario 10.\n\nCon lo que pone `test_conversation.py` (paso 4: `base_tags = [customer_name, f\"scenario:{n}\"]` y `base_meta = {..., \"scenario\": n, \"customer_name\": ...}`), ¿qué usas para cada una?",
+   "respuesta": "1. **Metadata** `customer_name` con **Group by** en el Monitor: Group by trabaja sobre llaves de metadata.\n2. El **filtro por tag** `scenario:10` en la vista de threads (también podrías filtrar por la metadata `scenario = 10`; el código pone ambos).\nPor eso el código duplica información en tags y metadata: los tags son cómodos para filtrar a mano; la metadata clave/valor sirve para agrupar.",
+   "ref": 4
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Run** (una función trazada) ⊂ **traza** (árbol desde una raíz; `trace_id` = id de la raíz) ⊂ **thread** (trazas de una conversación, por un id en metadata).\n- **Tags** filtran; **metadata** filtra y agrupa (Group by); **feedback** es un objeto aparte ligado por `run_id`.\n- `langsmith_extra` pone tags/metadata al llamar; los hijos los heredan.\n- `get_current_run_tree()`: `run.id` para feedback, `ls_provider`/`ls_model_name` para costo LLM, `total_cost` para tools. Siempre con `if run:`.\n- Evaluadores **antes** de subir; el upload es `upload_csa_traces.py --input capstone_traces.jsonl --project ACME-capstone`.\n\n**Dónde buscarlo en docs:** LangSmith > Observability > Tracing (`traceable`, metadata y tags, threads); Cost tracking; Feedback."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/capstone/pm_capstone.html",
+  "lca-production-monitoring/python/capstone/upload_csa_traces.py",
+  "lca-production-monitoring/python/capstone/conversation_agents/agent.py",
+  "lca-production-monitoring/python/capstone/conversation_agents/database_tool.py",
+  "lca-production-monitoring/python/capstone/conversation_agents/test_conversation.py",
+  "lca-production-monitoring/python/capstone/conversation_agents/scenarios.tsv"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Una conversación de 4 turnos con el agente, ¿cuántas trazas y cuántos threads son?",
+   "reverso": "4 trazas (una por llamada raíz) unidas en 1 thread por el id de conversación en la metadata (`session_id`, `thread_id` o `conversation_id`)."
+  },
+  {
+   "frente": "¿Cuándo usas tags y cuándo metadata?",
+   "reverso": "Tags: etiquetas sueltas para filtrar. Metadata: clave/valor para filtrar y para Group by en dashboards."
+  },
+  {
+   "frente": "¿Por qué `chat()` devuelve su `run_id`?",
+   "reverso": "Para crear el feedback después con `create_feedback(run_id=...)`: el feedback es un objeto aparte ligado al run por su id."
+  },
+  {
+   "frente": "El agente llama a OpenAI sin LangChain ni `wrap_openai`. ¿Qué hace falta para ver su costo?",
+   "reverso": "Poner `ls_provider` y `ls_model_name` en la metadata del run LLM (y que la respuesta traiga tokens)."
+  },
+  {
+   "frente": "¿Por qué el evaluador de satisfacción y el thumbs up/down del capstone pueden no coincidir?",
+   "reverso": "El thumbs sale del guion del escenario (satisfied sí/no); el evaluador lee la conversación real."
+  },
+  {
+   "frente": "¿Por qué crear los evaluadores antes de subir las trazas del capstone?",
+   "reverso": "Los online evals califican trazas al llegar; si los creas después, las trazas ya subidas quedan sin calificar."
+  }
+ ]
+}

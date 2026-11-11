@@ -1,0 +1,423 @@
+{
+ "nombre": "03 Introduction to Deep Agents",
+ "siguiente": "0.A",
+ "modulos": [
+  {
+   "n": 0,
+   "nombre": "Bienvenida"
+  },
+  {
+   "n": 1,
+   "nombre": "Construir un Deep Agent"
+  },
+  {
+   "n": 2,
+   "nombre": "Entorno de ejecución"
+  },
+  {
+   "n": 3,
+   "nombre": "Manejo de contexto"
+  },
+  {
+   "n": 4,
+   "nombre": "Delegación"
+  },
+  {
+   "n": 5,
+   "nombre": "Todo junto"
+  },
+  {
+   "n": 6,
+   "nombre": "Managed Deep Agents"
+  }
+ ],
+ "misiones": [
+  {
+   "id": "0.A",
+   "modulo": 0,
+   "titulo": "Bienvenida y setup",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Welcome",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/75788587-welcome",
+     "min": 2
+    },
+    {
+     "tipo": "video",
+     "titulo": "Getting set up python",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/76263273-getting-set-up-python",
+     "min": 2
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Getting set up text python",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788588-getting-set-up-text-python"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.A",
+   "modulo": 1,
+   "titulo": "Qué es un Deep Agent y cómo se corre",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 1 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/76120137-module-1-introduction"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Lesson 1 deep agents overview",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/76331087-lesson-1-deep-agents-overview",
+     "min": 4
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 running a deep agent",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788593-lesson-2-running-a-deep-agent"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.B",
+   "modulo": 1,
+   "titulo": "Modelos y system prompt",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 models",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788594-lesson-3-models"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 4 the system prompt",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788595-lesson-4-the-system-prompt"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.C",
+   "modulo": 1,
+   "titulo": "Tools y MCP",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 5 tools",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76004493-lesson-5-tools"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 6 mcp",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76004568-lesson-6-mcp"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.D",
+   "modulo": 1,
+   "titulo": "Mensajes, threads, checkpointers y HITL",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 7 messages threads and checkpointers",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76301166-lesson-7-messages-threads-and-checkpointers"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 8 hitl",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76263203-lesson-8-hitl"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.E",
+   "modulo": 1,
+   "titulo": "Pon a prueba el Módulo 1",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Test your skills",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76754512-test-your-skills"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.A",
+   "modulo": 2,
+   "titulo": "El entorno y los filesystem backends",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 2 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/75788597-module-2-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 the deep agent environment",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788598-lesson-1-the-deep-agent-environment"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 the filesystem backends",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788599-lesson-2-the-filesystem-backends"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.B",
+   "modulo": 2,
+   "titulo": "Sandboxes, LocalShell e intérprete",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 sandboxes and localshell",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788600-lesson-3-sandboxes-and-localshell"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 4 interpreter",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788601-lesson-4-interpreter"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.A",
+   "modulo": 3,
+   "titulo": "Resumir y descargar contexto",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 3 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/75788603-module-3-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "video",
+     "titulo": "Module 3 overview",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/76251191-module-3-overview",
+     "min": 2
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 summarization and offload",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76005354-lesson-1-summarization-and-offload"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.B",
+   "modulo": 3,
+   "titulo": "Skills",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 skills",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76005370-lesson-2-skills"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.C",
+   "modulo": 3,
+   "titulo": "Memoria",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 memory",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/76005426-lesson-3-memory"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.A",
+   "modulo": 4,
+   "titulo": "Delegar en un equipo de subagents",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 4 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/75788606-module-4-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 delegation",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788607-lesson-1-delegation"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 building a subagent team",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788608-lesson-2-building-a-subagent-team"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.B",
+   "modulo": 4,
+   "titulo": "Subagents dinámicos",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 dynamic subagents",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/77241080-lesson-3-dynamic-subagents"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.A",
+   "modulo": 5,
+   "titulo": "El proyecto y su deploy local",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 5 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/75788611-module-5-introduction"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 project overview",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788612-lesson-1-project-overview"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 local deployment",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788613-lesson-2-local-deployment"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.B",
+   "modulo": 5,
+   "titulo": "El Sales Assistant",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 the sales assistant",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/75788614-lesson-3-the-sales-assistant"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.C",
+   "modulo": 5,
+   "titulo": "Subagents asíncronos y el Sales Assistant avanzado",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 4 asynchronous subagents",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/77241082-lesson-4-asynchronous-subagents"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 5 the advanced sales assistant",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/77241085-lesson-5-the-advanced-sales-assistant"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "6.A",
+   "modulo": 6,
+   "titulo": "Managed Deep Agents",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 6 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/78585595-module-6-introduction",
+     "min": 2
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 what is mda",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/78585667-lesson-1-what-is-mda"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 mda project structure",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/multimedia/78585672-lesson-2-mda-project-structure"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Conclusion",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-deepagents/lessons/75788623-conclusion",
+     "min": 1
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  }
+ ],
+ "proyecto": null,
+ "hilos": [],
+ "sesiones": [],
+ "hojas": {},
+ "banco": [],
+ "examenes": []
+}

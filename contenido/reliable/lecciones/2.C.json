@@ -1,0 +1,119 @@
+{
+ "mision_id": "2.C",
+ "titulo": "LLM-as-judge y evals pairwise",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hay criterios que una función no decide bien. ¿Emma reveló cuánto stock hay? Un regex atrapa \"31 units\", pero no \"quedan como una docena\" ni \"casi se acaban\". ¿Respondió la pregunta original? ¿Derivó a un humano cuando debía?\n\nUna persona lo decide fácil, pero revisar a mano ocupa al equipo en tareas repetitivas o cuesta contratar etiquetadores. La salida: que un **LLM juzgue**. Y para criterios que ni así se califican bien de uno en uno (¿es concisa?), **comparar dos respuestas**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres reglas para un juez confiable",
+   "contenido": "1. **Alcance estrecho.** Un criterio por juez. No \"¿es una buena respuesta?\" (mezcla utilidad, exactitud, tono, seguridad), sino \"¿reveló cantidades de stock?\".\n2. **Salida binaria o categórica.** Sí/no o categorías. Una escala 1–5 da gráficas bonitas, pero ¿qué diferencia hay entre 3.2 y 3.7? No sabes qué arreglar.\n3. **Alineado con humanos.** Personas etiquetan una muestra de los mismos outputs, comparas con el juez y, donde no coinciden, ajustas el prompt del juez. Sin alinear, el juez hereda los sesgos del LLM que evalúa y el equipo deja de creer en sus scores."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El juez de stock leakage del curso",
+   "contenido": "Es un caso ideal para LLM-as-judge: alcance estrecho (¿reveló stock?) y respuesta sí/no.\n\nEl curso lo crea en la **UI** de LangSmith (lo recomienda): prompt del juez, modelo y salida, sobre el dataset. Creado así queda **ligado al dataset**: cada experiment sobre `officeflow-dataset` lo corre solo. Por eso `module-2/lesson-5/run_experiment.py` no pasa `evaluators`:\n\n```python\nresults = await aevaluate(\n    chat_wrapper,\n    data=dataset_name\n)\n```\n\n`chat_wrapper` devuelve `{\"answer\": ..., \"messages\": ...}` para que el juez lea la respuesta. El juez no tiene código en el repo: vive en LangSmith. También se puede crear con el SDK."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Alinear un juez con humanos",
+   "contenido": "graph LR\n  J[Juez LLM califica outputs] --> C{¿Coincide con las personas?}\n  H[Personas etiquetan una muestra en una annotation queue] --> C\n  C -->|no| P[Ajustar el prompt del juez]\n  P --> J\n  C -->|sí| U[Confiar en el juez sin supervisión]\n  class C clave",
+   "notas": "*Evaluator alignment*: aquí se juntan LLM-as-judge y revisión humana. Las personas etiquetan en una **annotation queue** los mismos outputs que califica el juez; donde no coinciden, el prompt del juez necesita ajuste. Se repite hasta que coinciden lo suficiente. Ese loop es lo que convierte al juez de una heurística en un evaluator que puede correr solo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Pairwise: comparar es más fácil que calificar",
+   "contenido": "Quieres seguir la **concisión** de Emma.\n- Con código (\"más de 100 palabras falla\") sería inútil: a veces hacen falta más palabras, y 90 palabras para saludar ya es mucho.\n- Con un juez pass/fail, ¿dónde pones la raya? A ti también te costaría.\n- Pero entre dos respuestas, ¿cuál es más concisa? Fácil.\n\nEso es **pairwise**: código y LLM-as-judge son *pointwise* (califican una respuesta); pairwise compara dos **experiments ya corridos**, example por example.\n\nPasos del curso: (1) `run_agents.py` corre `agent_v4` y `agent_v5` (v5 agrega *CONCISENESS PRIORITY* al prompt) con `aevaluate`, sin evaluators. (2) El evaluator pairwise. (3) `evaluate((exp_v4, exp_v5), evaluators=[conciseness_evaluator], randomize_order=True)`. Resultados en la pestaña *Pairwise Experiments*."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El evaluator pairwise de concisión",
+   "contenido": "from types import SimpleNamespace\n\nclass FakeOpenAI:\n    \"\"\"Hace de OpenAI: el 'juez' siempre contesta el texto que le pongas.\"\"\"\n    def __init__(self, veredicto: str):\n        self.veredicto = veredicto\n        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))\n    def create(self, model, messages):\n        msg = SimpleNamespace(content=self.veredicto)\n        return SimpleNamespace(choices=[SimpleNamespace(message=msg)])\n\nCONCISENESS_PROMPT = \"\"\"You are evaluating two responses to the same customer question.\nDetermine which response is MORE CONCISE while still providing all crucial information.\n\n**Conciseness** means getting straight to the point, avoiding filler, and not repeating information.\n**Crucial information** includes direct answers, necessary context, and required next steps.\n\nA shorter response is NOT automatically better if it omits crucial information.\n\n**Question:** {question}\n\n**Response A:**\n{response_a}\n\n**Response B:**\n{response_b}\n\nOutput your verdict as a single number:\n1 if Response A is more concise while preserving crucial information\n2 if Response B is more concise while preserving crucial information\n0 if they are roughly equal\"\"\"\n\ndef conciseness_evaluator(inputs: dict, outputs: list[dict]) -> list[int]:\n    response = client.chat.completions.create(\n        model=\"gpt-5-nano\",\n        messages=[\n            {\"role\": \"system\", \"content\": \"You are a conciseness evaluator. Respond with only a single number: 0, 1, or 2.\"},\n            {\"role\": \"user\", \"content\": CONCISENESS_PROMPT.format(\n                question=inputs[\"question\"],\n                response_a=outputs[0].get(\"answer\", \"N/A\"),\n                response_b=outputs[1].get(\"answer\", \"N/A\"),\n            )}\n        ],\n    )\n\n    preference = int(response.choices[0].message.content.strip())\n\n    if preference == 1:\n        return [1, 0]  # A wins\n    elif preference == 2:\n        return [0, 1]  # B wins\n    else:\n        return [0, 0]  # Tie\n\ninputs = {\"question\": \"What is your return policy?\"}\noutputs = [\n    {\"answer\": \"I understand you need to process a return. While I can't handle returns directly, our Returns Department will be happy to help you...\"},  # v4\n    {\"answer\": \"Our Returns Department handles that - reach them at returns@officeflow.com.\"},  # v5\n]\n\nfor veredicto in [\"1\", \"2\", \"0\", \" 2\\n\"]:\n    client = FakeOpenAI(veredicto)\n    print(repr(veredicto), \"->\", conciseness_evaluator(inputs, outputs))\n\nclient = FakeOpenAI(\"Response 2\")\ntry:\n    conciseness_evaluator(inputs, outputs)\nexcept ValueError as e:\n    print(\"'Response 2' ->\", type(e).__name__, e)",
+   "notas": "Es `conciseness_evaluator` del curso, igual, con un `FakeOpenAI` que siempre da el veredicto que le pongas (sin red). `SimpleNamespace` crea objetos con atributos para imitar `response.choices[0].message.content`.\nRecibe `outputs` como **lista** (uno por experiment) y devuelve una lista de scores en el mismo orden. Salida real:\n`'1' -> [1, 0]` · `'2' -> [0, 1]` · `'0' -> [0, 0]` · `' 2\\n' -> [0, 1]`\n`'Response 2' -> ValueError invalid literal for int() with base 10: 'Response 2'`\nMira la regla del prompt: *A shorter response is NOT automatically better*.",
+   "resaltar": [
+    18,
+    33,
+    46
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "randomize_order y el sesgo de posición",
+   "contenido": "Los LLM tienen **sesgo de posición**: tienden a preferir la primera (o la segunda) opción sin importar el contenido. Si v4 siempre fuera \"Response A\", no sabrías si v4 gana por ser mejor o por ir primero.\n\nCon `randomize_order=True`, LangSmith baraja el orden de los dos runs en cada example antes de llamar al evaluator, y después asigna cada score al run que estaba en esa posición. Lo revisé en el código de langsmith 0.14: hace `random.shuffle(runs_list)` y luego `zip(runs, result)`. Así el score siempre cae en el experiment correcto, aunque a veces v5 sea la \"Response A\"."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "El juez no obedece el formato",
+   "contenido": "El juez real a veces contesta `Response B` en vez de `2`. Con el evaluator del paso 6, ¿qué pasa con ese example? ¿Cómo lo harías más robusto?",
+   "respuesta": "`int(\"Response B\")` lanza `ValueError` (igual que `'Response 2'` en la salida real), así que el evaluator truena en ese example y no hay score de concisión. El system prompt pide *only a single number*, pero un LLM no lo garantiza. Para blindarlo: pedir salida estructurada, o buscar el primer dígito válido con un regex y tratar cualquier otra cosa como empate o como error con comment.",
+   "ref": 6
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Orden barajado",
+   "contenido": "Con `randomize_order=True`, en la pregunta 7 LangSmith le pasó al evaluator el run de **v5** como `outputs[0]` y el de **v4** como `outputs[1]`. El juez contesta `1`. ¿Qué experiment gana ese example?",
+   "respuesta": "**v5.** El evaluator devuelve `[1, 0]`: \"ganó el primero que me pasaste\". LangSmith empareja los scores con los runs en el orden en que se los pasó (`zip(runs, result)`), y el primero era v5. El evaluator no sabe cuál es cuál; LangSmith sí.",
+   "ref": 6
+  },
+  {
+   "tipo": "predice",
+   "titulo": "El juez aprueba de más",
+   "contenido": "Tu juez de \"¿Emma derivó a un humano cuando debía?\" aprueba el 95 % de las conversaciones. Tres personas etiquetan 50 de esas mismas conversaciones y aprueban solo el 70 %. ¿Qué haces primero?\n\nA) Cambiar el juez a una escala 1–5 para que tenga más matiz.\nB) Revisar los casos donde el juez y las personas no coinciden, ajustar el prompt del juez y volver a comparar.\nC) Quitar a las personas del proceso: el juez es más consistente.\nD) Agregar a ese mismo juez la tarea de calificar también la amabilidad.",
+   "respuesta": "**B.** Es alinear: los desacuerdos te dicen qué malentiende el juez, y el prompt se ajusta hasta que coincida con las personas. A rompe la regla de salida binaria. C confunde consistente con correcto: el juez puede equivocarse siempre igual. D rompe el alcance estrecho: un score bajo ya no diría qué falló."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Por qué no pasa evaluators?",
+   "contenido": "`module-2/lesson-5/run_experiment.py` llama `aevaluate(chat_wrapper, data=\"officeflow-dataset\")` **sin** `evaluators`, y aun así el experiment sale con scores de stock leakage. ¿Por qué? ¿Y si corres el mismo script sobre otro dataset?",
+   "respuesta": "Porque el juez se creó en la UI **sobre ese dataset**: queda ligado a él y corre solo en cada experiment de `officeflow-dataset`. Sobre otro dataset no aparece ese score, porque el juez no está ligado a él. Si lo quieres en código, lo pasas en `evaluators=[...]` como cualquier evaluator."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "| Tipo | Úsalo cuando | Salida |\n|---|---|---|\n| Código | una función decide de forma confiable | bool / número |\n| LLM-as-judge | el criterio es subjetivo pero se puede juzgar una respuesta sola | sí/no o categoría |\n| Pairwise | juzgar una sola es difícil, pero comparar dos es fácil | `[1,0]`, `[0,1]`, `[0,0]` |\n\n- Juez confiable: alcance estrecho, salida binaria o categórica, alineado con humanos (annotation queue).\n- Un juez creado en la UI queda ligado al dataset y corre en cada experiment.\n- Pairwise compara dos experiments ya corridos; `randomize_order=True` contra el sesgo de posición.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *LLM-as-a-judge evaluator*, *Run a pairwise evaluation* e *Improve LLM-as-judge evaluators using human feedback*; *Annotation queues*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-2/llm-as-judge",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-2/pairwise-evaluation",
+  "module-2/lesson-5/run_experiment.py",
+  "module-2/lesson-6/run_agents.py",
+  "module-2/lesson-6/eval_conciseness_pairwise.py",
+  "module-2/lesson-6/run_pairwise_experiment.py",
+  "officeflow-agent/agent_v5.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué un juez LLM debe dar sí/no o categorías y no una escala 1–5?",
+   "reverso": "Para que el resultado sea accionable: entre 3.2 y 3.7 no sabes qué arreglar; un \"sí reveló stock\" sí."
+  },
+  {
+   "frente": "Un juez califica \"derivó bien a humano y fue útil\" en un solo score 1–5. ¿Qué reglas rompe y qué problema causa?",
+   "reverso": "Alcance estrecho y salida binaria. Un score bajo ya no dice si falló el handoff o la utilidad: van en dos jueces sí/no."
+  },
+  {
+   "frente": "¿Qué es alinear un LLM-as-judge y qué pasa si no lo haces?",
+   "reverso": "Comparar sus veredictos con etiquetas humanas y ajustar su prompt donde no coinciden. Sin alinear hereda los sesgos del LLM y el equipo deja de creerle."
+  },
+  {
+   "frente": "¿Cuándo usarías pairwise en vez de un juez que califica una respuesta sola?",
+   "reverso": "Cuando calificar una respuesta aislada es difícil pero comparar dos es fácil: concisión, claridad, qué versión ayuda más."
+  },
+  {
+   "frente": "¿Para qué sirve randomize_order=True en una evaluación pairwise?",
+   "reverso": "Contra el sesgo de posición del juez: baraja qué respuesta va primero. LangSmith reasigna cada score al run correcto."
+  },
+  {
+   "frente": "¿Por qué un experiment puede salir con scores de un juez aunque no pasaste evaluators?",
+   "reverso": "Porque el juez se creó en la UI sobre ese dataset: queda ligado y corre en cada experiment del dataset."
+  },
+  {
+   "frente": "¿Qué recibe y qué devuelve un evaluator pairwise?",
+   "reverso": "Recibe inputs y outputs como lista de 2 (uno por experiment) y devuelve una lista de scores en ese orden: [1,0], [0,1] o [0,0]."
+  }
+ ]
+}

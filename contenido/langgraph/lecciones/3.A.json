@@ -1,0 +1,124 @@
+{
+ "mision_id": "3.A",
+ "titulo": "Ver mientras corre",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora corrías el grafo con `invoke` y solo veías el resultado final. En un agente que tarda,\neso es una pantalla en blanco: no sabes qué node está corriendo ni qué decidió.\n\nPara meter a un humano en el loop (el tema de este módulo) primero necesitas **ver** el grafo\nmientras corre. Para eso está `graph.stream(...)`: en vez de un resultado, te va entregando\n*chunks* conforme avanza.\n\nLa pregunta de esta lección: ¿qué trae cada chunk? Depende del `stream_mode`, y los dos modos\nbásicos **no** dan lo mismo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un grafo de dos nodes y los dos modos",
+   "contenido": "from typing import Annotated\nimport operator\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    pasos: Annotated[list[str], operator.add]\n    total: int\n\ndef sumar(state: State):\n    return {\"pasos\": [\"sumar\"], \"total\": state[\"total\"] + 10}\n\ndef duplicar(state: State):\n    return {\"pasos\": [\"duplicar\"], \"total\": state[\"total\"] * 2}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"sumar\", sumar)\nbuilder.add_node(\"duplicar\", duplicar)\nbuilder.add_edge(START, \"sumar\")\nbuilder.add_edge(\"sumar\", \"duplicar\")\nbuilder.add_edge(\"duplicar\", END)\ngraph = builder.compile()\n\nentrada = {\"pasos\": [], \"total\": 1}\n\nprint(\"== updates ==\")\nfor chunk in graph.stream(entrada, stream_mode=\"updates\"):\n    print(chunk)\n\nprint(\"== values ==\")\nfor chunk in graph.stream(entrada, stream_mode=\"values\"):\n    print(chunk)",
+   "notas": "Sin LLM: `sumar` le suma 10 a `total` y `duplicar` lo multiplica por 2.\n`pasos` tiene reducer `operator.add`, así que se va acumulando; `total` no tiene reducer y se sobrescribe.\nCorres el mismo grafo dos veces, una con cada modo, y comparas.",
+   "resaltar": [
+    27,
+    31,
+    7
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real",
+   "contenido": "```\n== updates ==\n{'sumar': {'pasos': ['sumar'], 'total': 11}}\n{'duplicar': {'pasos': ['duplicar'], 'total': 22}}\n== values ==\n{'pasos': [], 'total': 1}\n{'pasos': ['sumar'], 'total': 11}\n{'pasos': ['sumar', 'duplicar'], 'total': 22}\n```\n\n- **`updates`**: un chunk por node, con el **nombre del node** como key y adentro **solo lo que ese node devolvió**. Mira `pasos`: dice `['duplicar']`, no la lista acumulada. Es el update *antes* de pasar por el reducer.\n- **`values`**: el **state completo** después de cada paso, ya con el reducer aplicado. Por eso también sale el input al principio: 3 chunks para 2 nodes."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Qué emite cada modo",
+   "contenido": "flowchart LR\n  S((START)) --> sumar --> duplicar --> E((END))\n  S -.-> V0[\"values: el input\"]\n  sumar -.-> U1[\"updates: lo que devolvió sumar<br/>values: state completo\"]\n  duplicar -.-> U2[\"updates: lo que devolvió duplicar<br/>values: state completo\"]\n  class duplicar clave",
+   "notas": "Ambos modos emiten cuando **termina** un node.\n`updates` te dice *quién* cambió *qué*; `values` te dice *cómo quedó todo*.\n`values` además emite el input antes del primer node."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cuándo usar cada uno",
+   "contenido": "En el notebook, el chatbot del módulo 2 se corre con los dos modos:\n\n- Con `updates`, `chunk['conversation']['messages']` es **un solo** `AIMessage`: lo nuevo.\n- Con `values`, `event['messages']` es **la lista completa** (el `HumanMessage` y el `AIMessage`), y se vuelve a imprimir todo en cada chunk.\n\nRegla práctica: `updates` para logs o una UI que muestre \"qué hizo cada node\". `values` cuando quieres\nel state entero en cada momento, por ejemplo para dibujar la conversación completa o inspeccionar\nel state en una pausa (lo vas a usar mucho en las siguientes lecciones)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Falta algo: los tokens",
+   "contenido": "`updates` y `values` emiten **al terminar** cada node. Si tu node llama a un LLM que tarda 8\nsegundos en escribir la respuesta, no ves nada durante esos 8 segundos y luego llega todo junto.\n\nPara ver el texto mientras el LLM lo genera (como en ChatGPT) necesitas streaming de **tokens**.\nHay dos formas: `stream_mode=\"messages\"` y `astream_events`. Las dos leen lo que el chat model\nva emitiendo *dentro* del node."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Tokens con stream_mode=\"messages\"",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain_core.messages import AIMessage\nfrom langgraph.graph import StateGraph, MessagesState, START, END\n\n# Modelo falso: responde siempre lo mismo, pero lo emite token por token como un LLM real\nmodel = GenericFakeChatModel(messages=iter([AIMessage(content=\"Hola Leo, los 49ers son de San Francisco.\")]))\n\ndef conversation(state: MessagesState):\n    return {\"messages\": [model.invoke(state[\"messages\"])]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"conversation\", conversation)\nbuilder.add_edge(START, \"conversation\")\nbuilder.add_edge(\"conversation\", END)\ngraph = builder.compile()\n\nfor chunk, metadata in graph.stream({\"messages\": [(\"user\", \"hola\")]}, stream_mode=\"messages\"):\n    if metadata[\"langgraph_node\"] == \"conversation\":\n        print(chunk.content, end=\"|\")\nprint()",
+   "notas": "`GenericFakeChatModel` es un modelo falso de `langchain_core`: responde un texto fijo pero lo emite\n**token por token**, igual que `ChatOpenAI`. Así el ejemplo es gratis y siempre da lo mismo.\nCada chunk es una tupla `(token, metadata)`; `metadata[\"langgraph_node\"]` dice de qué node viene.\nSalida real: `Hola| |Leo,| |los| |49ers| |son| |de| |San| |Francisco.|`",
+   "resaltar": [
+    17,
+    18
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Tokens con astream_events (como el notebook)",
+   "contenido": "import asyncio\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain_core.messages import AIMessage\nfrom langgraph.graph import StateGraph, MessagesState, START, END\n\nmodel = GenericFakeChatModel(messages=iter([AIMessage(content=\"Hola Leo.\")]))\n\ndef conversation(state: MessagesState):\n    return {\"messages\": [model.invoke(state[\"messages\"])]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"conversation\", conversation)\nbuilder.add_edge(START, \"conversation\")\nbuilder.add_edge(\"conversation\", END)\ngraph = builder.compile()\n\nasync def main():\n    async for event in graph.astream_events({\"messages\": [(\"user\", \"hola\")]}, version=\"v2\"):\n        print(f\"Node: {event['metadata'].get('langgraph_node', '')}. Type: {event['event']}. Name: {event['name']}\")\n\nasyncio.run(main())",
+   "notas": "`astream_events` emite **todo** lo que pasa: inicio y fin del grafo, de cada node y del modelo.\nLos tokens son los eventos `on_chat_model_stream`; su `event[\"data\"][\"chunk\"]` es un `AIMessageChunk`.\nSalida real abajo. Con `ChatOpenAI` el notebook ve la misma secuencia, con muchos más `on_chat_model_stream`.",
+   "resaltar": [
+    18,
+    19
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real de astream_events",
+   "contenido": "```\nNode: . Type: on_chain_start. Name: LangGraph\nNode: conversation. Type: on_chain_start. Name: conversation\nNode: conversation. Type: on_chat_model_start. Name: GenericFakeChatModel\nNode: conversation. Type: on_chat_model_stream. Name: GenericFakeChatModel\nNode: conversation. Type: on_chat_model_stream. Name: GenericFakeChatModel\nNode: conversation. Type: on_chat_model_stream. Name: GenericFakeChatModel\nNode: conversation. Type: on_chat_model_end. Name: GenericFakeChatModel\nNode: conversation. Type: on_chain_stream. Name: conversation\nNode: conversation. Type: on_chain_end. Name: conversation\nNode: . Type: on_chain_stream. Name: LangGraph\nNode: . Type: on_chain_end. Name: LangGraph\n```\n\nPara quedarte solo con el texto filtras: `event[\"event\"] == \"on_chat_model_stream\"` y\n`event[\"metadata\"][\"langgraph_node\"] == \"conversation\"`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo mismo contra un servidor",
+   "contenido": "El final del notebook usa el SDK (`client.runs.stream(...)`) contra `langgraph dev`, el mismo tipo de\nAgent Server que se despliega en producción. Los modos son los mismos. Salida del notebook original:\n\n- `stream_mode=\"values\"` entrega `StreamPart(event='values', data={...state...})`, más un primer evento `metadata` con el `run_id`.\n- `stream_mode=\"messages\"` entrega eventos `messages/partial` (tokens que van llegando), `messages/complete` (el mensaje ya armado) y `messages/metadata`.\n\nO sea: lo que aprendes con `graph.stream` local es lo que una app real consume del servidor."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué trae el segundo chunk?",
+   "contenido": "Con el grafo `sumar → duplicar` del paso 2 y el input `{\"pasos\": [], \"total\": 1}`, corres\n`graph.stream(entrada, stream_mode=\"updates\")`.\n\n¿Qué valor tiene `pasos` en el **segundo** chunk?",
+   "respuesta": "`{'duplicar': {'pasos': ['duplicar'], 'total': 22}}`: solo `['duplicar']`.\n`updates` te da lo que **devolvió** el node, antes de pasar por el reducer `operator.add`.\nLa lista acumulada `['sumar', 'duplicar']` solo la ves en `values`, que es el state ya combinado.",
+   "ref": 2
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cuántos chunks?",
+   "contenido": "El mismo grafo `sumar → duplicar` del paso 2, ahora con `stream_mode=\"values\"`. ¿Cuántos chunks recibes y qué es el primero?",
+   "respuesta": "**3**. El primero es el input tal cual (`{'pasos': [], 'total': 1}`), antes de que corra ningún node;\nluego uno después de `sumar` y otro después de `duplicar`. `updates` da solo 2, porque el input no lo\ndevolvió ningún node.",
+   "ref": 2
+  },
+  {
+   "tipo": "predice",
+   "titulo": "El LLM lento",
+   "contenido": "Tu chatbot tiene un node `conversation` cuyo LLM tarda 8 segundos en escribir. Lo corres con\n`stream_mode=\"updates\"`. ¿Cuándo ve el usuario la primera palabra?",
+   "respuesta": "A los 8 segundos, todo junto. `updates` (y `values`) emiten cuando el node **termina**.\nPara ver palabra por palabra necesitas tokens: `stream_mode=\"messages\"` (filtrando por\n`metadata[\"langgraph_node\"]`) o `astream_events` con los eventos `on_chat_model_stream`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `stream_mode=\"updates\"`: un chunk por node, `{nombre_del_node: lo que devolvió}`. Es el update **sin** aplicar el reducer.\n- `stream_mode=\"values\"`: el **state completo** después de cada paso (y el input al inicio). Ya pasó por los reducers.\n- Los dos emiten al terminar cada node. Para tokens del LLM: `stream_mode=\"messages\"` o `astream_events` (`on_chat_model_stream`), filtrando por `langgraph_node`.\n- Es la misma idea que el update de un node en el M1: el node devuelve un update, LangGraph lo combina. `updates` te muestra lo primero; `values`, lo segundo.\n- El Agent Server (desplegado o con `langgraph dev`) expone los mismos modos por el SDK."
+  }
+ ],
+ "fuentes": [
+  "module-3/streaming-interruption.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué diferencia hay entre lo que trae un chunk de `stream_mode=\"updates\"` y uno de `\"values\"`?",
+   "reverso": "`updates`: `{node: lo que devolvió ese node}`, sin aplicar el reducer. `values`: el **state completo** después del paso, ya combinado."
+  },
+  {
+   "frente": "Una key tiene reducer `operator.add`. ¿Por qué en `updates` ves `['duplicar']` y en `values` `['sumar', 'duplicar']`?",
+   "reverso": "Porque `updates` muestra lo que devolvió el node (antes del reducer) y `values` muestra el state después de que el reducer lo sumó a lo anterior."
+  },
+  {
+   "frente": "¿Por qué `stream_mode=\"values\"` en un grafo de 2 nodes da 3 chunks y `updates` da 2?",
+   "reverso": "`values` emite también el input inicial como primer state. `updates` solo emite lo que devuelve cada node, y el input no lo devolvió nadie."
+  },
+  {
+   "frente": "Tu node con LLM tarda 8 s. ¿Por qué `stream_mode=\"updates\"` no muestra el texto mientras se escribe, y qué usarías?",
+   "reverso": "`updates`/`values` emiten al **terminar** el node. Para tokens: `stream_mode=\"messages\"` o `astream_events` con `on_chat_model_stream`."
+  },
+  {
+   "frente": "En streaming de tokens, ¿cómo te quedas solo con los tokens de un node concreto?",
+   "reverso": "Filtrando por `metadata[\"langgraph_node\"]` (el nombre del node que emitió el token). Si hay varios nodes con LLM, sin filtro se mezclan."
+  }
+ ]
+}

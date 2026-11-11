@@ -1,0 +1,118 @@
+{
+ "mision_id": "0.A",
+ "titulo": "El ciclo de vida de un agente y setup",
+ "modulo": "0",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hacer un prototipo de agente toma una tarde. Que funcione **bien y siempre** con usuarios reales es donde los equipos se atoran. Dos hechos rompen la forma clásica de probar software:\n\n1. Los **inputs son infinitos**: no puedes listar todo lo que un usuario va a preguntar.\n2. El agente **no es determinista**: el mismo input puede dar otra tool call u otra respuesta en la siguiente corrida.\n\nSin una lista finita de inputs y sin una salida fija por input, no puedes \"probar que el agente es correcto\". Este curso te da otra estrategia. Y para practicarla, primero el repo tiene que correr."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El ciclo de vida de un agente (ADLC)",
+   "contenido": "graph LR\n  B[Build] --> T[Test]\n  T --> D[Deploy]\n  D --> M[Monitor]\n  M --> B\n  T -.->|cada arreglo| B\n  G[Govern: costo, acceso, auditoría] -.- T\n  class T clave",
+   "notas": "Agent Development Lifecycle: cuatro fases que se repiten sin parar, con **Govern** (costo, acceso, auditoría) alrededor de todas. La flecha punteada Test → Build es el loop interno del Módulo 1: cada arreglo te regresa a Build. Monitor → Build es el loop externo: lo que pasa en producción alimenta la siguiente vuelta. Este curso se centra en **Test** (el dominio Test del examen) y cierra con lo básico de Monitor."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La estrategia: iterar rápido, no probar perfecto",
+   "contenido": "Como no puedes probar hasta tener certeza, deja de intentarlo. En su lugar:\n\n- **Prueba** los errores obvios y protégete de **regresiones** (algo que antes pasaba y, tras un cambio, falla).\n- **Compara versiones** (A/B) cuando el cambio es subjetivo, como \"¿responde más claro?\".\n- **Despliega y mira el comportamiento real** cuanto antes: el tráfico de producción es la única verdad sobre cómo usan tu agente.\n\nLa meta de la fase Test es **confianza** para desplegar, no certeza. Lo que se escape lo atrapa Monitor. Por eso el ciclo es un loop y no una línea."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué haces en cada fase",
+   "contenido": "| Fase | Qué haces | Con qué | Módulo |\n|---|---|---|---|\n| Build | modelo, prompt, tools, orquestación | LangChain, LangGraph, Deep Agents | (otros cursos) |\n| Test manual | correr escenarios, leer traces, depurar | tracing, Playground | 1 |\n| Test sistemático | datasets, evaluators, experiments, A/B | Datasets & Experiments | 2 |\n| Deploy | poner el agente frente a usuarios | curso LangSmith Deployment | (otro curso) |\n| Monitor | online evals, Insights, automations, dashboards y alertas | tracing project | 3 |\n\nTest manual y sistemático se mezclan: lo que encuentras a mano (Módulo 1) se vuelve un test automático (Módulo 2)."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Thread, trace y run",
+   "contenido": "graph TD\n  TH[Thread: una conversación] --> T1[Trace: turno 1]\n  TH --> T2[Trace: turno 2]\n  T1 --> R1[Run raíz: Emma]\n  R1 --> R2[Run: ChatOpenAI, llm]\n  R1 --> R3[Run: query_database, tool]\n  R1 --> R4[Run: ChatOpenAI, llm]\n  class T1 clave",
+   "notas": "Del glosario del curso. Un **trace** es el registro completo de **una** petición, de input a output. Está hecho de **runs** (o *spans*, el nombre de OpenTelemetry) en árbol padre-hijo; el id del run raíz es el id del trace. Varios traces que comparten un `thread_id` forman un **thread**: una conversación. Ojo: en LangGraph el `thread_id` del checkpointer **era** la memoria; en LangSmith solo agrupa (lo ves en 1.A)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cuatro pares que conviene no confundir",
+   "contenido": "- **Failure** vs **failure mode**: una falla concreta (\"le dijo al cliente *31 units*\") vs la categoría (\"revela información sensible\"). Un modo agrupa muchas fallas.\n- **Offline** vs **online** evaluation: offline corre sobre un dataset fijo, antes de desplegar (fase Test): *gatea* lo que despliegas. Online califica tráfico real (fase Monitor): *observa* lo desplegado.\n- **Reference-based** vs **reference-free**: con o sin respuesta correcta (*ground truth*) para comparar. La mayoría de los LLM-as-judge son reference-free.\n- **Regression**: algo que pasaba y, después de un cambio, falla. Se detecta comparando experiments."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Setup del repo",
+   "contenido": "El repo ya está en `04 Building Reliable Agents with LangSmith/lca-reliable-agents/python`. En PowerShell, **desde esa carpeta**:\n\n```powershell\nCopy-Item .env.example .env\nuv sync\nuv run python env_utils.py\n```\n\n**Ojo:** el README dice `cp example.env .env`, pero el archivo se llama **`.env.example`**. Con el nombre del README el comando falla porque el archivo no existe.\n\nDespués abre `.env` en tu editor y pon tú las keys (nunca en el chat): `OPENAI_API_KEY` y `LANGSMITH_API_KEY` (obligatorias), `LANGSMITH_TRACING=true` y `LANGSMITH_PROJECT=lca-reliable-agents`. `LANGSMITH_ENDPOINT` solo si tu cuenta de LangSmith es de la región EU; `ANTHROPIC_API_KEY` es opcional (generador de preguntas)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué hace cada comando",
+   "contenido": "- `uv sync` lee `pyproject.toml` y `uv.lock` y crea `.venv` dentro de `python/` con Python 3.12–3.13 y las dependencias: `openai`, `langsmith`, `python-dotenv`, `numpy`, `anthropic`. **No hay LangChain ni LangGraph**: Emma, el agente del curso, está hecha con el SDK de OpenAI a mano.\n- `uv run python ...` corre con ese `.venv`. El botón de VS Code usa `C:\\python313` y falla con `No module named 'dotenv'`.\n- `env_utils.py` revisa Python, venv, paquetes y keys. También busca un `example.env`; como no existe, dice *Did not find file example.env*. Es solo un aviso, pero significa que **no revisó tus keys**. Si quieres que las revise: `Copy-Item .env.example example.env` (solo trae placeholders).\n- `.venv` y `.env` ya están en el `.gitignore` del curso."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "load_dotenv() no pisa lo que ya existe",
+   "contenido": "import os\nfrom dotenv import load_dotenv\n\n# Archivo de ejemplo con un valor FALSO (no es un .env real)\nwith open(\"demo.env\", \"w\") as f:\n    f.write(\"OPENAI_API_KEY=key-del-archivo\\n\")\n\n# Simula una variable que ya estaba en Windows\nos.environ[\"OPENAI_API_KEY\"] = \"key-de-windows\"\n\nload_dotenv(\"demo.env\")\nprint(\"load_dotenv():              \", os.environ[\"OPENAI_API_KEY\"])\n\nload_dotenv(\"demo.env\", override=True)\nprint(\"load_dotenv(override=True): \", os.environ[\"OPENAI_API_KEY\"])",
+   "notas": "Simula una key que ya estaba en Windows y otra en un archivo de prueba (`demo.env`, con un valor falso). Salida real:\n`load_dotenv():               key-de-windows`\n`load_dotenv(override=True):  key-del-archivo`\nLos scripts del curso llaman `load_dotenv()` **sin** `override`. Es lo mismo que viste en Deep Agents: en Python usaba `override=True`; en TypeScript el `.env` no pisaba la shell.",
+   "resaltar": [
+    11,
+    14
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué fase y qué herramienta?",
+   "contenido": "Emma ya está en producción. Ayer, 15 % de las conversaciones terminaron con el cliente molesto, y el equipo quiere que, de ahora en adelante, **cada** conversación así llegue sola a revisión humana.\n\nA) Test: correr un experiment sobre el dataset de 25 preguntas.\nB) Monitor: una online eval que mida el sentimiento y una automation que mande los negativos a una annotation queue.\nC) Build: agregar al system prompt \"no hagas enojar al cliente\".\nD) Deploy: activar human-in-the-loop en el servidor.",
+   "respuesta": "**B.** Son conversaciones reales y hay que actuar sobre cada una nueva: eso es Monitor. La online eval genera la señal (sentimiento) y la automation actúa (annotation queue). A es offline: el dataset fijo no contiene las conversaciones de ayer. C arregla a ciegas: primero hay que ver por qué se enojan. D es otra cosa: human-in-the-loop pausa al agente para aprobar una acción, no revisa conversaciones terminadas."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La key vieja de Windows",
+   "contenido": "En Windows tienes la variable `OPENAI_API_KEY` con una key **vieja y revocada** de otro curso. En el `.env` de este curso pusiste la nueva. Corres `uv run python officeflow-agent/agent_v5.py` y OpenAI responde `401 invalid api key`.\n\nCon el script del paso 9 en mente: ¿por qué pasa, y qué dos arreglos tienes?",
+   "respuesta": "Los scripts del curso llaman `load_dotenv()` sin `override`. Como `OPENAI_API_KEY` ya existe en Windows, gana la vieja, igual que `key-de-windows` en el paso 9. Arreglos: borrar la variable de Windows (y abrir otra terminal para que se note), o usar `load_dotenv(override=True)`. `env_utils.py` detecta este choque y avisa con *ENVIRONMENT VARIABLE CONFLICTS DETECTED*.",
+   "ref": 9
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Tests hasta estar seguros",
+   "contenido": "Tu líder te pide: \"Antes de desplegar a Emma, escribe tests hasta que estemos seguros de que no va a fallar en producción\".\n\n¿Por qué no se puede cumplir tal cual, y qué sí le puedes prometer?",
+   "respuesta": "No se puede porque los inputs son infinitos y el agente no es determinista: no hay lista finita de casos ni una salida fija por caso. Lo que sí: tests que atrapan los errores obvios y las regresiones, comparaciones A/B entre versiones, y Monitor (online evals, Insights, automations) para atrapar lo que se escape. La meta de Test es **confianza** para desplegar, no certeza."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- ADLC: Build → Test → Deploy → Monitor, en loop, con Govern alrededor. Producción es la única verdad.\n- Test busca confianza: errores obvios, regresiones y A/B. Monitor atrapa lo demás.\n- Thread ⊃ trace ⊃ run (span). En LangSmith el thread solo **agrupa**; en LangGraph el `thread_id` del checkpointer era la memoria.\n- Offline (dataset fijo, gatea lo que despliegas) vs online (tráfico real, observa lo desplegado).\n- Setup: el archivo es `.env.example` (no `example.env`), `uv sync`, `uv run`, siempre desde `python/`. `load_dotenv()` no pisa las variables del sistema.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Evaluation concepts* (offline vs online) y *Observability concepts* (runs, traces, threads)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-0/agent-development-lifecycle",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-0/Getting_Started_python.html",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-0/glossary.html",
+  "README.md",
+  "env_utils.py",
+  ".env.example",
+  "pyproject.toml"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué no puedes \"probar que tu agente es correcto\" como con software normal?",
+   "reverso": "Los inputs son infinitos y el agente no es determinista: no hay lista finita de casos ni salida fija por caso. Test busca confianza (errores obvios, regresiones, A/B), no certeza."
+  },
+  {
+   "frente": "Aparece una falla con usuarios reales que tu dataset nunca cubrió. ¿Qué fase del ADLC la atrapa y con qué?",
+   "reverso": "Monitor: online evals, Insights y automations. La evaluación offline solo prueba lo que anticipaste."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre una failure y un failure mode?",
+   "reverso": "Failure es un caso concreto (dijo \"31 units\"); failure mode es la categoría que agrupa muchas fallas (revela información sensible). Los modos se vuelven evals."
+  },
+  {
+   "frente": "Tienes OPENAI_API_KEY en Windows y otra en el .env. ¿Cuál usa load_dotenv()?",
+   "reverso": "La de Windows: load_dotenv() no pisa variables que ya existen. Para que gane el .env: override=True o borrar la del sistema."
+  },
+  {
+   "frente": "Offline vs online evaluation: ¿cuál gatea lo que despliegas y cuál observa lo desplegado?",
+   "reverso": "Offline (dataset fijo, fase Test) gatea; online (tráfico real, fase Monitor) observa. Se complementan."
+  },
+  {
+   "frente": "En LangSmith, ¿cómo se relacionan thread, trace y run?",
+   "reverso": "Un thread (conversación) contiene traces (una petición cada uno), y cada trace es un árbol de runs (spans). El id del run raíz es el id del trace."
+  }
+ ]
+}

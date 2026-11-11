@@ -1,0 +1,123 @@
+{
+ "mision_id": "6.B",
+ "titulo": "Un grafo, varias personalidades",
+ "modulo": "6",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Quieres dos agentes de ToDos: uno para lo personal (tono amable, categoría `personal`) y otro para el trabajo (tono práctico, categoría `work`). La lógica es la misma; solo cambian el prompt y dónde guarda.\n\nCopiar el grafo y desplegarlo dos veces duplica código y deploys. Pasar todo el config en cada run obliga a cada cliente a saberse los prompts. **Un assistant guarda esa configuración en el server, junto al grafo.**"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué es un assistant",
+   "contenido": "Un assistant es una fila en Postgres con:\n\n- `graph_id`: qué grafo corre (p. ej. `eco` o `task_maistro`).\n- `config`: el `configurable` que recibe cada node.\n- `name`, `metadata` y una `version`.\n\nNo copia el código. Al desplegar, el server crea **un assistant por defecto por grafo**, con config vacío. Cuando en 6.A pasabas `\"eco\"` a `runs.create`, usabas ese.\n\nCon `langgraph dev` en `module-1/studio` habría tres por defecto: `simple_graph`, `router` y `agent`, uno por grafo de su `langgraph.json`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Cómo lee el config el grafo (task_maistro)",
+   "contenido": "import os\nfrom dataclasses import dataclass, field, fields\nfrom typing import Any, Optional\n\nfrom langchain_core.runnables import RunnableConfig\nfrom typing_extensions import Annotated\nfrom dataclasses import dataclass\n\n@dataclass(kw_only=True)\nclass Configuration:\n    \"\"\"The configurable fields for the chatbot.\"\"\"\n    user_id: str = \"default-user\"\n    todo_category: str = \"general\" \n    task_maistro_role: str = \"You are a helpful task management assistant. You help you create, organize, and manage the user's ToDo list.\"\n\n    @classmethod\n    def from_runnable_config(\n        cls, config: Optional[RunnableConfig] = None\n    ) -> \"Configuration\":\n        \"\"\"Create a Configuration instance from a RunnableConfig.\"\"\"\n        configurable = (\n            config[\"configurable\"] if config and \"configurable\" in config else {}\n        )\n        values: dict[str, Any] = {\n            f.name: os.environ.get(f.name.upper(), configurable.get(f.name))\n            for f in fields(cls)\n            if f.init\n        }\n        return cls(**{k: v for k, v in values.items() if v})",
+   "notas": "`module-6/deployment/configuration.py`. Cada node llama `Configuration.from_runnable_config(config)` y usa `todo_category` en el namespace del store: `(\"todo\", todo_category, user_id)`. Así, personal y work guardan ToDos en lugares distintos con el mismo código. Ojo con la segunda línea resaltada: una variable de entorno gana sobre el config.",
+   "resaltar": [
+    13,
+    25
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Probarlo sin server",
+   "contenido": "import os\nfrom configuration import Configuration\n\n# Lo que un node hace con el config que le llega del run\ncfg = Configuration.from_runnable_config({\"configurable\": {\"todo_category\": \"work\", \"user_id\": \"leo\"}})\nprint(cfg.user_id, cfg.todo_category, cfg.task_maistro_role[:30])\n\n# Sin config: valores por defecto\nprint(Configuration.from_runnable_config(None).todo_category)\n\n# Ojo: una variable de entorno con el nombre en mayusculas gana sobre el config\nos.environ[\"TODO_CATEGORY\"] = \"env\"\nprint(Configuration.from_runnable_config({\"configurable\": {\"todo_category\": \"work\"}}).todo_category)\n\n# Salida:\n# leo work You are a helpful task managem\n# general\n# env",
+   "notas": "Se corre desde `module-6/deployment` con `PYTHONPATH=.`. Sin config salen los defaults (`general`). La última línea muestra la trampa: con `TODO_CATEGORY` en el entorno del server, **todos** los assistants usarían esa categoría. Salida real.",
+   "resaltar": [
+    5,
+    12
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Un grafo, varios assistants",
+   "contenido": "flowchart LR\n    D[\"eco (default)<br/>config vacío\"] --> G[\"grafo eco<br/>eco.py\"]\n    P[\"pirata<br/>personalidad: pirata\"] --> G\n    F[\"formal<br/>personalidad: formal\"] --> G\n    G --> R[\"cada run lee<br/>config.configurable\"]\n    class G clave",
+   "notas": "El código es uno solo. Cada assistant es una configuración distinta que entra por el mismo `config`. Cambias `eco.py` y cambian los tres."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Crear, versionar y volver atrás",
+   "contenido": "import asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\nasync def main():\n    client = get_client(url=URL)\n\n    # Dos assistants del MISMO grafo \"eco\", con distinta configuracion\n    pirata = await client.assistants.create(\n        \"eco\",\n        config={\"configurable\": {\"personalidad\": \"pirata\"}},\n        name=\"pirata\",\n    )\n    formal = await client.assistants.create(\n        \"eco\",\n        config={\"configurable\": {\"personalidad\": \"formal\"}},\n        name=\"formal\",\n    )\n    print(pirata[\"name\"], \"v\", pirata[\"version\"], pirata[\"config\"])\n    print(formal[\"name\"], \"v\", formal[\"version\"], formal[\"config\"])\n\n    # Cambiarlo crea una version nueva con el mismo assistant_id\n    pirata2 = await client.assistants.update(\n        pirata[\"assistant_id\"],\n        config={\"configurable\": {\"personalidad\": \"pirata gruñon\"}},\n    )\n    print(pirata2[\"name\"], \"v\", pirata2[\"version\"], pirata2[\"config\"])\n    print(\"mismo id:\", pirata2[\"assistant_id\"] == pirata[\"assistant_id\"])\n\n    # Las versiones quedan guardadas; puedes volver a una anterior\n    versiones = await client.assistants.get_versions(pirata[\"assistant_id\"])\n    print(\"versiones:\", [(v[\"version\"], v[\"config\"][\"configurable\"][\"personalidad\"]) for v in versiones])\n    await client.assistants.set_latest(pirata[\"assistant_id\"], 1)\n    actual = await client.assistants.get(pirata[\"assistant_id\"])\n    print(\"tras set_latest(1):\", actual[\"config\"])\n\nasyncio.run(main())\n\n# Salida:\n# pirata v 1 {'configurable': {'personalidad': 'pirata'}}\n# formal v 1 {'configurable': {'personalidad': 'formal'}}\n# pirata v 2 {'configurable': {'personalidad': 'pirata gruñon'}}\n# mismo id: True\n# versiones: [(2, 'pirata gruñon'), (1, 'pirata')]\n# tras set_latest(1): {'configurable': {'personalidad': 'pirata'}}",
+   "notas": "`create` recibe el `graph_id` y el config. `update` no edita en sitio: crea la versión 2 con el mismo `assistant_id`. `set_latest` vuelve a una versión anterior: experimentas con prompts sin perder el que funcionaba. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    10,
+    24,
+    34
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Usar los assistants",
+   "contenido": "import asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\n\nasync def ultimo(client, nombre):\n    encontrados = await client.assistants.search(\n        graph_id=\"eco\", name=nombre, limit=1,\n        sort_by=\"created_at\", sort_order=\"desc\",\n    )\n    return encontrados[0][\"assistant_id\"]\n\n\nasync def preguntar(client, assistant, config=None):\n    thread = await client.threads.create()\n    out = await client.runs.wait(\n        thread[\"thread_id\"],\n        assistant,  # un assistant_id o el nombre del grafo\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]},\n        config=config,\n    )\n    return out[\"messages\"][-1][\"content\"]\n\n\nasync def main():\n    client = get_client(url=URL)\n    pirata = await ultimo(client, \"pirata\")\n    formal = await ultimo(client, \"formal\")\n\n    print(\"pirata ->\", await preguntar(client, pirata))\n    print(\"formal ->\", await preguntar(client, formal))\n    # El config del run se mezcla encima del config del assistant\n    print(\"formal + config del run ->\", await preguntar(\n        client, formal, config={\"configurable\": {\"personalidad\": \"robot\"}}))\n    # Por nombre de grafo usas el assistant por defecto (config vacio)\n    print(\"eco (default) ->\", await preguntar(client, \"eco\"))\n\nasyncio.run(main())\n\n# Salida:\n# pirata -> [pirata] respuesta a: hola\n# formal -> [formal] respuesta a: hola\n# formal + config del run -> [robot] respuesta a: hola\n# eco (default) -> [neutral] respuesta a: hola",
+   "notas": "Donde antes ponías `\"eco\"` ahora pones un `assistant_id`. Mismo input, distinta respuesta. El config del run se mezcla **encima** del del assistant: `robot` le gana a `formal`. (`pirata` sale sin \"gruñon\" porque el paso anterior volvió a la versión 1.) Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    19,
+    35
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dónde se nota en la práctica",
+   "contenido": "En el notebook, Lance crea dos assistants de `task_maistro`:\n\n- **personal**: `todo_category: personal` y un `task_maistro_role` amable que pide deadlines.\n- **work**: `todo_category: work` y un rol práctico que sugiere tiempos por tipo de tarea.\n\nCon el mismo grafo, cada uno guarda sus ToDos en su namespace y contesta con su tono. En Studio los ves en el selector de assistants, arriba del grafo.\n\nPara tu proyecto final: un assistant por cliente o por caso de uso, sin redesplegar."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Agregar un campo",
+   "contenido": "Como en el paso 6 creas el assistant `pirata` con `{\"personalidad\": \"pirata\"}`, pero ahora el `update` solo trae `user_id`. Después corres el assistant.\n\n```python\nimport asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\nasync def main():\n    client = get_client(url=URL)\n    pirata = await client.assistants.create(\n        \"eco\",\n        config={\"configurable\": {\"personalidad\": \"pirata\"}},\n        name=\"pirata\",\n    )\n    # update con un config que SOLO trae user_id\n    v2 = await client.assistants.update(\n        pirata[\"assistant_id\"],\n        config={\"configurable\": {\"user_id\": \"leo\"}},\n    )\n    print(\"v\", v2[\"version\"], v2[\"config\"])\n\n    thread = await client.threads.create()\n    out = await client.runs.wait(\n        thread[\"thread_id\"], pirata[\"assistant_id\"],\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]},\n    )\n    print(out[\"messages\"][-1][\"content\"])\n\nasyncio.run(main())\n```\n\n¿Qué config queda en la versión 2 y qué responde `eco`?",
+   "respuesta": "Imprime `v 2 {'configurable': {'user_id': 'leo'}}` y `[neutral] respuesta a: hola`. `update` **reemplaza** el config, no lo mezcla: `personalidad` se pierde y `responder` usa el default `neutral`. Para agregar un campo mandas el config completo (así lo hace el notebook). La versión 1 sigue guardada. (Salida real con `langgraph dev`.)"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Quién gana?",
+   "contenido": "En el script del paso 7 corres el assistant `formal` (`personalidad: formal`) y en el run pasas `config={\"configurable\": {\"personalidad\": \"robot\"}}`. ¿Qué personalidad usa y por qué?",
+   "respuesta": "`robot`. El server mezcla el config del run encima del del assistant, campo por campo. El assistant da los valores por defecto; el run puede pisarlos. Distinto de `update`, que reemplaza todo el config del assistant.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Cambiar el código",
+   "contenido": "Tienes tres assistants de `eco`. Cambias el texto de `responder` en `eco.py` y redespliegas. ¿Cuántos assistants ven el cambio?",
+   "respuesta": "Los tres. Un assistant no es una copia del grafo, solo `graph_id` + config. El código vive una vez en el deployment; los assistants solo cambian lo que entra por `config`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un **assistant** = `graph_id` + config (+ nombre, metadata), guardado en el server. No duplica código.\n- Cada grafo trae un assistant por defecto; pasar el nombre del grafo a un run lo usa.\n- `update` crea una versión nueva y **reemplaza** el config; `set_latest` vuelve atrás.\n- El config del run se mezcla encima del del assistant.\n- Es el mismo `config[\"configurable\"]` que usabas para `thread_id` en 1.B; el assistant lo guarda por ti. Con `todo_category` en el namespace, cada assistant tiene su propia memoria del store de 5.A."
+  }
+ ],
+ "fuentes": [
+  "module-6/assistant.ipynb",
+  "module-6/deployment/configuration.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué crear un assistant no duplica tu grafo ni hace otro deploy?",
+   "reverso": "Porque un assistant solo es `graph_id` + config guardados en Postgres. El código es uno; cambiar `eco.py` cambia todos sus assistants."
+  },
+  {
+   "frente": "Haces `assistants.update(id, config=...)` con un solo campo nuevo. ¿Qué pasa con los campos que ya tenía?",
+   "reverso": "Se pierden: `update` reemplaza el config entero y crea una versión nueva. Hay que mandar el config completo."
+  },
+  {
+   "frente": "Un assistant dice `personalidad: formal` y el run manda `personalidad: robot`. ¿Cuál se usa y por qué?",
+   "reverso": "`robot`: el config del run se mezcla encima del del assistant. El assistant pone defaults; el run los puede pisar."
+  },
+  {
+   "frente": "En `task_maistro`, ¿cómo logran dos assistants (personal y work) tener listas de ToDos separadas con el mismo código?",
+   "reverso": "Cada node usa `todo_category` del config en el namespace del store: `(\"todo\", todo_category, user_id)`. Distinta categoría, distinto namespace."
+  },
+  {
+   "frente": "Pasas `\"eco\"` (el nombre del grafo) en vez de un `assistant_id` a `runs.create`. ¿Qué assistant corre?",
+   "reverso": "El assistant por defecto que el server crea para cada grafo al desplegar, con config vacío."
+  },
+  {
+   "frente": "En `task_maistro`, ¿qué pasa si el server tiene la variable de entorno `TODO_CATEGORY`?",
+   "reverso": "Gana sobre el config: `from_runnable_config` lee primero `os.environ`. Todos los assistants usarían esa categoría."
+  }
+ ]
+}

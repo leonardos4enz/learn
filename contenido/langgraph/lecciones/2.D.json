@@ -1,0 +1,109 @@
+{
+ "mision_id": "2.D",
+ "titulo": "Que el historial no explote",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Con `add_messages` el historial solo crece. En cada turno le mandas al LLM **todo** lo anterior: más tokens, más costo, más latencia y, tarde o temprano, te pasas de la ventana de contexto.\n\nHay tres formas de controlarlo, y se diferencian en dos preguntas que es fácil confundir:\n\n1. ¿Se **borra** algo del state?\n2. ¿Qué parte **ve el LLM** en esta llamada?\n\nBorrar del state y no mandárselo al LLM son cosas distintas."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Opción 1: borrar del state con RemoveMessage",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\n\ndef fake_llm(msgs):\n    \"\"\"Hace de LLM: imprime lo que recibe y responde cuántos mensajes vio.\"\"\"\n    print(\"El LLM recibe:\", [m.id for m in msgs])\n    return AIMessage(f\"Respondo viendo {len(msgs)} mensajes\", id=\"5\")\n\ndef filter_messages(state: MessagesState):\n    # Borra del state todos menos los 2 más recientes\n    delete_messages = [RemoveMessage(id=m.id) for m in state[\"messages\"][:-2]]\n    return {\"messages\": delete_messages}\n\ndef chat_model_node(state: MessagesState):\n    return {\"messages\": [fake_llm(state[\"messages\"])]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"filter\", filter_messages)\nbuilder.add_node(\"chat_model\", chat_model_node)\nbuilder.add_edge(START, \"filter\")\nbuilder.add_edge(\"filter\", \"chat_model\")\nbuilder.add_edge(\"chat_model\", END)\ngraph = builder.compile()\n\nmessages = [AIMessage(\"Hi.\", name=\"Bot\", id=\"1\"),\n            HumanMessage(\"Hi.\", name=\"Lance\", id=\"2\"),\n            AIMessage(\"So you said you were researching ocean mammals?\", name=\"Bot\", id=\"3\"),\n            HumanMessage(\"Yes, I know about whales. But what others should I learn about?\", name=\"Lance\", id=\"4\")]\n\noutput = graph.invoke({\"messages\": messages})\nprint(\"Queda en el state:\", [m.id for m in output[\"messages\"]])",
+   "notas": "`fake_llm` hace de LLM: imprime los ids que recibe. Así ves exactamente qué le llega al modelo sin gastar tokens (el notebook usa `ChatOpenAI`; la lógica es la misma). Salida real:\n`El LLM recibe: ['3', '4']`\n`Queda en el state: ['3', '4', '5']`\nEl node `filter` devolvió `RemoveMessage` para los ids 1 y 2: `add_messages` los **borró del state**.",
+   "resaltar": [
+    11
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo de la opción 1",
+   "contenido": "graph LR\n  S([START]) --> f[filter]\n  f --> c[chat_model]\n  c --> E([END])\n  class f clave",
+   "notas": "`filter` es un node aparte que corre antes del LLM. Su update es una lista de `RemoveMessage`; es la técnica de 2.B aplicada a un chat."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Opción 2: mandarle al LLM solo una parte",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\n\ndef fake_llm(msgs):\n    \"\"\"Hace de LLM: imprime lo que recibe y responde cuántos mensajes vio.\"\"\"\n    print(\"El LLM recibe:\", [m.id for m in msgs])\n    return AIMessage(f\"Respondo viendo {len(msgs)} mensajes\", id=\"5\")\n\ndef chat_model_node(state: MessagesState):\n    # Solo le pasa al LLM el último mensaje; el state no se toca\n    return {\"messages\": [fake_llm(state[\"messages\"][-1:])]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"chat_model\", chat_model_node)\nbuilder.add_edge(START, \"chat_model\")\nbuilder.add_edge(\"chat_model\", END)\ngraph = builder.compile()\n\nmessages = [AIMessage(\"Hi.\", name=\"Bot\", id=\"1\"),\n            HumanMessage(\"Hi.\", name=\"Lance\", id=\"2\"),\n            AIMessage(\"So you said you were researching ocean mammals?\", name=\"Bot\", id=\"3\"),\n            HumanMessage(\"Yes, I know about whales. But what others should I learn about?\", name=\"Lance\", id=\"4\")]\n\noutput = graph.invoke({\"messages\": messages})\nprint(\"Queda en el state:\", [m.id for m in output[\"messages\"]])",
+   "notas": "`fake_llm` hace de LLM: imprime los ids que recibe. Así ves exactamente qué le llega al modelo sin gastar tokens (el notebook usa `ChatOpenAI`; la lógica es la misma). Salida real:\n`El LLM recibe: ['4']`\n`Queda en el state: ['1', '2', '3', '4', '5']`\nEl state no se tocó: solo cambió el argumento de la llamada.",
+   "resaltar": [
+    11
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Opción 3: trim_messages por tokens",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage, trim_messages\nfrom langchain_core.messages.utils import count_tokens_approximately\n\nmessages = [AIMessage(\"Hi.\", name=\"Bot\", id=\"1\"),\n            HumanMessage(\"Hi.\", name=\"Lance\", id=\"2\"),\n            AIMessage(\"So you said you were researching ocean mammals?\", name=\"Bot\", id=\"3\"),\n            HumanMessage(\"Yes, I know about whales. But what others should I learn about?\", name=\"Lance\", id=\"4\"),\n            AIMessage(\"Dolphins, porpoises, seals, sea lions, manatees and sea otters are all ocean mammals. \" * 3, id=\"5\"),\n            HumanMessage(\"Tell me where Orcas live!\", name=\"Lance\", id=\"6\")]\n\nfor m in messages:\n    print(m.id, count_tokens_approximately([m]), \"tokens aprox.\")\n\nfor limite in (50, 100, 200):\n    recortados = trim_messages(\n        messages,\n        max_tokens=limite,\n        strategy=\"last\",\n        token_counter=count_tokens_approximately,\n        allow_partial=False,\n    )\n    print(f\"max_tokens={limite}:\", [m.id for m in recortados])",
+   "notas": "`trim_messages` recorta por **tokens**, no por número de mensajes. Con `strategy=\"last\"` se queda con los más recientes; con `allow_partial=False` no corta un mensaje a la mitad. Salida real:\ntokens aprox. por id: `1:7, 2:6, 3:18, 4:21, 5:70, 6:12`\n`max_tokens=50: ['6']` · `max_tokens=100: ['5', '6']` · `max_tokens=200: todos`\nAquí uso `count_tokens_approximately` (sin red); el notebook usa `token_counter=ChatOpenAI(...)`.",
+   "resaltar": [
+    18,
+    19
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "trim_messages dentro del node",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage, trim_messages\nfrom langchain_core.messages.utils import count_tokens_approximately\nfrom langgraph.graph import MessagesState, StateGraph, START, END\n\ndef fake_llm(msgs):\n    \"\"\"Hace de LLM: imprime lo que recibe y responde cuántos mensajes vio.\"\"\"\n    print(\"El LLM recibe:\", [m.id for m in msgs])\n    return AIMessage(f\"Respondo viendo {len(msgs)} mensajes\", id=\"7\")\n\ndef chat_model_node(state: MessagesState):\n    messages = trim_messages(\n        state[\"messages\"],\n        max_tokens=100,\n        strategy=\"last\",\n        token_counter=count_tokens_approximately,\n        allow_partial=False,\n    )\n    return {\"messages\": [fake_llm(messages)]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"chat_model\", chat_model_node)\nbuilder.add_edge(START, \"chat_model\")\nbuilder.add_edge(\"chat_model\", END)\ngraph = builder.compile()\n\nmessages = [AIMessage(\"Hi.\", name=\"Bot\", id=\"1\"),\n            HumanMessage(\"Hi.\", name=\"Lance\", id=\"2\"),\n            AIMessage(\"So you said you were researching ocean mammals?\", name=\"Bot\", id=\"3\"),\n            HumanMessage(\"Yes, I know about whales. But what others should I learn about?\", name=\"Lance\", id=\"4\"),\n            AIMessage(\"Dolphins, porpoises, seals, sea lions, manatees and sea otters are all ocean mammals. \" * 3, id=\"5\"),\n            HumanMessage(\"Tell me where Orcas live!\", name=\"Lance\", id=\"6\")]\n\noutput = graph.invoke({\"messages\": messages})\nprint(\"Queda en el state:\", [m.id for m in output[\"messages\"]])",
+   "notas": "`fake_llm` hace de LLM: imprime los ids que recibe. Así ves exactamente qué le llega al modelo sin gastar tokens (el notebook usa `ChatOpenAI`; la lógica es la misma). Salida real:\n`El LLM recibe: ['5', '6']`\n`Queda en el state: ['1', '2', '3', '4', '5', '6', '7']`\nIgual que la opción 2: `trim_messages` devuelve una lista nueva para la llamada; el state queda completo.",
+   "resaltar": [
+    11
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las tres opciones, lado a lado",
+   "contenido": "| | ¿Borra del state? | ¿Qué ve el LLM? |\n|---|---|---|\n| `RemoveMessage` | Sí, para siempre | Lo que quedó |\n| `state[\"messages\"][-n:]` | No | Los últimos n mensajes |\n| `trim_messages` | No | Los últimos que caben en `max_tokens` |\n\nBorrar ahorra espacio en el checkpointer, pero pierdes el historial. Filtrar o recortar mantiene todo guardado y solo achica el prompt. Ninguna de las tres resume: lo que se deja fuera, el LLM no lo sabe. Eso lo arregla la siguiente lección (2.E)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "RemoveMessage con checkpointer, tres turnos",
+   "contenido": "Tomas el grafo de la opción 1 del paso 2 (`filter → chat_model`), lo compilas con `MemorySaver()` y mandas tres turnos en el mismo thread. Tus mensajes tienen ids `h1`, `h2`, `h3` y el `fake_llm` responde con ids `r1`, `r2`, `r3`:\n\n```python\nfrom langchain_core.messages import AIMessage, HumanMessage, RemoveMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\n\ndef fake_llm(msgs):\n    \"\"\"Hace de LLM: imprime lo que recibe y responde r1, r2, r3...\"\"\"\n    print(\"El LLM recibe:\", [m.id for m in msgs])\n    turno = msgs[-1].id[1:]\n    return AIMessage(f\"Respuesta {turno}\", id=f\"r{turno}\")\n\ndef filter_messages(state: MessagesState):\n    # Borra del state todos menos los 2 más recientes\n    delete_messages = [RemoveMessage(id=m.id) for m in state[\"messages\"][:-2]]\n    return {\"messages\": delete_messages}\n\ndef chat_model_node(state: MessagesState):\n    return {\"messages\": [fake_llm(state[\"messages\"])]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"filter\", filter_messages)\nbuilder.add_node(\"chat_model\", chat_model_node)\nbuilder.add_edge(START, \"filter\")\nbuilder.add_edge(\"filter\", \"chat_model\")\nbuilder.add_edge(\"chat_model\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\nfor i in (1, 2, 3):\n    print(f\"Turno {i}\")\n    graph.invoke({\"messages\": [HumanMessage(f\"Pregunta {i}\", id=f\"h{i}\")]}, config)\n\nprint(\"Queda en el state:\", [m.id for m in graph.get_state(config).values[\"messages\"]])\n```\n\n¿Qué ids recibe el LLM en el turno 3? ¿Qué queda en el state al final?",
+   "respuesta": "Salida real: turno 3, `El LLM recibe: ['r2', 'h3']`; state final `['r2', 'h3', 'r3']`. Cada turno, `filter` borra todo menos los dos últimos, y el borrado es permanente: `h1`, `r1` y `h2` ya no están en el state. El LLM nunca podría saber qué se dijo en el turno 1."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Filtrar con [-1:], tres turnos",
+   "contenido": "Ahora la opción 2 del paso 4 (`fake_llm(state[\"messages\"][-1:])`) con `MemorySaver()` y los mismos tres turnos:\n\n```python\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\n\ndef fake_llm(msgs):\n    \"\"\"Hace de LLM: imprime lo que recibe y responde r1, r2, r3...\"\"\"\n    print(\"El LLM recibe:\", [m.id for m in msgs])\n    turno = msgs[-1].id[1:]\n    return AIMessage(f\"Respuesta {turno}\", id=f\"r{turno}\")\n\ndef chat_model_node(state: MessagesState):\n    # Solo le pasa al LLM el último mensaje; el state no se toca\n    return {\"messages\": [fake_llm(state[\"messages\"][-1:])]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"chat_model\", chat_model_node)\nbuilder.add_edge(START, \"chat_model\")\nbuilder.add_edge(\"chat_model\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\nfor i in (1, 2, 3):\n    print(f\"Turno {i}\")\n    graph.invoke({\"messages\": [HumanMessage(f\"Pregunta {i}\", id=f\"h{i}\")]}, config)\n\nprint(\"Queda en el state:\", [m.id for m in graph.get_state(config).values[\"messages\"]])\n```\n\n¿Qué recibe el LLM en el turno 3? ¿Cuántos mensajes hay en el state al final?",
+   "respuesta": "Salida real: `El LLM recibe: ['h3']` y el state final tiene 6: `['h1', 'r1', 'h2', 'r2', 'h3', 'r3']`. El historial completo está guardado, pero el LLM solo ve la última pregunta. Si en `h3` preguntas \"¿cómo me llamo?\", no lo sabe aunque esté en el state."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Por qué [5, 6] y no [4, 5, 6]?",
+   "contenido": "En el `trim_messages` del paso 5, con `max_tokens=100`, salió `['5', '6']`. Los tokens eran `4:21, 5:70, 6:12`. ¿Por qué no entró el mensaje 4?",
+   "respuesta": "Desde el final: `6` (12) + `5` (70) = 82 tokens. Sumar `4` (21) daría 103, más que 100. Con `allow_partial=False` no se corta un mensaje a la mitad, así que `4` queda fuera y el recorte se detiene ahí (no salta al `3`, que con 18 tokens sí cabría). Con `max_tokens=50`, ni `5` cabe: solo queda `['6']`.",
+   "ref": 5
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Borrar del state (`RemoveMessage`) y no mandárselo al LLM (filtrar o `trim_messages`) son decisiones distintas.\n- `RemoveMessage` es permanente; filtrar y recortar solo cambian el argumento de `llm.invoke`.\n- `trim_messages` recorta por tokens, desde el final con `strategy=\"last\"`, sin partir mensajes con `allow_partial=False`.\n- Lo que el LLM no ve, no lo sabe. El curso 01 (Módulo 3) trae este problema resuelto para `create_agent` con `SummarizationMiddleware`; en 2.E lo construyes a mano."
+  }
+ ],
+ "fuentes": [
+  "module-2/trim-filter-messages.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué diferencia hay entre devolver `RemoveMessage` y llamar `llm.invoke(state[\"messages\"][-2:])`?",
+   "reverso": "`RemoveMessage` borra del state para siempre. El slice solo cambia lo que ve el LLM en esa llamada; el state queda completo."
+  },
+  {
+   "frente": "¿`trim_messages` cambia el state del grafo?",
+   "reverso": "No. Devuelve una lista nueva que le pasas al LLM. Para que el state cambie, el node tendría que devolver un update (p. ej. `RemoveMessage`)."
+  },
+  {
+   "frente": "Filtras con `state[\"messages\"][-1:]` y el usuario pregunta \"¿cómo me llamo?\", que dijo hace 3 turnos. ¿Responde bien?",
+   "reverso": "No. El nombre está en el state, pero el LLM solo ve el último mensaje. Guardar y mandar al LLM son cosas distintas."
+  },
+  {
+   "frente": "¿Por qué recortar por tokens (`trim_messages`) y no por número de mensajes?",
+   "reverso": "Porque el límite real del modelo y el costo se miden en tokens: un solo mensaje largo puede pesar más que diez cortos."
+  },
+  {
+   "frente": "Con `strategy=\"last\"` y `allow_partial=False`, el siguiente mensaje no cabe en `max_tokens`. ¿Qué hace `trim_messages`?",
+   "reverso": "Lo deja fuera completo y se detiene ahí. No corta el mensaje ni salta a uno más viejo."
+  }
+ ]
+}

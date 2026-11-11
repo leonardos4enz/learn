@@ -1,0 +1,110 @@
+{
+ "mision_id": "6.A",
+ "titulo": "Managed Deep Agents",
+ "modulo": "6",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 5.A y 5.C tú montabas todo: el servidor, el sandbox, la UI, el tracing. Y cada cambio de prompt era: editar,\nreiniciar el servidor, perder la conversación, volver a preguntar. Conectar Slack de verdad pedía tu propia app, tokens\ny un endpoint con verificación de firmas.\n\n**Managed Deep Agents (MDA)** junta el harness de Deep Agents con un runtime gestionado en LangSmith. Tú das la lógica\n(instrucciones, tools, skills, modelo) como una **carpeta de archivos**, y MDA hace el resto.\n\nOjo: es **beta pública**, solo LangSmith Cloud, región **US**."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "agent.py: define en vez de create",
+   "contenido": "from langchain.tools import tool\nfrom managed_deepagents import define_deep_agent\n\n\n@tool\ndef email_report(to: str, subject: str, body: str) -> str:\n    \"\"\"Email a report to a stakeholder. This simulates a send, no network call is made.\"\"\"\n    return f\"Emailed {to}: {subject}\"\n\n\nagent = define_deep_agent(\n    name=\"dvd-rental-analyst\",\n    model=\"anthropic:claude-sonnet-5-5\",\n    tools=[email_report],\n)",
+   "notas": "Archivo del curso (`m6/dvd_rental_analyst/agent.py`). Compáralo con lo que ya sabes:\n`create_deep_agent(name=..., model=..., tools=[...])` devuelve un agente **compilado** que tú invocas.\n`define_deep_agent(...)` devuelve una **definición**: al desplegar, MDA le agrega backend, store y checkpointer y la compila.\n`name` es el id del assistant y el nombre del deployment. La tool es un `@tool` normal. No se corre aquí:\n`managed-deepagents` no está en el `.venv` del curso.",
+   "resaltar": [
+    11
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La carpeta es el agente",
+   "contenido": "| Archivo | Qué es |\n|---|---|\n| `agent.py` | `define_deep_agent`: nombre, modelo, tools |\n| `instructions.md` | el system prompt |\n| `skills/<nombre>/SKILL.md` | playbooks, igual que en 3.B |\n| `sandbox/__init__.py` + `setup.sh` | el sandbox y cómo prepararlo (pandas, `sakila.db`) |\n| `identity.py` | quién puede llamar el deployment |\n| `channels/slack.py` | conectar Slack |\n| `pyproject.toml`, `.env` | dependencias y keys |\n\nNo registras nada: MDA **descubre** cada archivo por su ruta y por el nombre que exporta (`sandbox`, `identity`,\n`channel`). Opcionales con el mismo patrón: `tools/`, `middleware/`, `schedules/`, `memory.py`, `evals/`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Las piezas declarativas",
+   "contenido": "# --- sandbox/__init__.py ---\nfrom managed_deepagents import define_sandbox\n\nsandbox = define_sandbox()\n\n# --- identity.py ---\nfrom managed_deepagents import define_identity, auth\n\nidentity = define_identity(auth=auth.langsmith_api_key())\n\n# --- channels/slack.py (sin el docstring ni los comentarios de opciones) ---\nfrom managed_deepagents import channels\n\nchannel = channels.slack()",
+   "notas": "Tres archivos del proyecto, cada uno un `define_*` o `channels.*` exportado a nivel de módulo.\n`define_sandbox()`: **un sandbox por thread**, creado en el primer run y reusado en los siguientes hasta su TTL;\n`setup.sh` corre una vez en `mda deploy` y queda como snapshot. `auth.langsmith_api_key()`: quien tenga la key del\nworkspace puede llamarlo. `channels.slack()`: en el siguiente deploy da un link para autorizar; el token del bot se\nguarda como conexión del workspace, fuera del `.env`.",
+   "resaltar": [
+    4,
+    14
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Código contra comportamiento",
+   "contenido": "MDA separa dos tipos de cambio:\n\n| Cambio | ¿Necesita `mda deploy .`? | Por qué |\n|---|---|---|\n| Editar `instructions.md` | **No** | vive en **Context Hub**; se aplica en caliente, aun a mitad de una conversación |\n| Editar una skill | **No** | también vive en Context Hub |\n| Agregar una tool o cambiar el modelo | **Sí** | es código de `agent.py` |\n| Cambiar `sandbox/` (`setup.sh`) | **Sí** | es código y el snapshot se arma al desplegar |\n\nEn el lab: le agregas a `instructions.md` una persona \"niño victoriano dramático\", preguntas lo mismo en el mismo chat\ny el tono cambia al instante. El SQL y el sandbox no se tocan."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El ciclo con el CLI",
+   "contenido": "# crear un proyecto nuevo con la estructura que MDA espera\nuvx --from managed-deepagents==0.8.3 mda init research-assistant\n\n# probar en local: compila el proyecto y lo sirve con langgraph dev\nuv run mda dev\nuv run mda chat          # chatear desde la terminal con ese agente local\n\n# desplegar (y volver a desplegar: actualiza el mismo deployment)\nuv run mda deploy .\nuv run mda deploy . --name dvd-rental-analyst-dev --deployment-type dev\n\n# operar\nuv run mda logs .\nuv run mda connections list\nuv run mda delete .      # borra deployment, tracing, Context Hub y sandboxes",
+   "notas": "Comandos del material oficial (corren desde la carpeta del proyecto: el `.` de `mda deploy .` es esta carpeta).\n`mda deploy .` copia el proyecto, genera un `langgraph.json` en `.mda/build`, lo sube y lee `.env` (usa\n`LANGSMITH_API_KEY` y reenvía la key del modelo como secreto). Imprime un URL del Agent Server y otro del dashboard.\nNo corrí ninguno: piden cuenta de LangSmith Cloud US.",
+   "resaltar": [
+    9
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Qué gestiona MDA",
+   "contenido": "graph LR\n  P[carpeta del proyecto] -->|mda deploy .| D[deployment en LangSmith]\n  D --- SB[(sandbox por thread desde snapshot)]\n  D --- T[tracing]\n  CH[Context Hub: instructions.md, skills] -->|en caliente| D\n  SL([Slack, Studio]) -->|mensajes| D\n  class CH clave",
+   "notas": "Lo de código pasa por `mda deploy`; lo de texto (prompt y skills) vive en Context Hub y llega en caliente.\nEs la misma idea de 5.B, \"poco código y mucho texto\", llevada a la operación: el texto se cambia sin redeploy."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Necesita redeploy?",
+   "contenido": "Tu `dvd-rental-analyst` ya está desplegado. Haces cuatro cambios. ¿Cuáles necesitan `mda deploy .` para tener efecto?\n\n1. Corriges un paso de `skills/qbr-report/SKILL.md` en Context Hub.\n2. Cambias `model=\"anthropic:claude-sonnet-5-5\"` por otro modelo en `agent.py`.\n3. Agregas `pip install scipy` a `sandbox/setup.sh`.\n4. Le pides en `instructions.md` (Context Hub) que responda en español.",
+   "respuesta": "**2 y 3.** El modelo es código de `agent.py`, y `setup.sh` se ejecuta al desplegar para armar el snapshot del sandbox.\n1 y 4 viven en Context Hub: se aplican al instante, sin redeploy ni perder el thread. Regla: texto (prompt, skills) en\ncaliente; código (tools, modelo, sandbox) con `mda deploy .`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: el token de Slack",
+   "contenido": "Agregaste `channels/slack.py` y autorizaste la app en el `mda deploy`. ¿Dónde queda el token del bot?\n\n- A) En tu `.env`, junto a `LANGSMITH_API_KEY`.\n- B) Como conexión del workspace de LangSmith (`mda connections list`), fuera del proyecto.\n- C) Dentro de `channels/slack.py`, como argumento de `channels.slack()`.\n- D) En Context Hub, junto a `instructions.md`.",
+   "respuesta": "**B.** LangSmith crea la app, la instala y guarda el token como conexión del workspace (`mda/slack-bot-token`). Así no\nvive en `.env` ni en git, y los siguientes deploys ya no piden autorizar. A y C lo meterían en el proyecto. D no:\nContext Hub guarda prompts y skills, no secretos."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Un sandbox por thread",
+   "contenido": "Dos personas le escriben al bot en Slack, cada una en **su propio** thread. La primera pidió los ingresos del trimestre\ny el agente armó un dataframe en su sandbox. La segunda pide \"ahora desglósalo por categoría\". ¿Puede el agente usar\nese dataframe en el thread de la segunda persona?",
+   "respuesta": "No. MDA da **un sandbox por thread**: el de la segunda persona arranca desde el snapshot de `setup.sh` (con\n`sakila.db` y pandas), pero sin el trabajo del otro thread. Tendrá que consultar otra vez. En el **mismo** thread sí se\nreusaría el sandbox. Es el mismo aislamiento por `thread_id` que ya conoces, ahora para el entorno de ejecución."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- MDA = harness de Deep Agents + runtime gestionado en LangSmith (beta, Cloud US).\n- El proyecto es una carpeta con convención: `agent.py` (`define_deep_agent`), `instructions.md`, `skills/`, `sandbox/`,\n  y opcionales que se descubren solos (`identity.py`, `channels/`...).\n- `define_deep_agent` devuelve una **definición**; MDA agrega backend, store y checkpointer al desplegar.\n- Prompt y skills viven en Context Hub y cambian **sin redeploy**; tools, modelo y sandbox requieren `mda deploy .`.\n- Un sandbox por thread; Slack con `channels.slack()` y un clic de autorización.\n\nRelación: es lo que hacías a mano en 5.A–5.C (servidor, sandbox, UI), gestionado. Dónde buscarlo en docs:\ndocs.langchain.com → *Managed Deep Agents* y *Move from Deep Agents to Managed Deep Agents*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m6/m6.1-what-is-managed-deep-agents.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m6/m6.2-deploying-an-agent-using-mda.html",
+  "python/m6/dvd_rental_analyst/agent.py",
+  "python/m6/dvd_rental_analyst/instructions.md",
+  "python/m6/dvd_rental_analyst/sandbox/__init__.py",
+  "python/m6/dvd_rental_analyst/identity.py",
+  "python/m6/dvd_rental_analyst/channels/slack.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué diferencia hay entre lo que devuelven `create_deep_agent` y `define_deep_agent`?",
+   "reverso": "`create_deep_agent` devuelve un agente compilado; `define_deep_agent` una definición que MDA compila al desplegar, agregando backend, store y checkpointer."
+  },
+  {
+   "frente": "Editas `instructions.md` en Context Hub de un agente MDA desplegado. ¿Necesitas `mda deploy .`?",
+   "reverso": "No. Prompt y skills viven en Context Hub y se aplican en caliente, aun a mitad de una conversación."
+  },
+  {
+   "frente": "Agregas una tool a `agent.py` de un proyecto MDA. ¿Cuándo la ve el agente?",
+   "reverso": "Hasta el siguiente `mda deploy .`: tools y modelo son código del deployment."
+  },
+  {
+   "frente": "¿Cómo activa MDA `sandbox/`, `identity.py` o `channels/slack.py`?",
+   "reverso": "Por descubrimiento: cada archivo exporta un nombre conocido (`sandbox`, `identity`, `channel`) y MDA lo encuentra al desplegar, sin registrarlo."
+  },
+  {
+   "frente": "En MDA, ¿dos threads distintos comparten sandbox?",
+   "reverso": "No. Un sandbox por thread, que arranca desde el snapshot de `setup.sh` y se reusa solo dentro de ese thread."
+  }
+ ]
+}

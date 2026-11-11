@@ -1,0 +1,131 @@
+{
+ "mision_id": "1.A",
+ "titulo": "Tokens y costos: cómo se calculan y dónde verlos",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Cada llamada a un modelo cobra por tokens, y un agente hace **muchas** llamadas por pregunta (piensa, llama tools, vuelve a pensar). Un cambio pequeño de prompt, un modelo más caro o un cliente con mucho tráfico pueden duplicar la factura, y sin monitoreo te enteras cuando llega.\n\nPara vigilarlo necesitas tres cosas: saber **en qué se va** el costo (input, output, otros), saber **cómo lo calcula** LangSmith, y saber **dónde verlo**. Si un run no trae los datos correctos, el dashboard muestra tokens pero **no** costo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres categorías de costo",
+   "contenido": "| Categoría | Qué es | Subtipos |\n|---|---|---|\n| **Input** | Tokens del prompt que mandas | `cache_read`, texto, imagen… |\n| **Output** | Tokens que genera el modelo | `reasoning`, texto, imagen… |\n| **Other** | Costos que no son de LLM | tools, búsquedas, APIs de pago |\n\n**Cache reads:** el system prompt, las tools y los turnos anteriores se repiten en cada llamada. El proveedor guarda ese prefijo y lo cobra **50–90 % más barato**. OpenAI, Anthropic y Google lo hacen solos.\n\nOjo con la intuición \"el costo depende de la respuesta\": en un agente el **input** suele pesar más, porque cada llamada reenvía todo el historial. En el ejemplo de la lección oficial, el input era el 78 % del costo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Cómo calcula LangSmith: greedy, de lo más específico a lo menos",
+   "contenido": "# Precios por token (la tabla de LangSmith los guarda por 1M de tokens)\nprecios = {\n    \"input\": 2 / 1_000_000,        # $2 por 1M de input tokens\n    \"cache_read\": 1 / 1_000_000,   # $1 por 1M de input tokens leídos de caché\n    \"output\": 3 / 1_000_000,       # $3 por 1M de output tokens\n}\n\nusage = {\n    \"input_tokens\": 20,\n    \"input_token_details\": {\"cache_read\": 5},\n    \"output_tokens\": 10,\n}\n\ndef costo(usage, precios):\n    # Greedy: primero el subtipo más específico (cache_read), después el resto del input\n    cache = usage.get(\"input_token_details\", {}).get(\"cache_read\", 0)\n    resto = usage[\"input_tokens\"] - cache\n    input_cost = cache * precios[\"cache_read\"] + resto * precios[\"input\"]\n    output_cost = usage[\"output_tokens\"] * precios[\"output\"]\n    return input_cost, output_cost\n\ni, o = costo(usage, precios)\ntotal = i + o\nprint(f\"input  ${i:.6f}  ({i / total:.0%})\")\nprint(f\"output ${o:.6f}  ({o / total:.0%})\")\nprint(f\"total  ${total:.6f}\")",
+   "notas": "Es el ejemplo de la página oficial, en Python que puedes correr.\n- Primero cobra el subtipo más específico (`cache_read`, 5 tokens a $1/1M), después el **resto** del input (15 a $2/1M). No cobra 20 a $2 y luego 5 a $1.\n- Salida real:\n```\ninput  $0.000035  (54%)\noutput $0.000030  (46%)\ntotal  $0.000065\n```",
+   "resaltar": [
+    17,
+    18
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un run LLM real del lab: de dónde salen los tokens",
+   "contenido": "import json\n\nRUTA = \"C:/ruta/a/tus/cursos/05 Monitoring Production Agents/lca-production-monitoring/python/module-1/traces.json\"\nruns = json.load(open(RUTA))\n\n# El primer run de tipo \"llm\" (una llamada a ChatOpenAI dentro de una traza)\nllm = next(r for r in runs if r[\"run_type\"] == \"llm\")\n\nmd = llm[\"extra\"][\"metadata\"]\nprint(\"ls_provider:  \", md[\"ls_provider\"])\nprint(\"ls_model_name:\", md[\"ls_model_name\"])\nprint(\"customer:     \", md[\"customer\"])\n\nmsg = llm[\"outputs\"][\"generations\"][0][0][\"message\"][\"kwargs\"]\nprint(json.dumps(msg[\"usage_metadata\"], indent=2))",
+   "notas": "Lee el primer run `llm` de `module-1/traces.json` (lo que el lab sube).\n- `ls_provider` y `ls_model_name` en la **metadata** del run: con eso LangSmith busca el precio.\n- `usage_metadata` sale de la respuesta del modelo (LangChain lo extrae solo).\n- Salida real: 1410 input / 1267 output, de los cuales **1088 son `reasoning`**. Los tokens de razonamiento no se ven en la respuesta, pero se cobran como output.\n```\nls_provider:   openai\nls_model_name: gpt-5-nano\ncustomer:      bravo\n{ \"input_token_details\": {\"audio\": 0, \"cache_read\": 0},\n  \"input_tokens\": 1410,\n  \"output_token_details\": {\"audio\": 0, \"reasoning\": 1088},\n  \"output_tokens\": 1267, \"total_tokens\": 2677 }\n```",
+   "resaltar": [
+    11,
+    15
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La model pricing table",
+   "contenido": "LangSmith calcula el costo de un run LLM en tres pasos:\n\n1. Lee los **tokens** del run (input, output y subtipos).\n2. Identifica **modelo y proveedor** por la metadata `ls_model_name` y `ls_provider`.\n3. Busca el **precio** en la *model pricing table* (Settings > Model Pricing) y multiplica.\n\nCada fila de la tabla tiene: nombre, **Match Pattern** (una regex contra `ls_model_name`), proveedor (contra `ls_provider`, opcional), precio de input/output por 1M, y fecha de activación (opcional). Trae precios de OpenAI, Anthropic y Gemini; puedes **agregar** modelos propios o **sobrescribir** precios negociados.\n\n**No es retroactiva:** un precio nuevo solo aplica a trazas que lleguen después. No hay backfill."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cuándo los tokens llegan solos y cuándo no",
+   "contenido": "Llegan **solos** si llamas al LLM con LangChain, con `@traceable` sobre OpenAI/Anthropic o compatibles, o con `wrap_openai` / `wrap_anthropic`.\n\nTienes que **reportarlos tú** si usas un modelo que LangSmith no sabe leer (p. ej. la API nativa de Cohere o Mistral). Hay dos formas (opción A y B, en los pasos que siguen) y luego LangSmith calcula igual, con la tabla de precios.\n\nPara lo que **no es LLM** (un tool que llama a una API de pago) no hay tokens: pasas el **costo literal** con `usage_metadata={\"total_cost\": ...}`.\n\nLos ejemplos corren con `tracing_context(enabled=\"local\")`: el SDK arma el run en memoria y **no** lo manda a LangSmith. Así ves qué se guardaría, sin key."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Opción A: `run.set(usage_metadata=...)`",
+   "contenido": "from langsmith import traceable, get_current_run_tree, tracing_context\n\ndef call_my_model(messages):\n    # Modelo falso: en la vida real aquí llamas a Cohere, Mistral, etc.\n    return \"Claro, ¿a qué hora te gustaría?\"\n\n@traceable(\n    run_type=\"llm\",\n    metadata={\"ls_provider\": \"my_provider\", \"ls_model_name\": \"my_model\"},\n)\ndef chat_model(messages: list):\n    result = call_my_model(messages)\n\n    # Opción A: pegarle el uso de tokens al run actual\n    run = get_current_run_tree()\n    run.set(usage_metadata={\n        \"input_tokens\": 27,\n        \"output_tokens\": 13,\n        \"total_tokens\": 40,\n        \"input_token_details\": {\"cache_read\": 10},\n    })\n    return result\n\ncapturados = []\n# enabled=\"local\": arma el run en memoria y NO lo manda a LangSmith\nwith tracing_context(enabled=\"local\"):\n    chat_model([\"Quiero una cita\"],\n               langsmith_extra={\"on_end\": capturados.append})\n\nrun = capturados[0]\nprint(\"run_type:\", run.run_type)\nprint(\"metadata:\", run.extra[\"metadata\"])",
+   "notas": "- `metadata` en `@traceable` pone `ls_provider` y `ls_model_name`: sin ellos no hay costo, aunque haya tokens.\n- `get_current_run_tree()` te da el run activo y `run.set(...)` le pega el uso.\n- `on_end` (en `langsmith_extra`) recibe el run al terminar: lo uso solo para imprimirlo.\n- Salida real (puede salir antes un aviso de API key faltante; es inofensivo):\n```\nrun_type: llm\nmetadata: {'ls_provider': 'my_provider', 'ls_model_name': 'my_model', 'ls_method': 'traceable',\n           'usage_metadata': {'input_tokens': 27, 'output_tokens': 13, 'total_tokens': 40,\n                              'input_token_details': {'cache_read': 10}}}\n```",
+   "resaltar": [
+    9,
+    16
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Opción B y costo de un tool",
+   "contenido": "from langsmith import traceable, get_current_run_tree, tracing_context\n\n# Opción B: devolver usage_metadata dentro del output\n@traceable(\n    run_type=\"llm\",\n    metadata={\"ls_provider\": \"my_provider\", \"ls_model_name\": \"my_model\"},\n)\ndef chat_model(messages: list):\n    return {\n        \"result\": \"Claro, ¿a qué hora te gustaría?\",\n        \"usage_metadata\": {\"input_tokens\": 27, \"output_tokens\": 13, \"total_tokens\": 40},\n    }\n\ndef call_weather_api(city):\n    return {\"city\": city, \"temp_c\": 21}     # API falsa\n\n# Costo de algo que NO es un LLM: se pasa el costo literal\n@traceable(run_type=\"tool\", name=\"get_weather\")\ndef get_weather(city: str):\n    result = call_weather_api(city)\n    run = get_current_run_tree()\n    run.set(usage_metadata={\"total_cost\": 0.0015})\n    return result\n\ncapturados = []\nwith tracing_context(enabled=\"local\"):\n    chat_model([\"Quiero una cita\"], langsmith_extra={\"on_end\": capturados.append})\n    get_weather(\"Monterrey\", langsmith_extra={\"on_end\": capturados.append})\n\nfor run in capturados:\n    print(run.name, \"| outputs:\", run.outputs)\n    print(\"   metadata:\", run.extra[\"metadata\"])",
+   "notas": "- **Opción B:** devuelves `usage_metadata` dentro del output y el SDK lo extrae solo.\n- **Tool:** `run_type=\"tool\"` y `total_cost` literal en dólares. No necesita `ls_model_name`: no hay tabla de precios de por medio.\n- Salida real:\n```\nchat_model | outputs: {'result': 'Claro, ¿a qué hora te gustaría?', 'usage_metadata': {'input_tokens': 27, 'output_tokens': 13, 'total_tokens': 40}}\n   metadata: {'ls_provider': 'my_provider', 'ls_model_name': 'my_model', 'ls_method': 'traceable', 'usage_metadata': {'input_tokens': 27, 'output_tokens': 13, 'total_tokens': 40}}\nget_weather | outputs: {'city': 'Monterrey', 'temp_c': 21}\n   metadata: {'ls_method': 'traceable', 'usage_metadata': {'total_cost': 0.0015}}\n```",
+   "resaltar": [
+    11,
+    22
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres lugares para ver costos",
+   "contenido": "| Dónde | Qué ves | Para qué |\n|---|---|---|\n| **Trace tree** (abre una traza) | Total de la traza, suma por cada padre, desglose por run hijo | ¿Qué paso de *esta* traza fue caro? |\n| **Project stats** | Tokens y costo total del proyecto | ¿Cuánto llevo gastado? |\n| **Dashboards** (Monitor tab) | Costo total y por input/output en el tiempo, prebuilt | Tendencias y picos |\n\nEn los dashboards puedes hacer **Group by** cualquier llave de **metadata** (cliente, `app_version`, entorno). Por eso conviene poner esas llaves en la metadata de cada traza: lo que no está en metadata, no lo puedes agrupar después."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: un modelo nuevo sin precio",
+   "contenido": "Tu equipo cambia de `gpt-5-nano` a un modelo propio servido en tu infraestructura. Las trazas llegan con `ls_provider=\"acme\"` y `ls_model_name=\"acme-llm-v2\"` y con `usage_metadata` completo. Nadie tocó la model pricing table. ¿Qué ves en el dashboard de costos para esas trazas?\n\n- **A)** El costo calculado con el precio de `gpt-5-nano`, porque es el último modelo conocido del proyecto.\n- **B)** Los tokens, pero sin costo: ninguna fila de la tabla hace match con `acme-llm-v2`.\n- **C)** Nada: sin precio, LangSmith descarta los `usage_metadata`.\n- **D)** El costo correcto en cuanto agregues la fila, también para las trazas de la semana pasada.",
+   "respuesta": "**B.** El costo sale de buscar `ls_model_name` (regex del Match Pattern) y `ls_provider` en la tabla. Sin fila que haga match, hay tokens pero no precio.\n- A: LangSmith no \"hereda\" precios de otro modelo.\n- C: los tokens sí se guardan; solo falta el precio.\n- D: la tabla **no es retroactiva**: la fila nueva solo cuenta para trazas que lleguen después."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Con tracing apagado",
+   "contenido": "Este es el snippet del tool de la página oficial, ahora con tracing **apagado** (como `LANGSMITH_TRACING=false`):\n\n```python\nfrom langsmith import traceable, get_current_run_tree, tracing_context\n\n@traceable(run_type=\"tool\", name=\"get_weather\")\ndef get_weather(city: str):\n    run = get_current_run_tree()\n    print(\"run es:\", run)\n    run.set(usage_metadata={\"total_cost\": 0.0015})\n    return {\"city\": city, \"temp_c\": 21}\n\nwith tracing_context(enabled=False):     # como LANGSMITH_TRACING=false\n    print(get_weather(\"Monterrey\"))\n```\n\n¿Qué imprime? ¿Llega a devolver el diccionario?",
+   "respuesta": "Imprime `run es: None` y luego truena:\n```\nAttributeError: 'NoneType' object has no attribute 'set'\n```\nSin tracing no hay run activo, así que `get_current_run_tree()` devuelve `None`. El snippet de la página no lo protege; el código del capstone sí (`if run: run.set(...)`). En producción, apagar el tracing no debería tumbar tu tool: siempre usa el `if run:`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Calcula: ¿quién pesa más, input u output?",
+   "contenido": "Con la regla greedy del paso 3, ahora con estos números:\n\n```python\nprecios = {\"input\": 2 / 1_000_000, \"cache_read\": 0.5 / 1_000_000, \"output\": 8 / 1_000_000}\nusage = {\"input_tokens\": 1000, \"input_token_details\": {\"cache_read\": 600}, \"output_tokens\": 200}\n\ncache = usage[\"input_token_details\"][\"cache_read\"]\ninput_cost = cache * precios[\"cache_read\"] + (usage[\"input_tokens\"] - cache) * precios[\"input\"]\noutput_cost = usage[\"output_tokens\"] * precios[\"output\"]\nprint(f\"input ${input_cost:.6f}  output ${output_cost:.6f}  total ${input_cost + output_cost:.6f}\")\n```\n\n¿Qué imprime? Hay 5 veces más tokens de input que de output: ¿cuál cuesta más?",
+   "respuesta": "```\ninput $0.001100  output $0.001600  total $0.002700\n```\nInput: 600 × $0.5/1M + 400 × $2/1M = $0.0003 + $0.0008 = $0.0011. Output: 200 × $8/1M = $0.0016.\nAquí gana el **output**, aunque tiene 5 veces menos tokens: el output es 4 veces más caro por token y el 60 % del input salió de caché. No hay regla fija: depende de precios, caché y largo de respuesta. Por eso miras el desglose, no adivinas.",
+   "ref": 3
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Costo LLM = tokens (input/output y sus subtipos) × precio de la **model pricing table**, encontrado por `ls_model_name` (regex) y `ls_provider`.\n- Cálculo **greedy**: primero `cache_read`, luego el resto del input. Los tokens de `reasoning` se cobran como output.\n- La tabla **no es retroactiva**. Sin match en la tabla: tokens sí, costo no.\n- Tokens a mano: `run.set(usage_metadata=...)` o devolverlos en el output. Costos no-LLM: `usage_metadata={\"total_cost\": ...}`. Protege con `if run:`.\n- Se ve en trace tree, project stats y dashboards (Group by metadata). Relación: el `SummarizationMiddleware` del curso 01 y el `trim_messages` de LangGraph 2.D existen justo para bajar el input que reenvías.\n\n**Dónde buscarlo en docs:** docs.langchain.com > LangSmith > Observability > Cost tracking."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-1/intro",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-1/token-and-cost-breakdowns",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-1/setting-up-cost-tracking",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-1/viewing-costs-in-the-ui",
+  "lca-production-monitoring/python/module-1/traces.json",
+  "lca-production-monitoring/python/capstone/conversation_agents/agent.py",
+  "lca-production-monitoring/python/capstone/conversation_agents/database_tool.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué en un agente el input suele costar más que el output?",
+   "reverso": "Porque cada llamada reenvía system prompt, tools e historial completo. El output es solo la respuesta de esa llamada (más el reasoning)."
+  },
+  {
+   "frente": "Tienes tokens en un run LLM pero el dashboard no muestra costo. ¿Qué revisas primero?",
+   "reverso": "Que el run traiga `ls_model_name` y `ls_provider` y que alguna fila de la model pricing table haga match con ellos."
+  },
+  {
+   "frente": "Cambias el precio de un modelo en la pricing table. ¿Qué pasa con las trazas de ayer?",
+   "reverso": "Nada: la tabla no es retroactiva. El precio nuevo solo aplica a trazas que lleguen después."
+  },
+  {
+   "frente": "¿Cómo registras el costo de un tool que llama a una API de pago?",
+   "reverso": "Con `usage_metadata={\"total_cost\": <dólares>}` en su run. No hay tokens ni pricing table de por medio."
+  },
+  {
+   "frente": "¿Por qué el snippet `run.set(...)` debe ir dentro de `if run:`?",
+   "reverso": "Con tracing apagado `get_current_run_tree()` devuelve `None` y `run.set` lanza `AttributeError`, tumbando el tool."
+  },
+  {
+   "frente": "20 input (5 de `cache_read`) y precios $2/1M input, $1/1M cache. ¿Por qué el input cuesta $0.000035 y no $0.000040?",
+   "reverso": "Cálculo greedy: 5 tokens a $1/1M y solo los 15 restantes a $2/1M."
+  }
+ ]
+}

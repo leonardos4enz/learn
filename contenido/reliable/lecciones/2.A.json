@@ -1,0 +1,123 @@
+{
+ "mision_id": "2.A",
+ "titulo": "Evaluar agentes y crear datasets",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En el Módulo 1 probaste a mano: corres, lees el trace, arreglas. Funciona con un puñado de escenarios. Se rompe cuando iteras rápido: cambias de modelo, agregas una tool o tocas el prompt cada día. No puedes releer 25 traces en cada cambio.\n\nNecesitas tests automáticos: **evals**, el lado sistemático de la fase Test. Y recuerda para qué son: no prueban que Emma es correcta (inputs infinitos, no determinismo). Atrapan errores obvios, regresiones y te dejan comparar versiones. Suficiente confianza para desplegar."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Crear un eval en 4 pasos",
+   "contenido": "graph LR\n  A[1. Decidir qué medir] --> B[2. Dataset]\n  B --> C[3. Evaluator]\n  C --> D[4. Experiment]\n  D -.->|en cada cambio del agente| D\n  class B clave",
+   "notas": "1) La pregunta clave: ¿qué me diría que Emma funciona bien? 2) **Dataset**: los casos de prueba. 3) **Evaluator**: la lógica que califica cada resultado. 4) **Experiment**: corre el agente en cada ejemplo, aplica los evaluators y junta los scores. Esta lección cubre 1 y 2; la 2.B y la 2.C, 3 y 4."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué medir: nivel y métrica",
+   "contenido": "**Nivel** (qué parte del agente):\n- **Step / unit**: un paso suelto, como una tool call o una query de retrieval, probado aislado.\n- **Final response (end-to-end)**: input → respuesta final. Lo más fácil de montar; el curso lo usa, pero mira el trace para ver los pasos internos.\n- **Trajectory**: el camino: cuántos pasos, qué tools, en qué orden. A veces la respuesta es correcta pero el camino es malo.\n\n**Métricas:** operacionales (latencia, tokens, costo), de calidad de la salida (correctness, relevance, faithfulness, toxicity, conciseness) y de trayectoria (task completion, tool selection, planning, efficiency)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres tipos de evaluator",
+   "contenido": "| Tipo | Cómo califica | Bueno para |\n|---|---|---|\n| **Code-based** | una función determinista, sin LLM | ¿llamó tal tool?, ¿formato correcto?, ¿palabra clave?, latencia, costo |\n| **LLM-as-judge** | un LLM con un prompt de criterio | criterios subjetivos: tono, si reveló información, si respondió la pregunta |\n| **Human review** | personas (p. ej. en una annotation queue) | casos difíciles y alinear a los jueces LLM |\n\nLas mejores estrategias combinan los tres. Los verás en 2.B (código) y 2.C (juez, pairwise y alineación con humanos)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Un example por dentro",
+   "contenido": "Un **dataset** es una colección de **examples**, versionada y reutilizable entre experiments. Cada example tiene:\n\n- `inputs`: un dict con lo que **sí** recibe tu agente (el *target*).\n- `outputs` (*reference outputs*, opcional): la respuesta esperada. **Nunca** se le pasa al agente; solo la leen los evaluators.\n- `metadata` (opcional): información extra, como versión, escenario o de dónde salió.\n\nLos reference outputs solo hacen falta si algún evaluator los usa, por ejemplo un juez que compara con la respuesta correcta (evaluación *reference-based*). El dataset del curso no los tiene: solo trae `question`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Del CSV del curso a examples",
+   "contenido": "import csv\n\nRUTA = r\"C:/ruta/a/tus/cursos/04 Building Reliable Agents with LangSmith/lca-reliable-agents/python/module-2/lesson-2/officeflow-dataset.csv\"\n\nwith open(RUTA, encoding=\"utf-8\") as f:\n    filas = list(csv.DictReader(f))   # cada fila es un dict: {\"question\": \"...\"}\n\nprint(\"Columnas:\", list(filas[0].keys()))\nprint(\"Ejemplos:\", len(filas))\n\n# Cada fila se vuelve un example con el formato de LangSmith\nexamples = [\n    {\n        \"inputs\": {\"question\": fila[\"question\"]},\n        \"outputs\": None,                  # sin reference outputs\n        \"metadata\": {\"fila\": i},\n    }\n    for i, fila in enumerate(filas, start=1)\n]\n\nfor n in (1, 9, 14):\n    print(examples[n - 1])",
+   "notas": "`csv.DictReader` lee cada fila como un dict cuyas keys son los encabezados. La list comprehension arma un example por fila; `enumerate(filas, start=1)` numera las filas desde 1. Salida real:\n`Columnas: ['question']` · `Ejemplos: 25`\nfila 1: `{'inputs': {'question': 'How many reams of copy paper do you currently have available?'}, 'outputs': None, 'metadata': {'fila': 1}}`\nfila 9: la de comida para gatos · fila 14: la queja por la engrapadora.",
+   "resaltar": [
+    6,
+    14,
+    18
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las 25 preguntas por escenario del PRD",
+   "contenido": "| Escenario | Filas | Qué ponen a prueba |\n|---|---|---|\n| Inventario | 1–5, 7, 12, 13, 15 | 1, 2, 5 y 7 piden la **cantidad exacta** (regla de no revelar stock). 12, 13 y 15 (sticky notes, packing tape, paper clips) **no existen** en la base: que no invente |\n| Políticas y empresa | 11, 16, 18, 21–25 | horarios, devoluciones, envíos, pagos, cuentas, ubicaciones, historia |\n| Varias cosas a la vez | 8, 10 | dos productos; o stock + precio + envío (las dos tools) |\n| Fuera de alcance | 9 | comida para gatos |\n| Quejas con enojo | 6, 14, 17, 19, 20 | tono y a quién derivar |\n\nDel PRD salen los escenarios; de cada escenario, unas cuantas preguntas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo crece el dataset",
+   "contenido": "**Empieza chico y de alta calidad.** Demasiados ejemplos al principio frenan: analizas más de lo que iteras. Involucra a expertos del dominio: saben qué debería contestar el agente.\n\nUna vez con usuarios reales, agrega:\n- ejemplos que sacaron un score bajo en una **online eval**;\n- ejemplos con **feedback negativo** de usuarios;\n- inputs **que el PRD no cubría**.\n\n**Formas de agregar examples:** subir un CSV en la UI (mapeando columnas a inputs y outputs), desde el SDK, con *Add to dataset* desde un trace en la UI, con una **automation** que los manda solos (3.B) o generándolos con IA."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Subir y agregar examples desde el SDK",
+   "contenido": "import csv\nfrom dotenv import load_dotenv\nfrom langsmith import Client\n\nload_dotenv()\nclient = Client()   # usa LANGSMITH_API_KEY del .env\n\nwith open(\"module-2/lesson-2/officeflow-dataset.csv\", encoding=\"utf-8\") as f:\n    filas = list(csv.DictReader(f))\n\n# 1) Crear el dataset y subir las 25 preguntas (solo inputs)\ndataset = client.create_dataset(\"officeflow-dataset\", description=\"25 preguntas del PRD de Emma\")\nclient.create_examples(\n    dataset_id=dataset.id,\n    examples=[{\"inputs\": {\"question\": fila[\"question\"]}} for fila in filas],\n)\n\n# 2) Más tarde: agregar un example que salió de producción, ahora con referencia y metadata\nclient.create_examples(\n    dataset_name=\"officeflow-dataset\",\n    examples=[{\n        \"inputs\": {\"question\": \"Do you sell standing desks?\"},\n        \"outputs\": {\"answer\": \"We don't carry standing desks.\"},\n        \"metadata\": {\"fuente\": \"produccion\", \"escenario\": \"inventario\"},\n    }],\n)",
+   "notas": "Se corre desde `python/` con `LANGSMITH_API_KEY`. No lo corrí contra LangSmith (no hay cuenta aquí): lo verifiqué con la red simulada en langsmith 0.14. El SDK armó `POST /datasets` y dos `POST /examples/bulk`: el primero con las 25 preguntas como `inputs` y el segundo con `inputs`, `outputs` y `metadata`.\nEl segundo bloque es el caso típico de producción: un input que el PRD no cubría entra con su respuesta de referencia.",
+   "resaltar": [
+    12,
+    14,
+    20
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La fila 10",
+   "contenido": "De la tabla del paso 7, toma la fila 10:\n\n*OK here's what I need: 1) How many reams of copy paper do you have? 2) What's the price on blue pens? 3) Do you offer free shipping?*\n\n¿Qué tools debería usar Emma? ¿Qué reglas del PRD pone a prueba? Pista: recuerda el schema de `inventory.db` de la lección 1.B (`items(item_id, sku_label)` y `stock_levels(item_id, available_units)`).",
+   "respuesta": "Las dos tools: SQL para el papel y las plumas, knowledge base para el envío gratis. Pone a prueba dos reglas: no revelar la cantidad exacta (pide \"how many\") y **no inventar**. La base no tiene precios (`SELECT sku_label, price FROM items` da `Error: no such column: price`), así que Emma no debe inventar un precio: debe decir que no lo tiene y derivar a ventas. Es de las preguntas que más fallas puede mostrar."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué recibe el agente?",
+   "contenido": "Agregas al dataset un example con `inputs={\"question\": \"Do you sell standing desks?\"}` y `outputs={\"answer\": \"We don't carry standing desks.\"}`. Corres un experiment. ¿Qué recibe la función target (tu agente)?\n\nA) `{\"question\": \"Do you sell standing desks?\", \"answer\": \"We don't carry standing desks.\"}`\nB) Solo `{\"question\": \"Do you sell standing desks?\"}`\nC) El example completo, con metadata.\nD) Solo `{\"answer\": ...}`, para compararse.",
+   "respuesta": "**B.** El target recibe solo `inputs`. Los reference outputs existen para los evaluators, que comparan lo que hizo el agente contra lo esperado. Si el agente viera la respuesta, el test no mediría nada: sería como darle al alumno el examen resuelto. La metadata tampoco le llega; sirve para filtrar y analizar."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué nivel de evaluación?",
+   "contenido": "Para cada caso, ¿step, final response o trajectory?\n\n(a) Emma contestó bien, pero llamó 3 veces `search_knowledge_base` con la misma query.\n(b) Quieres saber si la query SQL que genera para \"staplers\" es válida, sin correr a Emma completa.\n(c) Quieres saber si la respuesta final a la pregunta de comida para gatos declina con amabilidad.",
+   "respuesta": "(a) **Trajectory**: la respuesta está bien, el problema es el camino (eficiencia, llamadas repetidas). (b) **Step / unit**: un solo paso probado aislado. (c) **Final response**: solo importa lo que le llega al cliente. El examen suele poner casos como (a): mirar solo la respuesta final no lo ve."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Eval = decidir qué medir → dataset → evaluator → experiment.\n- Example = `inputs` (los recibe el agente) + reference `outputs` opcionales (solo para evaluators) + `metadata`.\n- Niveles: step, final response, trajectory. Evaluators: código, LLM-as-judge, humano; los mejores usan los tres.\n- Los escenarios salen del PRD; empieza con pocos ejemplos buenos y crece con lo que falla en producción.\n- Agregar examples: CSV en la UI, SDK (`create_examples`), *Add to dataset* desde un trace, automations.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Evaluation concepts* (datasets, examples, evaluators, experiments) y *Manage datasets* (crear, subir CSV, agregar examples)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-2/evaluating-agents",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-2/datasets",
+  "module-2/lesson-2/officeflow-dataset.csv"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Los reference outputs de un example se le pasan al agente?",
+   "reverso": "No. El agente recibe solo inputs; los reference outputs solo los leen los evaluators."
+  },
+  {
+   "frente": "¿Siempre necesitas reference outputs en tu dataset?",
+   "reverso": "No. Solo si algún evaluator los usa (reference-based). El dataset del curso solo tiene question."
+  },
+  {
+   "frente": "Emma llegó a la respuesta correcta pero repitió 3 veces la misma tool call. ¿Qué nivel de eval lo detecta?",
+   "reverso": "Trajectory: evalúa el camino (pasos, tools, orden), no solo la respuesta final."
+  },
+  {
+   "frente": "¿Por qué empezar con pocos ejemplos de alta calidad?",
+   "reverso": "Iteras más rápido; demasiados ejemplos al principio llevan a parálisis de análisis. El dataset crece con lo que falla en producción."
+  },
+  {
+   "frente": "Ya en producción, ¿de dónde salen ejemplos nuevos para el dataset?",
+   "reverso": "De traces con score bajo en online evals, de feedback negativo de usuarios y de inputs que el PRD no cubría."
+  },
+  {
+   "frente": "¿Cuáles son los 4 pasos para crear un eval?",
+   "reverso": "Decidir qué medir, crear el dataset, crear el evaluator y correr el experiment."
+  },
+  {
+   "frente": "¿Cuántas formas conoces de agregar examples a un dataset de LangSmith?",
+   "reverso": "Subir un CSV en la UI, el SDK (create_examples), Add to dataset desde un trace, una automation, o generarlos con IA."
+  }
+ ]
+}

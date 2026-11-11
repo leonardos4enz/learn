@@ -1,0 +1,96 @@
+{
+ "mision_id": "2.F",
+ "titulo": "Memoria que sobrevive reinicios",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "El chatbot de 2.E recuerda entre turnos gracias a `MemorySaver`. Pero `MemorySaver` guarda los checkpoints en la **RAM del proceso de Python**. Si reinicias el kernel, el servidor o el script, la conversación desaparece, aunque uses el mismo `thread_id`.\n\nPara que la memoria sobreviva necesitas un checkpointer que escriba en disco o en una base de datos. El más sencillo es `SqliteSaver`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un script, dos checkpointers",
+   "contenido": "import sys\nimport sqlite3\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.checkpoint.sqlite import SqliteSaver\n\ndef eco(state: MessagesState):\n    return {\"messages\": [AIMessage(f\"Ya van {len(state['messages'])} mensajes en este thread\")]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"eco\", eco)\nbuilder.add_edge(START, \"eco\")\nbuilder.add_edge(\"eco\", END)\n\nif sys.argv[1] == \"memory\":\n    memory = MemorySaver()\nelse:\n    conn = sqlite3.connect(\"chat.db\", check_same_thread=False)\n    memory = SqliteSaver(conn)\n\ngraph = builder.compile(checkpointer=memory)\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\nantes = graph.get_state(config).values.get(\"messages\", [])\nprint(f\"Al arrancar el proceso hay {len(antes)} mensajes guardados\")\noutput = graph.invoke({\"messages\": [HumanMessage(\"hola\")]}, config)\nprint(output[\"messages\"][-1].content)",
+   "notas": "Grafo de Python puro: `eco` dice cuántos mensajes hay en el thread. El argumento elige el checkpointer. Lo importante: **cada ejecución del script es un proceso nuevo**, como reiniciar el kernel. `check_same_thread=False` deja que LangGraph use la conexión desde otros hilos.",
+   "resaltar": [
+    17,
+    20
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo corres cuatro veces",
+   "contenido": "Cuatro procesos distintos, mismo `thread_id = \"1\"`. Salida real:\n\n```\n$ python persistencia.py memory\nAl arrancar el proceso hay 0 mensajes guardados\nYa van 1 mensajes en este thread\n$ python persistencia.py memory\nAl arrancar el proceso hay 0 mensajes guardados\nYa van 1 mensajes en este thread\n$ python persistencia.py sqlite\nAl arrancar el proceso hay 0 mensajes guardados\nYa van 1 mensajes en este thread\n$ python persistencia.py sqlite\nAl arrancar el proceso hay 2 mensajes guardados\nYa van 3 mensajes en este thread\n```\n\nCon `memory`, el segundo proceso empieza de cero. Con `sqlite`, el segundo encuentra los 2 mensajes del primero en `chat.db`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué pasa",
+   "contenido": "Un checkpointer guarda un *checkpoint* (una foto del state) después de cada step, bajo un `thread_id`.\n\n- `MemorySaver` lo guarda en un dict dentro del proceso. El proceso termina y el dict se va con él.\n- `SqliteSaver` lo escribe en un archivo. Otro proceso abre el mismo archivo y lee el último checkpoint del thread.\n\nEl grafo es idéntico: nodes, edges y `invoke` no cambian. Solo cambia el objeto que le pasas a `compile(checkpointer=...)`. En producción se usa la misma interfaz con Postgres; un Agent Server desplegado ya trae su propia persistencia en base de datos."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El chatbot de 2.E con SqliteSaver",
+   "contenido": "import sys\nimport sqlite3\nfrom typing import Literal\nfrom dotenv import load_dotenv\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.checkpoint.sqlite import SqliteSaver\n\nload_dotenv(\"module-1/studio/.env\")\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n\nclass State(MessagesState):\n    summary: str\n\ndef call_model(state: State):\n    summary = state.get(\"summary\", \"\")\n    if summary:\n        system_message = f\"Summary of conversation earlier: {summary}\"\n        messages = [SystemMessage(content=system_message)] + state[\"messages\"]\n    else:\n        messages = state[\"messages\"]\n    response = model.invoke(messages)\n    return {\"messages\": response}\n\ndef summarize_conversation(state: State):\n    summary = state.get(\"summary\", \"\")\n    if summary:\n        summary_message = (\n            f\"This is summary of the conversation to date: {summary}\\n\\n\"\n            \"Extend the summary by taking into account the new messages above:\"\n        )\n    else:\n        summary_message = \"Create a summary of the conversation above:\"\n    messages = state[\"messages\"] + [HumanMessage(content=summary_message)]\n    response = model.invoke(messages)\n    delete_messages = [RemoveMessage(id=m.id) for m in state[\"messages\"][:-2]]\n    return {\"summary\": response.content, \"messages\": delete_messages}\n\ndef should_continue(state: State) -> Literal[\"summarize_conversation\", \"__end__\"]:\n    if len(state[\"messages\"]) > 6:\n        return \"summarize_conversation\"\n    return END\n\nworkflow = StateGraph(State)\nworkflow.add_node(\"conversation\", call_model)\nworkflow.add_node(summarize_conversation)\nworkflow.add_edge(START, \"conversation\")\nworkflow.add_conditional_edges(\"conversation\", should_continue)\nworkflow.add_edge(\"summarize_conversation\", END)\n\n# La única diferencia con el chatbot de 2.E: el checkpointer\nconn = sqlite3.connect(\"chatbot.db\", check_same_thread=False)\nmemory = SqliteSaver(conn)\ngraph = workflow.compile(checkpointer=memory)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\noutput = graph.invoke({\"messages\": [HumanMessage(content=sys.argv[1])]}, config)\nprint(\"Bot:\", output[\"messages\"][-1].content)",
+   "notas": "Es el chatbot con resumen de 2.E. Solo cambian el checkpointer y que el mensaje llega por `sys.argv[1]`, para poder mandar un turno por proceso. Córrelo desde `langchain-academy` (carga la key de `module-1/studio/.env`); crea `chatbot.db` en esa carpeta.",
+   "resaltar": [
+    53,
+    54
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres procesos, una conversación",
+   "contenido": "Salida real, cada línea `$` es un proceso nuevo:\n\n```\n$ python chatbot_sqlite.py \"hi! I'm Lance\"\nBot: Hi Lance! How can I assist you today?\n$ python chatbot_sqlite.py \"i like the 49ers!\"\nBot: That's great! The San Francisco 49ers have a rich history...\n$ python chatbot_sqlite.py \"what's my name, and which team do I like?\"\nBot: Your name is Lance, and you like the San Francisco 49ers!\n```\n\nEl tercer proceso nunca vio los dos primeros mensajes en su RAM: los leyó de `chatbot.db`. Con `MemorySaver`, el tercer turno no sabría tu nombre."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "SQLite en memoria",
+   "contenido": "Tomas `persistencia.py` del paso 2 y solo cambias la conexión a `\":memory:\"`:\n\n```python\nimport sys\nimport sqlite3\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.checkpoint.sqlite import SqliteSaver\n\ndef eco(state: MessagesState):\n    return {\"messages\": [AIMessage(f\"Ya van {len(state['messages'])} mensajes en este thread\")]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"eco\", eco)\nbuilder.add_edge(START, \"eco\")\nbuilder.add_edge(\"eco\", END)\n\nif sys.argv[1] == \"memory\":\n    memory = MemorySaver()\nelse:\n    conn = sqlite3.connect(\":memory:\", check_same_thread=False)\n    memory = SqliteSaver(conn)\n\ngraph = builder.compile(checkpointer=memory)\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\nantes = graph.get_state(config).values.get(\"messages\", [])\nprint(f\"Al arrancar el proceso hay {len(antes)} mensajes guardados\")\noutput = graph.invoke({\"messages\": [HumanMessage(\"hola\")]}, config)\nprint(output[\"messages\"][-1].content)\n```\n\nCorres `python persistencia.py sqlite` dos veces. ¿Cuántos mensajes encuentra el segundo proceso al arrancar?",
+   "respuesta": "Cero. Salida real: las dos veces `Al arrancar el proceso hay 0 mensajes guardados`. `\":memory:\"` crea una base SQLite en la RAM del proceso, así que se comporta como `MemorySaver`. Lo que persiste es el **archivo**, no el nombre `SqliteSaver`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Mismo archivo, otro thread",
+   "contenido": "`chat.db` ya tiene la conversación del thread `\"1\"` (las corridas del paso 3). Corres esta copia de `persistencia.py`, que solo cambia el `thread_id` a `\"2\"`, con `python persistencia_thread2.py sqlite`:\n\n```python\nimport sys\nimport sqlite3\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.checkpoint.sqlite import SqliteSaver\n\ndef eco(state: MessagesState):\n    return {\"messages\": [AIMessage(f\"Ya van {len(state['messages'])} mensajes en este thread\")]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"eco\", eco)\nbuilder.add_edge(START, \"eco\")\nbuilder.add_edge(\"eco\", END)\n\nif sys.argv[1] == \"memory\":\n    memory = MemorySaver()\nelse:\n    conn = sqlite3.connect(\"chat.db\", check_same_thread=False)\n    memory = SqliteSaver(conn)\n\ngraph = builder.compile(checkpointer=memory)\nconfig = {\"configurable\": {\"thread_id\": \"2\"}}\n\nantes = graph.get_state(config).values.get(\"messages\", [])\nprint(f\"Al arrancar el proceso hay {len(antes)} mensajes guardados\")\noutput = graph.invoke({\"messages\": [HumanMessage(\"hola\")]}, config)\nprint(output[\"messages\"][-1].content)\n```\n\n¿Cuántos mensajes encuentra al arrancar?",
+   "respuesta": "Cero. Salida real: `Al arrancar el proceso hay 0 mensajes guardados` y `Ya van 1 mensajes en este thread`. El `thread_id` es la llave: cada thread es una conversación separada dentro del mismo archivo. Es lo que Studio y el Agent Server llaman *threads*."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Una corrida más",
+   "contenido": "Después de las cuatro corridas del paso 3 y de la del thread `\"2\"`, vuelves a correr el `persistencia.py` del paso 2 con `python persistencia.py sqlite` (thread `\"1\"`). ¿Qué imprime?",
+   "respuesta": "Salida real: `Al arrancar el proceso hay 4 mensajes guardados` y `Ya van 5 mensajes en este thread`. El thread `\"1\"` tenía 4 (dos turnos de humano + `eco`); el thread `\"2\"` no lo tocó. Cada proceso nuevo continúa donde quedó el anterior.",
+   "ref": 2
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `MemorySaver` vive en la RAM del proceso: sirve para notebooks y tests, no sobrevive un reinicio.\n- `SqliteSaver(conn)` escribe los checkpoints en un archivo; otro proceso los lee con el mismo `thread_id`.\n- El grafo no cambia: solo el objeto que pasas a `compile(checkpointer=...)`.\n- Es la misma memoria de corto plazo (por thread) del Módulo 1 y de `create_agent` (curso 01), ahora persistente. En Deep Agents verás los mismos checkpointers."
+  }
+ ],
+ "fuentes": [
+  "module-2/chatbot-external-memory.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Usas `MemorySaver` y el mismo `thread_id`, pero reinicias el kernel. ¿Se recupera la conversación?",
+   "reverso": "No. `MemorySaver` guarda los checkpoints en la RAM del proceso; al reiniciar, se pierden. Para sobrevivir necesitas un checkpointer en disco o base de datos."
+  },
+  {
+   "frente": "¿Qué cambias en un grafo para pasar de `MemorySaver` a `SqliteSaver`?",
+   "reverso": "Solo el checkpointer que pasas a `compile(checkpointer=...)`. Nodes, edges e `invoke` quedan igual."
+  },
+  {
+   "frente": "`SqliteSaver(sqlite3.connect(\":memory:\"))`: ¿persiste entre procesos?",
+   "reverso": "No. `\":memory:\"` es una base en la RAM del proceso. Lo que persiste es un archivo `.db`."
+  },
+  {
+   "frente": "El archivo `.db` tiene la conversación del thread 1. Invocas con thread 2. ¿Qué ve el grafo?",
+   "reverso": "Un state vacío. El `thread_id` es la llave de cada conversación dentro del checkpointer."
+  },
+  {
+   "frente": "¿Cuándo basta `MemorySaver` y cuándo no?",
+   "reverso": "Basta en notebooks, tests y demos de un solo proceso. No basta cuando el proceso se reinicia o hay varios procesos (un servidor): ahí usas SQLite o Postgres."
+  }
+ ]
+}

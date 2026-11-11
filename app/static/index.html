@@ -259,6 +259,11 @@ details.rama:not([open]) > summary.sh{margin-bottom:4px}
 .gcur.g-ruta .ring .rt{stroke:var(--ruta-soft)}
 .gcur.g-ruta .gt b{color:var(--ink)}
 .gn.g-fuera{opacity:.35}
+.gpdf{flex:none;font:700 10.5px var(--f-mono);letter-spacing:.04em;color:var(--acc-ink);border:1px solid var(--line);background:var(--panel);
+  border-radius:6px;padding:2px 6px;text-decoration:none;opacity:0;transition:opacity .12s}
+.gnw:hover .gpdf,.gnw:focus-within .gpdf,.gpdf:focus-visible{opacity:1}
+.gpdf:hover{border-color:var(--acc)}
+@media (hover:none){.gpdf{opacity:.85}}
 .gcur.g-ruta.g-pausa{opacity:.85}
 .gn.g-fuera:hover{opacity:.8}
 .gord{position:absolute;left:-7px;top:2px;width:18px;height:18px;border-radius:50%;background:var(--ruta);color:#fff;font:700 10.5px/18px var(--f-mono);text-align:center;z-index:1}
@@ -271,7 +276,8 @@ main{min-width:0}  /* sin esto, el grafo ancho estira la columna y toda la pági
 .gedges{position:absolute;inset:0}
 .gedges path{fill:none;stroke:var(--line);stroke-width:2}
 .gedges path.on{stroke:var(--acc);stroke-width:2.5}
-.gn{position:absolute;display:flex;align-items:center;gap:8px;height:52px;padding:0 8px 0 0;border:0;background:none;cursor:pointer;text-align:left;border-radius:24px 10px 10px 24px;color:var(--ink)}
+.gnw{position:absolute;display:flex;align-items:center;gap:4px;height:52px}
+.gn{position:relative;flex:0 1 auto;max-width:100%;display:flex;align-items:center;gap:8px;height:52px;padding:0 8px 0 0;border:0;background:none;cursor:pointer;text-align:left;border-radius:24px 10px 10px 24px;color:var(--ink)}
 .gn:hover{background:var(--panel2)}
 .gn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .gn .gt{display:flex;flex-direction:column;min-width:0;line-height:1.25}
@@ -928,7 +934,7 @@ function anillo(pct, r, centro, cls = ""){
     <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle">${centro}</text></svg>`;
 }
 function renderGrafo(){
-  const cerradas = ramasCerradas(), ROW = 58, COL = 210, PX = 22, PY = 34, CAJA = COL - 52;  // CAJA: ancho de un nodo con hijos; la arista sale donde termina su nombre
+  const cerradas = ramasCerradas(), ROW = 58, COL = 222, PX = 22, PY = 34, CAJA = COL - 48;  // CAJA: ancho de un nodo con hijos; la arista sale donde termina su nombre
   const nodos = [], aristas = [];
   let fila = 0, prof = 0;
   // Disposición de árbol: cada hoja ocupa una fila; un padre queda a la mitad entre su primer y su último hijo.
@@ -963,11 +969,14 @@ function renderGrafo(){
   }).join("");
   const htmlNodo = g => {
     // Un nodo sin nada a su derecha (hoja) usa todo el ancho libre; uno con hijos, solo su columna.
+    // Cada rama o curso lleva al lado su botón PDF (exporta todo lo que cuelga de ese nodo).
     const n = g.n, st = `left:${X(g) - 18}px;top:${Y(g) - 26}px;width:${g.hijos.length ? CAJA : W - X(g) + 6}px`;
+    const pdf = id => `<a class="gpdf" href="/app/exportar?nodo=${encodeURIComponent(id)}" target="_blank" rel="noopener" title="Exportar a PDF todo lo de este nodo">PDF</a>`;
+    const caja = (boton, id) => `<div class="gnw" style="${st}">${boton}${id ? pdf(id) : ""}</div>`;
     if (n.mod){
       const m = n.mod;
-      return `<button class="gn gmod" style="${st}" data-mod="${esc(m.n)}" title="${esc(partesTxt(m.partes))} · toca para ver sus lecciones">${anillo(m.pct, 13, "M" + esc(m.n), "sm")}
-        <span class="gt"><b>${esc(m.nombre || "Módulo " + m.n)}</b><small>${m.pct}%</small></span></button>`;
+      return caja(`<button class="gn gmod" data-mod="${esc(m.n)}" title="${esc(partesTxt(m.partes))} · toca para ver sus lecciones">${anillo(m.pct, 13, "M" + esc(m.n), "sm")}
+        <span class="gt"><b>${esc(m.nombre || "Módulo " + m.n)}</b><small>${m.pct}%</small></span></button>`);
     }
     if (n.curso){
       const r = n.resumen || {}, pct = r.score ? r.score.pct : (n.estado === "terminado" ? 100 : 0);
@@ -976,16 +985,16 @@ function renderGrafo(){
         rv ? (enRuta.includes(n.id) ? "g-ruta" : "g-fuera") : ""].join(" ");
       const orden = rv && enRuta.includes(n.id) ? `<span class="gord" title="Paso ${enRuta.indexOf(n.id) + 1} de ${enRuta.length} en ${esc(rv.nombre)}">${enRuta.indexOf(n.id) + 1}</span>` : "";
       const centro = n.estado === "terminado" ? "✓" : `${pct}`;
-      return `<button class="gn ${cls}" style="${st}" data-curso="${esc(n.id)}" title="${esc(n.nombre)}${n.nota ? " · " + esc(n.nota) : ""}${n.id === curso ? " · toca otra vez para ir a Hoy" : ""}">${orden}${anillo(pct, 17, centro)}
-        <span class="gt"><b>${esc(n.nombre)}</b><small>${sub}${n.estado === "actual" ? ` <em class="chip ok">Actual</em>` : ""}</small></span></button>`;
+      return caja(`<button class="gn ${cls}" data-curso="${esc(n.id)}" title="${esc(n.nombre)}${n.nota ? " · " + esc(n.nota) : ""}${n.id === curso ? " · toca otra vez para ir a Hoy" : ""}">${orden}${anillo(pct, 17, centro)}
+        <span class="gt"><b>${esc(n.nombre)}</b><small>${sub}${n.estado === "actual" ? ` <em class="chip ok">Actual</em>` : ""}</small></span></button>`, n.id);
     }
     const cs = aplanar([n]), cerrada = cerradas.has(n.id), nr = rv ? rutaEnRama(n) : 0;
-    return `<button class="gn grama ${cerrada ? "g-cerrada" : ""} ${rv && !nr ? "g-fuera" : ""}" style="${st}" data-rama="${esc(n.id)}" aria-expanded="${!cerrada}" title="${cerrada ? "Abrir" : "Cerrar"} la rama">${anillo(n.score_pct || 0, 17, cerrada ? "+" : `${n.score_pct || 0}`)}
-      <span class="gt"><b>${esc(n.nombre)}</b><small>${cs.length} ${cs.length === 1 ? "curso" : "cursos"}${cerrada && cs.some(c => c.estado === "actual") ? ` <em class="chip ok">Actual</em>` : ""}${cerrada && nr ? ` <em class="chip gr">${nr} de la ruta</em>` : ""}</small></span></button>`;
+    return caja(`<button class="gn grama ${cerrada ? "g-cerrada" : ""} ${rv && !nr ? "g-fuera" : ""}" data-rama="${esc(n.id)}" aria-expanded="${!cerrada}" title="${cerrada ? "Abrir" : "Cerrar"} la rama">${anillo(n.score_pct || 0, 17, cerrada ? "+" : `${n.score_pct || 0}`)}
+      <span class="gt"><b>${esc(n.nombre)}</b><small>${cs.length} ${cs.length === 1 ? "curso" : "cursos"}${cerrada && cs.some(c => c.estado === "actual") ? ` <em class="chip ok">Actual</em>` : ""}${cerrada && nr ? ` <em class="chip gr">${nr} de la ruta</em>` : ""}</small></span></button>`, n.id);
   };
   $("#grafo").innerHTML = `<div class="gcanvas" style="width:${W}px;height:${H}px"><svg class="gedges" width="${W}" height="${H}" aria-hidden="true">${lineas}</svg>${nodos.map(htmlNodo).join("")}</div>`;
   const sel = $("#grafo .g-sel"), wrap = $("#grafo");
-  if (sel && wrap.scrollWidth > wrap.clientWidth) wrap.scrollLeft = Math.max(0, sel.offsetLeft - 60);
+  if (sel && wrap.scrollWidth > wrap.clientWidth) wrap.scrollLeft = Math.max(0, sel.closest(".gnw").offsetLeft - 60);
   $("#grafo").querySelectorAll("[data-rama]").forEach(b => b.onclick = () => {
     const s = ramasCerradas(), id = b.dataset.rama;
     s.has(id) ? s.delete(id) : s.add(id); store.set("ramas_cerradas", JSON.stringify([...s])); renderGrafo();

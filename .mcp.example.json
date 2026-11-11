@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "mi-tutor": {
+      "type": "http",
+      "url": "https://TU-APP/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MI_TUTOR_TOKEN}"
+      }
+    },
+    "docs-langchain": {
+      "type": "http",
+      "url": "https://docs.langchain.com/mcp"
+    }
+  }
+}

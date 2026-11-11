@@ -1,0 +1,134 @@
+{
+ "mision_id": "1.A",
+ "titulo": "Observability y tracing",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En una app normal, si algo falla, buscas en los logs la línea que tronó: las decisiones están escritas en tu código y son deterministas.\n\nEn un agente **las decisiones las toma el modelo**. Tu código solo pone el andamio: el modelo, el system prompt y las tools. Si Emma contesta mal, un log no te dice qué tool llamó, con qué argumentos, qué le regresó ni en qué paso se desvió. No puedes ver cómo razona el modelo por dentro, pero sí **lo que hace**: cada llamada, tool call y mensaje. Juntos reconstruyen la secuencia de acciones. Eso es un **trace**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dos formas de trazar",
+   "contenido": "1. **Con una integración.** Si tu agente usa LangChain, LangGraph, Deep Agents, OpenAI Agents SDK, Claude Agent SDK o Vercel AI SDK, basta con las variables de entorno (`LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`). LangSmith también recibe y exporta OpenTelemetry.\n2. **A mano** (este curso, porque Emma usa el SDK de OpenAI directo), en 3 pasos:\n   - `wrap_openai(client)` (o `wrap_anthropic`, `wrap_gemini`): cada llamada al LLM se vuelve un run de tipo `llm`.\n   - `@traceable` en tus funciones; `run_type=\"tool\"` en las tools para que la UI las muestre como tools.\n   - metadata `thread_id` (o `session_id` / `conversation_id`) para agrupar los turnos de una conversación en un thread."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente del clima, trazado",
+   "contenido": "from openai import OpenAI\nfrom langsmith.wrappers import wrap_openai\nfrom langsmith import traceable\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\nclient = wrap_openai(OpenAI())\n\n@traceable(run_type=\"tool\")\ndef weather_retriever():\n    \"\"\"Retrieve current weather information.\"\"\"\n    return \"It is sunny today\"\n\n# Define the tool schema for OpenAI\nWEATHER_TOOL = {\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"weather_retriever\",\n        \"description\": \"Get the current weather conditions\",\n        \"parameters\": {\n            \"type\": \"object\",\n            \"properties\": {},\n            \"required\": []\n        }\n    }\n}\n\n@traceable\ndef agent(question: str) -> str:\n\n    messages = [{\"role\": \"user\", \"content\": question}]\n\n    # First API call with tool available\n    response = client.chat.completions.create(\n        model=\"gpt-5-nano\",\n        messages=messages,\n        tools=[WEATHER_TOOL],\n        tool_choice=\"auto\"\n    )\n\n    response_message = response.choices[0].message\n\n    # Handle tool calls if the model wants to use them\n    if response_message.tool_calls:\n        # Add assistant's tool call to messages\n        messages.append({\n            \"role\": \"assistant\",\n            \"content\": response_message.content or \"\",\n            \"tool_calls\": [\n                {\n                    \"id\": tc.id,\n                    \"type\": tc.type,\n                    \"function\": {\n                        \"name\": tc.function.name,\n                        \"arguments\": tc.function.arguments\n                    }\n                }\n                for tc in response_message.tool_calls\n            ]\n        })\n\n        # Execute the tool call(s)\n        for tool_call in response_message.tool_calls:\n            if tool_call.function.name == \"weather_retriever\":\n                result = weather_retriever()\n\n                # Add tool result to messages\n                messages.append({\n                    \"role\": \"tool\",\n                    \"tool_call_id\": tool_call.id,\n                    \"name\": \"weather_retriever\",\n                    \"content\": result\n                })\n\n        # Make second API call with tool results\n        response = client.chat.completions.create(\n            model=\"gpt-5-nano\",\n            messages=messages,\n            tools=[WEATHER_TOOL],\n            tool_choice=\"auto\"\n        )\n        response_message = response.choices[0].message\n\n    messages.append({\"role\": \"assistant\", \"content\": response_message.content})\n    return {\"messages\": messages, \"output\": response_message.content}\n\nif __name__ == \"__main__\":\n    result = agent(\"What is the weather today?\")\n    print(result[\"output\"])",
+   "notas": "`module-1/lesson-2/third_party_agent.py`. Respecto a la versión sin tracing solo cambian: los imports, `wrap_openai(OpenAI())` y los dos `@traceable`. La lógica es idéntica.\nDevuelve **toda la lista de messages**, no solo el texto: así el output del trace muestra las tool calls, y en el Módulo 2 los evaluators las podrán leer.\nNecesita `OPENAI_API_KEY` y `LANGSMITH_API_KEY`; en el paso siguiente lo reproduzco sin keys.",
+   "resaltar": [
+    8,
+    10,
+    29
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El mismo agente, sin red: el árbol del trace",
+   "contenido": "import warnings\nwarnings.filterwarnings(\"ignore\")  # aviso de \"falta API key\": aquí no se envía nada\nfrom langsmith import traceable, tracing_context\nfrom langsmith.run_helpers import get_current_run_tree\n\n# Hace de LLM (en el curso: client = wrap_openai(OpenAI()))\n@traceable(run_type=\"llm\", name=\"ChatOpenAI\")\ndef fake_llm(messages: list) -> dict:\n    if messages[-1][\"role\"] == \"user\":\n        return {\"role\": \"assistant\", \"content\": \"\", \"tool_calls\": [\"weather_retriever\"]}\n    return {\"role\": \"assistant\", \"content\": \"It's sunny today!\"}\n\n@traceable(run_type=\"tool\")\ndef weather_retriever():\n    \"\"\"Retrieve current weather information.\"\"\"\n    return \"It is sunny today\"\n\n@traceable\ndef agent(question: str) -> dict:\n    global raiz\n    raiz = get_current_run_tree()\n    messages = [{\"role\": \"user\", \"content\": question}]\n    response = fake_llm(messages)\n    if response.get(\"tool_calls\"):\n        messages.append(response)\n        messages.append({\"role\": \"tool\", \"content\": weather_retriever()})\n        response = fake_llm(messages)\n    messages.append(response)\n    return {\"messages\": messages, \"output\": response[\"content\"]}\n\ndef imprimir(run, nivel=0):\n    print(\"  \" * nivel + f\"- {run.name} ({run.run_type})\")\n    for hijo in run.child_runs:\n        imprimir(hijo, nivel + 1)\n\nwith tracing_context(enabled=\"local\"):   # traza en memoria, no envía nada\n    result = agent(\"What is the weather today?\")\n\nprint(result[\"output\"])\nimprimir(raiz)",
+   "notas": "`fake_llm` hace de LLM con `run_type=\"llm\"` (lo que `wrap_openai` hace por ti). `tracing_context(enabled=\"local\")` arma el trace en memoria y no envía nada. `global raiz` + `get_current_run_tree()` solo guardan el run raíz para imprimir el árbol al final.\nSalida real:\n`It's sunny today!`\n`- agent (chain)` con hijos `ChatOpenAI (llm)`, `weather_retriever (tool)`, `ChatOpenAI (llm)`.\nEse árbol es lo que verías en la UI. `@traceable` sin `run_type` usa `chain`.",
+   "resaltar": [
+    7,
+    13,
+    36
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El tracing observa, no actúa",
+   "contenido": "`@traceable` envuelve tu función: registra inputs, outputs, tiempos y errores, y **devuelve el mismo resultado** que la función sin decorar. `wrap_openai` hace lo mismo con cada llamada al modelo.\n\nSi `LANGSMITH_TRACING` no está en `true`, el código corre igual y simplemente no envía nada. Todos los ejemplos de esta lección corren con el tracing apagado o en modo local, y las respuestas son las mismas.\n\nConsecuencia: el tracing **no le da memoria** al agente ni cambia sus decisiones. Si quieres que Emma recuerde, eso lo programas tú. Lo ves en el siguiente paso."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Say my name: memoria + thread",
+   "contenido": "from langsmith import traceable, uuid7\n\n\nclass FakeOpenAI:\n    \"\"\"Hace de OpenAI: contesta según lo que ve en el historial, sin red.\"\"\"\n    def create(self, model, messages):\n        texto = \" \".join(m[\"content\"] for m in messages if m[\"role\"] == \"user\")\n        if \"What's my name\" in messages[-1][\"content\"]:\n            respuesta = \"Your name is Sally.\" if \"Sally\" in texto else \"I don't know your name.\"\n        else:\n            respuesta = \"Nice to meet you!\"\n        print(f\"  el modelo recibe {len(messages)} mensajes\")\n        return {\"role\": \"assistant\", \"content\": respuesta}\n\n\nclient = FakeOpenAI()\nTHREAD_ID = str(uuid7())\n\n# Conversation history store (use a database in production)\nthread_store: dict[str, list] = {}\n\ndef get_thread_history(thread_id: str) -> list:\n    return thread_store.get(thread_id, [])\n\ndef save_thread_history(thread_id: str, messages: list):\n    thread_store[thread_id] = messages\n\n@traceable(name=\"Name Agent\", metadata={\"thread_id\": THREAD_ID})\ndef chat_pipeline(messages: list):\n    history_messages = get_thread_history(THREAD_ID)\n    all_messages = history_messages + messages\n    response_message = client.create(model=\"gpt-5-nano\", messages=all_messages)\n    full_conversation = all_messages + [response_message]\n    save_thread_history(THREAD_ID, full_conversation)\n    return {\"messages\": full_conversation}\n\nr = chat_pipeline([{\"content\": \"Hi, my name is Sally\", \"role\": \"user\"}])\nprint(r[\"messages\"][-1][\"content\"])\nr = chat_pipeline([{\"content\": \"What's my name?\", \"role\": \"user\"}])\nprint(r[\"messages\"][-1][\"content\"])\nprint(\"Mensajes guardados en thread_store:\", len(thread_store[THREAD_ID]))",
+   "notas": "Es `thread_agent.py` del curso con un LLM falso: `FakeOpenAI` contesta \"Sally\" solo si ve el nombre en los mensajes que recibe. Salida real:\n`el modelo recibe 1 mensajes` → `Nice to meet you!`\n`el modelo recibe 3 mensajes` → `Your name is Sally.`\n`Mensajes guardados en thread_store: 4`\nLa memoria es el dict `thread_store`: tú guardas el historial y tú lo vuelves a mandar. La metadata `thread_id` del decorador solo le dice a LangSmith que los dos traces van en el mismo thread.",
+   "resaltar": [
+    20,
+    28,
+    31
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Contraste con LangGraph",
+   "contenido": "En LangGraph (misión 1.B, `agent-memory`) el checkpointer + `thread_id` en el `config` **eran** la memoria: el grafo cargaba solo el state del thread. Aquí son dos cosas separadas:\n\n| | Lo hace | Para qué |\n|---|---|---|\n| Memoria | tu código (`thread_store`, una base de datos) | que el modelo vea el historial |\n| `metadata={\"thread_id\": ...}` | LangSmith | agrupar los traces en la vista Threads |\n\nPor eso el curso dice que un agente conversacional trazado a mano necesita **las dos**: su propio almacenamiento y la metadata del thread."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Python: los argumentos de un decorador se evalúan una vez",
+   "contenido": "def etiqueta(valor):\n    print(\"decorando con:\", valor)\n    def decorador(func):\n        def envoltura():\n            return f\"{func()} [etiqueta={valor}]\"\n        return envoltura\n    return decorador\n\nthread_id = \"A\"\n\n@etiqueta(thread_id)          # se evalúa AQUÍ, una sola vez\ndef responder():\n    return f\"memoria del thread {thread_id}\"\n\nprint(responder())\nthread_id = \"B\"               # cambias la variable después\nprint(responder())",
+   "notas": "`@etiqueta(thread_id)` se ejecuta cuando Python lee el `def`, no en cada llamada. Salida real:\n`decorando con: A`\n`memoria del thread A [etiqueta=A]`\n`memoria del thread B [etiqueta=A]`\nLa función lee `thread_id` en cada llamada (por eso cambia a B), pero la etiqueta se quedó con A para siempre. Lo vas a necesitar en un predice.",
+   "resaltar": [
+    11,
+    16
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin guardar el historial",
+   "contenido": "Tomas el agente del paso 6 y comentas la línea que guarda el historial. La metadata `thread_id` se queda igual:\n\n```python\nfrom langsmith import traceable, uuid7\n\n\nclass FakeOpenAI:\n    \"\"\"Hace de OpenAI: contesta según lo que ve en el historial, sin red.\"\"\"\n    def create(self, model, messages):\n        texto = \" \".join(m[\"content\"] for m in messages if m[\"role\"] == \"user\")\n        if \"What's my name\" in messages[-1][\"content\"]:\n            respuesta = \"Your name is Sally.\" if \"Sally\" in texto else \"I don't know your name.\"\n        else:\n            respuesta = \"Nice to meet you!\"\n        print(f\"  el modelo recibe {len(messages)} mensajes\")\n        return {\"role\": \"assistant\", \"content\": respuesta}\n\n\nclient = FakeOpenAI()\nTHREAD_ID = str(uuid7())\n\n# Conversation history store (use a database in production)\nthread_store: dict[str, list] = {}\n\ndef get_thread_history(thread_id: str) -> list:\n    return thread_store.get(thread_id, [])\n\ndef save_thread_history(thread_id: str, messages: list):\n    thread_store[thread_id] = messages\n\n@traceable(name=\"Name Agent\", metadata={\"thread_id\": THREAD_ID})\ndef chat_pipeline(messages: list):\n    history_messages = get_thread_history(THREAD_ID)\n    all_messages = history_messages + messages\n    response_message = client.create(model=\"gpt-5-nano\", messages=all_messages)\n    full_conversation = all_messages + [response_message]\n    # save_thread_history(THREAD_ID, full_conversation)  <- quitada\n    return {\"messages\": full_conversation}\n\nr = chat_pipeline([{\"content\": \"Hi, my name is Sally\", \"role\": \"user\"}])\nprint(r[\"messages\"][-1][\"content\"])\nr = chat_pipeline([{\"content\": \"What's my name?\", \"role\": \"user\"}])\nprint(r[\"messages\"][-1][\"content\"])\nprint(\"thread_store:\", thread_store)\n```\n\n¿Qué contesta el segundo turno? ¿Y en LangSmith, los dos traces salen en el mismo thread?",
+   "respuesta": "Salida real: `el modelo recibe 1 mensajes` en los dos turnos, `I don't know your name.` y `thread_store: {}`. Sin guardar, el historial siempre está vacío y el modelo nunca ve \"Sally\". Pero en LangSmith los dos traces **sí** salen en el mismo thread, porque la metadata sigue en el decorador. Agrupar no es recordar."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin @traceable en la tool",
+   "contenido": "Al agente del paso 4 le quitas el decorador de la tool:\n\n```python\nimport warnings\nwarnings.filterwarnings(\"ignore\")  # aviso de \"falta API key\": aquí no se envía nada\nfrom langsmith import traceable, tracing_context\nfrom langsmith.run_helpers import get_current_run_tree\n\n# Hace de LLM (en el curso: client = wrap_openai(OpenAI()))\n@traceable(run_type=\"llm\", name=\"ChatOpenAI\")\ndef fake_llm(messages: list) -> dict:\n    if messages[-1][\"role\"] == \"user\":\n        return {\"role\": \"assistant\", \"content\": \"\", \"tool_calls\": [\"weather_retriever\"]}\n    return {\"role\": \"assistant\", \"content\": \"It's sunny today!\"}\n\n# @traceable(run_type=\"tool\")  <- quitado\ndef weather_retriever():\n    \"\"\"Retrieve current weather information.\"\"\"\n    return \"It is sunny today\"\n\n@traceable\ndef agent(question: str) -> dict:\n    global raiz\n    raiz = get_current_run_tree()\n    messages = [{\"role\": \"user\", \"content\": question}]\n    response = fake_llm(messages)\n    if response.get(\"tool_calls\"):\n        messages.append(response)\n        messages.append({\"role\": \"tool\", \"content\": weather_retriever()})\n        response = fake_llm(messages)\n    messages.append(response)\n    return {\"messages\": messages, \"output\": response[\"content\"]}\n\ndef imprimir(run, nivel=0):\n    print(\"  \" * nivel + f\"- {run.name} ({run.run_type})\")\n    for hijo in run.child_runs:\n        imprimir(hijo, nivel + 1)\n\nwith tracing_context(enabled=\"local\"):   # traza en memoria, no envía nada\n    result = agent(\"What is the weather today?\")\n\nprint(result[\"output\"])\nimprimir(raiz)\n```\n\n¿Cambia la respuesta? ¿Cómo queda el árbol?",
+   "respuesta": "Salida real: la respuesta es igual (`It's sunny today!`), pero el árbol queda `agent (chain)` → `ChatOpenAI (llm)`, `ChatOpenAI (llm)`. La tool sí se ejecutó; solo dejó de ser un run. En la UI no verías cuándo corrió ni cuánto tardó; su resultado solo aparecería dentro de los mensajes que recibe el segundo LLM."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "El thread_id de Emma en un experiment",
+   "contenido": "En `agent_v1.py` a `agent_v5.py`, `thread_id = str(uuid7())` está a nivel de módulo, y `chat` está decorada con `@traceable(name=\"Emma\", metadata={\"thread_id\": thread_id})`. Dentro de `chat`, el historial se lee y se guarda con `get_thread_history(thread_id)` y `save_thread_history(thread_id, ...)`, que leen la variable global en cada llamada.\n\nEn el Módulo 2, `run_eval.py` hace esto antes de cada pregunta del dataset:\n\n```python\ndef run_agent(inputs: dict) -> dict:\n    \"\"\"Invoke the agent with a fresh thread_id each time.\"\"\"\n    agent_v5.thread_id = str(uuid7())\n    return asyncio.run(chat(inputs[\"question\"]))\n```\n\nCon el paso 8 en mente: ¿cada pregunta empieza con memoria limpia? ¿Y en LangSmith, cada trace queda en su propio thread?",
+   "respuesta": "Memoria: **sí** se limpia, porque `chat` lee el `thread_id` global en cada llamada. Thread en LangSmith: **no**. La metadata se fijó al importar `agent_v5` (como la etiqueta A del paso 8), así que todos los traces del experiment llevan el `thread_id` del import. Lo verifiqué con un LLM falso: dos llamadas guardaron su historial bajo ids nuevos, y las dos llevaban en la metadata el mismo id del import. No afecta los scores; solo la vista Threads.",
+   "ref": 8
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Apagar el tracing",
+   "contenido": "Un compañero dice: \"Desactivé `LANGSMITH_TRACING` en producción para ahorrar, y desde entonces el agente olvida lo que el usuario dijo en el turno anterior\". ¿Qué es lo más probable?\n\nA) Sin tracing, `@traceable` deja de pasarle el historial al modelo.\nB) La memoria vivía en el thread de LangSmith y se perdió.\nC) El tracing no tiene que ver: algo más cambió en cómo el código guarda o manda el historial.\nD) `wrap_openai` sin tracing manda solo el último mensaje.",
+   "respuesta": "**C.** El tracing solo observa: `@traceable` y `wrap_openai` devuelven lo mismo con o sin tracing, y el código corre igual con `LANGSMITH_TRACING` apagado. La memoria la maneja tu código (`thread_store` o una base de datos); el thread de LangSmith solo agrupa traces para verlos, nunca le devuelve historial al agente. A, B y D le atribuyen al tracing un papel que no tiene."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un trace es el árbol de runs de **una** petición; lo ves para saber qué hizo el modelo, no solo qué contestó.\n- Trazado a mano: `wrap_openai` para las llamadas al LLM, `@traceable` para tus funciones (`run_type=\"tool\"` en las tools).\n- Devuelve la lista completa de messages: el trace muestra las tool calls y los evaluators las podrán leer.\n- El tracing no cambia lo que hace el agente ni le da memoria. La memoria es tu almacenamiento; la metadata `thread_id`/`session_id`/`conversation_id` solo agrupa traces en un thread. En LangGraph, el checkpointer sí era la memoria.\n- Los argumentos de `@traceable(...)` se evalúan al definir la función.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → Observability: *Trace with OpenAI* (`wrap_openai`), *Annotate code for tracing* (`@traceable`), *Configure threads* y *Add metadata and tags*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-1/observability",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-1/tracing-with-langsmith",
+  "module-1/lesson-2/third_party_agent.py",
+  "module-1/lesson-2/thread_agent.py",
+  "officeflow-agent/agent_v0.py",
+  "officeflow-agent/agent_v1.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué hace wrap_openai(client) y qué hace @traceable?",
+   "reverso": "wrap_openai convierte cada llamada al LLM en un run de tipo llm. @traceable convierte tu función en un run (chain por defecto; run_type=\"tool\" para tools)."
+  },
+  {
+   "frente": "Quitas save_thread_history pero dejas metadata={\"thread_id\": ...}. ¿El agente recuerda? ¿Los traces salen juntos?",
+   "reverso": "No recuerda: el historial nunca se guarda. Pero sí salen en el mismo thread, porque la metadata sigue. Agrupar no es recordar."
+  },
+  {
+   "frente": "¿Por qué el agente del curso devuelve toda la lista de messages y no solo el texto final?",
+   "reverso": "Para que el output del trace muestre las tool calls y los pasos intermedios, y para que los evaluators (Módulo 2) puedan leerlos."
+  },
+  {
+   "frente": "Apagas LANGSMITH_TRACING. ¿El agente cambia de comportamiento?",
+   "reverso": "No. El código corre igual; solo deja de enviar traces. El tracing observa, no actúa."
+  },
+  {
+   "frente": "En LangGraph el thread_id del checkpointer era la memoria. ¿Y en el tracing manual de LangSmith?",
+   "reverso": "Solo agrupa traces en la vista Threads. La memoria la programas tú (dict, base de datos) y se la mandas al modelo."
+  },
+  {
+   "frente": "Defines @traceable(metadata={\"thread_id\": thread_id}) y después cambias la variable thread_id. ¿Cambia la metadata?",
+   "reverso": "No. Los argumentos de un decorador se evalúan una vez, al definir la función. La función sí ve el valor nuevo; la metadata no."
+  }
+ ]
+}

@@ -1,0 +1,141 @@
+{
+ "mision_id": "6.A",
+ "titulo": "Hablarle al server",
+ "modulo": "6",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora corrías el grafo con `graph.invoke(...)` dentro de tu propio proceso. Si el notebook se cierra, el run muere y la memoria (si era `MemorySaver`) también.\n\nEn `deployment` viste el Agent Server: el grafo vive en un server, no en tu proceso. Aquí lo levantas con `langgraph dev` en tu laptop. La pregunta ahora es: **¿cómo le hablas desde otro programa?** Una app web, un bot o un script necesitan lanzar runs, leer el estado de una conversación y esperar o recibir la respuesta por partes. Eso es esta lección."
+  },
+  {
+   "tipo": "imagen",
+   "titulo": "Grafo, deployment y clientes",
+   "notas": "Tu `graph.py` lo empaqueta la CLI (o un Dockerfile, si lo despliegas self-hosted). Una vez desplegado, todos le hablan por la misma API HTTP: Studio, el SDK, `RemoteGraph` o un `curl`. Los clientes son envolturas de esa API.",
+   "url": "/imagenes/langgraph/m6-plataforma.png",
+   "alt": "A la izquierda la definición del grafo (graph.py); la CLI lo empaqueta en un deployment; a la derecha, Studio y los clientes: Python/JS SDK, Remote Graph y HTTP/curl hablan con el deployment."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres palabras: assistant, thread, run",
+   "contenido": "El server organiza todo en tres objetos, guardados en Postgres:\n\n- **Thread**: una conversación. Guarda los checkpoints. Es el `thread_id` de 1.B, pero ahora el checkpointer es Postgres.\n- **Run**: **una** ejecución del grafo sobre un thread (o sin thread). Tiene `run_id` y `status`: `pending`, `running`, `success`, `error`, `interrupted`.\n- **Assistant**: un grafo más una configuración. Cada grafo trae uno por defecto (lo ves en 6.B).\n\nUn thread tiene muchos runs, uno por cada mensaje del usuario. El estado vive en el thread, no en el run."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El grafo de prueba: eco",
+   "contenido": "import time\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.runnables import RunnableConfig\nfrom langgraph.graph import StateGraph, MessagesState, START, END\n\n\ndef leer(state: MessagesState, config: RunnableConfig):\n    # Paso 1: \"lee\" el mensaje (tarda 2 s)\n    time.sleep(2)\n    ultimo = state[\"messages\"][-1].content\n    return {\"messages\": [AIMessage(content=f\"(leido: {ultimo})\")]}\n\n\ndef responder(state: MessagesState, config: RunnableConfig):\n    # Paso 2: responde con la personalidad configurada (tarda 2 s)\n    time.sleep(2)\n    personalidad = config[\"configurable\"].get(\"personalidad\", \"neutral\")\n    pregunta = state[\"messages\"][-2].content\n    return {\"messages\": [AIMessage(content=f\"[{personalidad}] respuesta a: {pregunta}\")]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"leer\", leer)\nbuilder.add_node(\"responder\", responder)\nbuilder.add_edge(START, \"leer\")\nbuilder.add_edge(\"leer\", \"responder\")\nbuilder.add_edge(\"responder\", END)\ngraph = builder.compile()\n\n# langgraph.json (junto a eco.py):\n# {\"graphs\": {\"eco\": \"./eco.py:graph\"}, \"dependencies\": [\".\"]}",
+   "notas": "Un grafo sin LLM de dos nodes que tardan 2 s cada uno, para ver runs `pending` y, en 6.C, mandar un segundo mensaje a mitad de camino. `responder` lee `personalidad` del config: lo usas en 6.B. Para servirlo: guarda `eco.py` y `langgraph.json` en una carpeta y corre `langgraph dev` ahí.",
+   "resaltar": [
+    9,
+    17
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Background run: lanzar y no esperar",
+   "contenido": "import asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\nasync def main():\n    client = get_client(url=URL)\n\n    # Lectura: que assistants hay\n    for a in await client.assistants.search():\n        print(a[\"graph_id\"], a[\"assistant_id\"], a[\"name\"])\n\n    # Un thread nuevo y un run en background\n    thread = await client.threads.create()\n    print(\"thread:\", thread[\"thread_id\"], thread[\"status\"])\n\n    run = await client.runs.create(\n        thread[\"thread_id\"],\n        \"eco\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]},\n    )\n    print(\"recien creado:\", (await client.runs.get(thread[\"thread_id\"], run[\"run_id\"]))[\"status\"])\n\n    await client.runs.join(thread[\"thread_id\"], run[\"run_id\"])\n    print(\"despues de join:\", (await client.runs.get(thread[\"thread_id\"], run[\"run_id\"]))[\"status\"])\n\n    state = await client.threads.get_state(thread[\"thread_id\"])\n    for m in state[\"values\"][\"messages\"]:\n        print(m[\"type\"], \"->\", m[\"content\"])\n\nasyncio.run(main())\n\n# Salida:\n# eco 351c60ff-cc7e-5743-8921-54a06f8620da eco\n# thread: 01a1a994-69f8-7028-8528-ffffe1ca43ba idle\n# recien creado: pending\n# despues de join: success\n# human -> hola\n# ai -> (leido: hola)\n# ai -> [neutral] respuesta a: hola",
+   "notas": "`runs.create` vuelve **enseguida** con el run en `pending`: no espera al grafo (fire and forget). `runs.join` bloquea hasta que termina. El resultado no viene en el run: lo lees del thread con `get_state`. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    7,
+    17,
+    24
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Qué pasa dentro del server",
+   "contenido": "sequenceDiagram\n    participant C as Tu script (SDK)\n    participant H as HTTP worker\n    participant DB as Postgres\n    participant Q as Queue worker\n    C->>H: runs.create(thread, \"eco\")\n    H->>DB: guarda run (pending)\n    H-->>C: run_id, status pending\n    Q->>DB: toma el run pendiente\n    Q->>Q: corre leer y responder\n    Q->>DB: checkpoint por cada paso\n    C->>H: runs.join(run_id)\n    H-->>C: listo (success)\n    C->>H: threads.get_state(thread)\n    H->>DB: lee el último checkpoint\n    H-->>C: values con los 3 mensajes",
+   "notas": "Quien recibe tu petición (HTTP worker) no es quien corre el grafo (queue worker). Por eso `create` puede contestar antes de que el grafo empiece. Con streaming, el queue worker publica cada paso en Redis y el HTTP worker te lo reenvía."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Streaming, copiar y ver la historia",
+   "contenido": "import asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\nasync def main():\n    client = get_client(url=URL)\n    thread = await client.threads.create()\n\n    # Run bloqueante con streaming: ves cada nodo cuando termina\n    async for chunk in client.runs.stream(\n        thread[\"thread_id\"],\n        \"eco\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]},\n        stream_mode=\"updates\",\n    ):\n        if chunk.event == \"updates\":\n            for nodo, update in chunk.data.items():\n                print(nodo, \"->\", update[\"messages\"][-1][\"content\"])\n\n    # Copiar (fork) el thread: misma historia, futuro independiente\n    copia = await client.threads.copy(thread[\"thread_id\"])\n    estado_copia = await client.threads.get_state(copia[\"thread_id\"])\n    print(\"copia:\", copia[\"thread_id\"] != thread[\"thread_id\"], len(estado_copia[\"values\"][\"messages\"]), \"mensajes\")\n\n    # Historia: lista de checkpoints, del mas nuevo al mas viejo\n    historia = await client.threads.get_history(thread[\"thread_id\"])\n    for s in historia:\n        print(len(s[\"values\"].get(\"messages\", [])), \"mensajes, next =\", s[\"next\"])\n\nasyncio.run(main())\n\n# Salida:\n# leer -> (leido: hola)\n# responder -> [neutral] respuesta a: hola\n# copia: True 3 mensajes\n# 3 mensajes, next = []\n# 2 mensajes, next = ['responder']\n# 1 mensajes, next = ['leer']\n# 0 mensajes, next = ['__start__']",
+   "notas": "`runs.stream` es el run bloqueante: ves cada node al terminar (los `stream_mode` de 3.A; `messages-tuple` da tokens de un LLM). `threads.copy` hace un thread nuevo con la misma historia. `get_history` es `get_state_history` de 3.E, del checkpoint más nuevo al más viejo. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    15,
+    22,
+    27
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Fork desde un checkpoint, ahora por API",
+   "contenido": "import asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\nasync def main():\n    client = get_client(url=URL)\n    thread = await client.threads.create()\n    await client.runs.wait(\n        thread[\"thread_id\"], \"eco\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]},\n    )\n\n    # El checkpoint justo despues de START: solo el mensaje humano, next = ['leer']\n    historia = await client.threads.get_history(thread[\"thread_id\"])\n    to_fork = historia[-2]\n    humano = to_fork[\"values\"][\"messages\"][0]\n    print(\"fork desde:\", to_fork[\"next\"], humano[\"content\"])\n\n    # Mismo id => el reducer add_messages REEMPLAZA el mensaje en vez de agregarlo\n    nuevo = await client.threads.update_state(\n        thread[\"thread_id\"],\n        {\"messages\": [{\"role\": \"user\", \"content\": \"adios\", \"id\": humano[\"id\"]}]},\n        checkpoint_id=to_fork[\"checkpoint_id\"],\n    )\n\n    # input=None: no agrega nada, solo continua desde ese checkpoint\n    await client.runs.wait(\n        thread[\"thread_id\"], \"eco\",\n        input=None,\n        checkpoint_id=nuevo[\"checkpoint_id\"],\n    )\n    state = await client.threads.get_state(thread[\"thread_id\"])\n    for m in state[\"values\"][\"messages\"]:\n        print(m[\"type\"], \"->\", m[\"content\"])\n\nasyncio.run(main())\n\n# Salida:\n# fork desde: ['leer'] hola\n# human -> adios\n# ai -> (leido: adios)\n# ai -> [neutral] respuesta a: adios",
+   "notas": "Es el time travel de 3.E, pero contra el server. Mandas el mensaje con el **mismo id** y `add_messages` lo reemplaza en vez de agregarlo. Un run con `input=None` y `checkpoint_id` continúa desde ese punto. `runs.wait` = crear + esperar + devolver el estado final. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    16,
+    23,
+    31
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "RemoteGraph: el server como si fuera un grafo local",
+   "contenido": "from langgraph.pregel.remote import RemoteGraph\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\n# Un objeto que se comporta como un grafo compilado, pero corre en el server\nremote_graph = RemoteGraph(\"eco\", url=URL)\n\n# Sin thread: run sin estado guardado (stateless)\nresult = remote_graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]})\nfor m in result[\"messages\"]:\n    print(m[\"type\"], \"->\", m[\"content\"])\n\n# Con thread_id: el server guarda los checkpoints, como un checkpointer local\nfrom langgraph_sdk import get_sync_client\nthread = get_sync_client(url=URL).threads.create()\nconfig = {\"configurable\": {\"thread_id\": thread[\"thread_id\"]}}\nremote_graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"uno\"}]}, config)\nresult = remote_graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"dos\"}]}, config)\nprint(len(result[\"messages\"]), \"mensajes en el thread\")\n\n# Salida:\n# human -> hola\n# ai -> (leido: hola)\n# ai -> [neutral] respuesta a: hola\n# 6 mensajes en el thread",
+   "notas": "`RemoteGraph` tiene la interfaz de un grafo compilado (`invoke`, `stream`, `get_state`); puedes usarlo hasta como subgraph de otro grafo. El thread lo creas con el SDK y lo pasas en el config, igual que en 1.B con `MemorySaver`. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    6,
+    16
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "SDK o RemoteGraph, y el store",
+   "contenido": "- **SDK** (`get_client`): control total del server. Threads, runs, assistants, store, cancelar, copiar.\n- **RemoteGraph**: cuando ya tienes código que espera un grafo de LangGraph y solo quieres que corra en el server.\n\nEl server también expone el **store** de 5.A: `client.store.search_items((\"todo\", \"general\", \"Test\"))`, `put_item` y `delete_item` leen y escriben la memoria entre threads desde fuera del grafo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Ya está la respuesta?",
+   "contenido": "Es el background run del paso 5, pero **sin** `join`: justo después de `runs.create` preguntas por el status del run y por los mensajes del thread.\n\n```python\nimport asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\nasync def main():\n    client = get_client(url=URL)\n    thread = await client.threads.create()\n\n    run = await client.runs.create(\n        thread[\"thread_id\"],\n        \"eco\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]},\n    )\n    # Sin join: preguntas enseguida\n    print(\"status:\", (await client.runs.get(thread[\"thread_id\"], run[\"run_id\"]))[\"status\"])\n    state = await client.threads.get_state(thread[\"thread_id\"])\n    mensajes = state[\"values\"].get(\"messages\", []) if state[\"values\"] else []\n    print(\"mensajes en el thread:\", len(mensajes))\n\nasyncio.run(main())\n```\n\n¿Qué imprime?",
+   "respuesta": "`status: pending` y `mensajes en el thread: 0`. `runs.create` es un background run: el HTTP worker solo lo encola y contesta enseguida, antes de que el queue worker empiece `leer` (que además tarda 2 s). El thread todavía no tiene ni el mensaje humano. Para tener el resultado usas `join`, `wait` o `stream`. (Salida real con `langgraph dev`.)"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "RemoteGraph sin thread",
+   "contenido": "Es el `RemoteGraph` del paso 9, pero llamando dos veces `invoke` **sin** `thread_id`: primero \"me llamo Leo\" y después \"¿cómo me llamo?\".\n\n```python\nfrom langgraph.pregel.remote import RemoteGraph\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\nremote_graph = RemoteGraph(\"eco\", url=URL)\n\n# Dos invoke SIN thread_id\nremote_graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"me llamo Leo\"}]})\nresult = remote_graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"¿cómo me llamo?\"}]})\nprint(len(result[\"messages\"]), \"mensajes\")\nfor m in result[\"messages\"]:\n    print(m[\"type\"], \"->\", m[\"content\"])\n```\n\n¿Cuántos mensajes trae el segundo resultado y cuáles son?",
+   "respuesta": "3 mensajes, todos del segundo run: `human -> ¿cómo me llamo?`, `ai -> (leido: ¿cómo me llamo?)` y `ai -> [neutral] respuesta a: ¿cómo me llamo?`. Sin `thread_id` el run es *stateless*: no hay thread donde guardar checkpoints, así que \"me llamo Leo\" se perdió. La memoria no está en el server ni en el grafo: está en el thread, igual que en 1.B estaba en el checkpointer por `thread_id`. (Salida real con `langgraph dev`.)"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Seguir en la copia",
+   "contenido": "Como en el paso 7 copias un thread con `threads.copy`, pero ahora lanzas un run nuevo sobre la **copia**.\n\n```python\nimport asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\n\nasync def main():\n    client = get_client(url=URL)\n    original = await client.threads.create()\n    await client.runs.wait(\n        original[\"thread_id\"], \"eco\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]},\n    )\n\n    copia = await client.threads.copy(original[\"thread_id\"])\n    # Un run nuevo, pero sobre la COPIA\n    await client.runs.wait(\n        copia[\"thread_id\"], \"eco\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"otra cosa\"}]},\n    )\n\n    for nombre, t in ((\"original\", original), (\"copia\", copia)):\n        state = await client.threads.get_state(t[\"thread_id\"])\n        print(nombre, \"->\", len(state[\"values\"][\"messages\"]), \"mensajes, ultimo:\",\n              state[\"values\"][\"messages\"][-1][\"content\"])\n\nasyncio.run(main())\n```\n\n¿Cuántos mensajes tiene cada thread al final? ¿Cambió el original?",
+   "respuesta": "`original -> 3 mensajes, ultimo: [neutral] respuesta a: hola` y `copia -> 6 mensajes, ultimo: [neutral] respuesta a: otra cosa`. El original no cambia: la copia empieza con la misma historia pero es otro `thread_id` con sus propios checkpoints. Por eso sirve para probar \"qué pasaría si\" sin arruinar la conversación real. (Salida real con `langgraph dev`.)"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El server guarda **threads** (conversaciones, checkpoints en Postgres), **runs** (una ejecución con `status`) y **assistants** (grafo + config).\n- `runs.create` lanza en background y vuelve en `pending`; `join`, `wait` y `stream` esperan o te dan las partes.\n- `get_state`, `get_history`, `update_state` y `copy` son lo de los módulos 1–3, pero por HTTP.\n- `RemoteGraph` hace que el server parezca un grafo local.\n- El thread del server es el `thread_id` + checkpointer de 1.B, y el store es el de 5.A."
+  }
+ ],
+ "fuentes": [
+  "module-6/connecting.ipynb",
+  "module-6/creating.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Llamas `client.runs.create(...)` y enseguida lees el thread. ¿Por qué todavía no está la respuesta?",
+   "reverso": "Porque `runs.create` es un background run: el server lo encola y contesta con `status: pending`. Para esperar usas `runs.join`, `runs.wait` o `runs.stream`."
+  },
+  {
+   "frente": "En el Agent Server, ¿dónde vive la memoria de una conversación: en el run, en el assistant o en el thread?",
+   "reverso": "En el thread: sus checkpoints se guardan en Postgres. Un run es una sola ejecución; un run sin thread no recuerda nada."
+  },
+  {
+   "frente": "¿Por qué un run puede devolver `pending` antes de que el grafo empiece a correr?",
+   "reverso": "Porque el HTTP worker que recibe la petición solo la guarda en la cola; otro proceso (queue worker) la toma y corre el grafo."
+  },
+  {
+   "frente": "¿Cuándo usarías `RemoteGraph` en vez del SDK (`get_client`)?",
+   "reverso": "Cuando tu código ya espera un grafo de LangGraph (`invoke`, `stream`, incluso como subgraph) y solo quieres que corra en el server. El SDK es para manejar threads, runs, assistants y store."
+  },
+  {
+   "frente": "Haces fork por API con `update_state` mandando un mensaje humano con el mismo `id` del original. ¿Por qué el mismo id?",
+   "reverso": "Porque `add_messages` reemplaza un mensaje con id existente en vez de agregarlo. Sin el id tendrías dos mensajes humanos."
+  },
+  {
+   "frente": "Corres un run nuevo en un thread copiado con `threads.copy`. ¿Afecta al thread original?",
+   "reverso": "No. La copia tiene la misma historia pero su propio `thread_id` y checkpoints; lo nuevo solo queda en la copia."
+  }
+ ]
+}

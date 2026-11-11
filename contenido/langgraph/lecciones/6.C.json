@@ -1,0 +1,141 @@
+{
+ "mision_id": "6.C",
+ "titulo": "Cuando el usuario escribe dos veces",
+ "modulo": "6",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En un chat la gente escribe \"hola\" y, antes de que el agente conteste, escribe \"perdón, quería decir...\". Eso es *double texting*: llega un segundo run al **mismo thread** mientras el primero sigue corriendo.\n\nDos runs escribiendo a la vez en el mismo thread romperían la historia. El server te deja elegir qué hacer con el parámetro `multitask_strategy` de `runs.create`. Hay cuatro opciones; cada una es una decisión de producto."
+  },
+  {
+   "tipo": "imagen",
+   "titulo": "Las cuatro estrategias",
+   "notas": "Mira qué pasa con los mensajes de Run 1 en cada columna: se completan (reject, enqueue), se cortan pero quedan (interrupt) o se borran (rollback).",
+   "url": "/imagenes/langgraph/m6-double-texting.png",
+   "alt": "Cuatro columnas, Run 1 y Run 2. Reject: el mensaje 2 se rechaza y Run 1 termina. Enqueue: el mensaje 2 espera y Run 2 corre al final. Interrupt: Run 1 se corta pero sus mensajes quedan; Run 2 sigue. Rollback: los mensajes de Run 1 se borran y solo queda Run 2."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las reglas del juego",
+   "contenido": "- La estrategia se pasa en el **segundo** run: `runs.create(..., multitask_strategy=\"reject\")`.\n- Solo aplica dentro de un mismo thread.\n- **reject**: el segundo falla con `409 Conflict`.\n- **enqueue**: el segundo espera su turno.\n- **interrupt**: corta el primero, conserva lo ya guardado y corre el segundo.\n- **rollback**: corta el primero, **borra** el run y lo que hizo, y corre el segundo.\n\nEl default cambió: el notebook (2024) muestra `reject`; en `langgraph-api` 0.17.1 es `enqueue`. Pásalo siempre explícito.\n\nLos ejemplos usan el grafo `eco` de 6.A (dos nodes de 2 s)."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "reject en el tiempo",
+   "contenido": "sequenceDiagram\n    participant U as Usuario\n    participant S as Server (thread)\n    participant R1 as Run 1\n    participant R2 as Run 2\n    U->>S: \"primero\"\n    S->>R1: corre\n    activate R1\n    Note over R1: leer (2 s)\n    U->>S: \"segundo\" (reject)\n    S--xU: 409 Conflict\n    Note over R1: responder (2 s)\n    R1-->>S: success\n    deactivate R1",
+   "notas": "El segundo mensaje nunca entra al thread. El primero termina tranquilo. Encaja con una app que deshabilita el input mientras el agente piensa."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "reject",
+   "contenido": "import asyncio\nimport httpx\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\nclient = get_client(url=URL)\n\n\ndef msg(texto):\n    return {\"messages\": [{\"role\": \"user\", \"content\": texto}]}\n\n\nasync def mostrar(thread_id):\n    state = await client.threads.get_state(thread_id)\n    for m in state[\"values\"][\"messages\"]:\n        print(m[\"type\"], \"->\", m[\"content\"])\n\n\nasync def main():\n    thread = await client.threads.create()\n    run1 = await client.runs.create(thread[\"thread_id\"], \"eco\", input=msg(\"primero\"))\n    try:\n        await client.runs.create(\n            thread[\"thread_id\"], \"eco\", input=msg(\"segundo\"),\n            multitask_strategy=\"reject\",\n        )\n    except httpx.HTTPStatusError as e:\n        print(\"segundo rechazado:\", e.response.status_code)\n    await client.runs.join(thread[\"thread_id\"], run1[\"run_id\"])\n    await mostrar(thread[\"thread_id\"])\n\nasyncio.run(main())\n\n# Salida:\n# segundo rechazado: 409\n# human -> primero\n# ai -> (leido: primero)\n# ai -> [neutral] respuesta a: primero",
+   "notas": "El SDK lanza `httpx.HTTPStatusError` con código 409. El thread queda solo con la conversación del primero; tu app decide qué decirle al usuario. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    25,
+    27
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "enqueue en el tiempo",
+   "contenido": "sequenceDiagram\n    participant U as Usuario\n    participant S as Server (thread)\n    participant R1 as Run 1\n    participant R2 as Run 2\n    U->>S: \"primero\"\n    S->>R1: corre\n    activate R1\n    U->>S: \"segundo\" (enqueue)\n    S-->>U: run 2 pending\n    Note over R2: espera en la cola\n    R1-->>S: success\n    deactivate R1\n    S->>R2: corre\n    activate R2\n    R2-->>S: success\n    deactivate R2",
+   "notas": "Nadie se pierde: el segundo corre cuando el primero acaba, y ve toda la historia del primero."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "enqueue",
+   "contenido": "import asyncio\nimport httpx\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\nclient = get_client(url=URL)\n\n\ndef msg(texto):\n    return {\"messages\": [{\"role\": \"user\", \"content\": texto}]}\n\n\nasync def mostrar(thread_id):\n    state = await client.threads.get_state(thread_id)\n    for m in state[\"values\"][\"messages\"]:\n        print(m[\"type\"], \"->\", m[\"content\"])\n\n\nasync def main():\n    thread = await client.threads.create()\n    run1 = await client.runs.create(thread[\"thread_id\"], \"eco\", input=msg(\"primero\"))\n    run2 = await client.runs.create(\n        thread[\"thread_id\"], \"eco\", input=msg(\"segundo\"),\n        multitask_strategy=\"enqueue\",\n    )\n    print(\"run2 al crearse:\", run2[\"status\"])\n    await client.runs.join(thread[\"thread_id\"], run2[\"run_id\"])\n    for r in (run1, run2):\n        print(\"status:\", (await client.runs.get(thread[\"thread_id\"], r[\"run_id\"]))[\"status\"])\n    await mostrar(thread[\"thread_id\"])\n\nasyncio.run(main())\n\n# Salida:\n# run2 al crearse: pending\n# status: success\n# status: success\n# human -> primero\n# ai -> (leido: primero)\n# ai -> [neutral] respuesta a: primero\n# human -> segundo\n# ai -> (leido: segundo)\n# ai -> [neutral] respuesta a: segundo",
+   "notas": "Los dos runs terminan en `success` y los mensajes quedan en orden. El costo: el usuario espera la respuesta al primero aunque ya no le importe. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    24,
+    27
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "interrupt en el tiempo",
+   "contenido": "sequenceDiagram\n    participant U as Usuario\n    participant S as Server (thread)\n    participant R1 as Run 1\n    participant R2 as Run 2\n    U->>S: \"primero\"\n    S->>R1: corre\n    activate R1\n    R1->>S: checkpoint tras leer\n    U->>S: \"segundo\" (interrupt)\n    S-xR1: cortar (responder a medias)\n    deactivate R1\n    Note over S: queda lo ya guardado de Run 1\n    S->>R2: corre\n    activate R2\n    R2-->>S: success\n    deactivate R2",
+   "notas": "Lo que el primero alcanzó a guardar en checkpoints se queda. El node que iba a medias se pierde. El run 1 queda con `status: interrupted`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "interrupt",
+   "contenido": "import asyncio\nimport httpx\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\nclient = get_client(url=URL)\n\n\ndef msg(texto):\n    return {\"messages\": [{\"role\": \"user\", \"content\": texto}]}\n\n\nasync def mostrar(thread_id):\n    state = await client.threads.get_state(thread_id)\n    for m in state[\"values\"][\"messages\"]:\n        print(m[\"type\"], \"->\", m[\"content\"])\n\n\nasync def main():\n    thread = await client.threads.create()\n    run1 = await client.runs.create(thread[\"thread_id\"], \"eco\", input=msg(\"primero\"))\n    await asyncio.sleep(3)  # \"leer\" (2 s) ya termino; \"responder\" va a medias\n    antes = await client.threads.get_state(thread[\"thread_id\"])\n    print(\"antes del 2.o mensaje, next =\", antes[\"next\"])\n    run2 = await client.runs.create(\n        thread[\"thread_id\"], \"eco\", input=msg(\"segundo\"),\n        multitask_strategy=\"interrupt\",\n    )\n    await client.runs.join(thread[\"thread_id\"], run2[\"run_id\"])\n    print(\"run1:\", (await client.runs.get(thread[\"thread_id\"], run1[\"run_id\"]))[\"status\"])\n    await mostrar(thread[\"thread_id\"])\n\nasyncio.run(main())\n\n# Salida:\n# antes del 2.o mensaje, next = ['responder']\n# run1: interrupted\n# human -> primero\n# ai -> (leido: primero)\n# human -> segundo\n# ai -> (leido: segundo)\n# ai -> [neutral] respuesta a: segundo",
+   "notas": "A los 3 s `leer` ya guardó su checkpoint (`next = ['responder']`). Por eso queda `(leido: primero)` pero no la respuesta al primero. Útil cuando el segundo mensaje **completa** al primero: el agente ve los dos. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    22,
+    27
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "rollback en el tiempo",
+   "contenido": "sequenceDiagram\n    participant U as Usuario\n    participant S as Server (thread)\n    participant R1 as Run 1\n    participant R2 as Run 2\n    U->>S: \"primero\"\n    S->>R1: corre\n    activate R1\n    R1->>S: checkpoint tras leer\n    U->>S: \"segundo\" (rollback)\n    S-xR1: cortar\n    deactivate R1\n    Note over S: borra Run 1 y sus checkpoints\n    S->>R2: corre\n    activate R2\n    R2-->>S: success\n    deactivate R2",
+   "notas": "Igual que interrupt, pero borra el run 1 y lo que escribió, incluido su mensaje de entrada. Es como si \"primero\" nunca hubiera existido."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "rollback",
+   "contenido": "import asyncio\nimport httpx\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\nclient = get_client(url=URL)\n\n\ndef msg(texto):\n    return {\"messages\": [{\"role\": \"user\", \"content\": texto}]}\n\n\nasync def mostrar(thread_id):\n    state = await client.threads.get_state(thread_id)\n    for m in state[\"values\"][\"messages\"]:\n        print(m[\"type\"], \"->\", m[\"content\"])\n\n\nasync def main():\n    thread = await client.threads.create()\n    run1 = await client.runs.create(thread[\"thread_id\"], \"eco\", input=msg(\"primero\"))\n    await asyncio.sleep(3)  # mismo momento que en interrupt\n    run2 = await client.runs.create(\n        thread[\"thread_id\"], \"eco\", input=msg(\"segundo\"),\n        multitask_strategy=\"rollback\",\n    )\n    await client.runs.join(thread[\"thread_id\"], run2[\"run_id\"])\n    try:\n        await client.runs.get(thread[\"thread_id\"], run1[\"run_id\"])\n    except httpx.HTTPStatusError as e:\n        print(\"run1 ya no existe:\", e.response.status_code)\n    await mostrar(thread[\"thread_id\"])\n\nasyncio.run(main())\n\n# Salida:\n# run1 ya no existe: 404\n# human -> segundo\n# ai -> (leido: segundo)\n# ai -> [neutral] respuesta a: segundo",
+   "notas": "Mismo momento que en interrupt (3 s), pero no queda ni `primero` ni `(leido: primero)`. `runs.get` del run 1 da 404. Útil para \"olvida lo anterior\": el agente no se confunde con el mensaje viejo. Salida real de `langgraph dev` con el grafo `eco`. Contra un server desplegado es igual: solo cambia `URL`.",
+   "resaltar": [
+    25,
+    31
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "interrupt o rollback",
+   "contenido": "Compara el script de `interrupt` del paso 9 con el de `rollback` del paso 11: en los dos el segundo mensaje llega a los 3 s (ya terminó `leer`). ¿Aparece el mensaje humano \"primero\" en el thread final de cada uno?",
+   "respuesta": "Con **interrupt** sí: quedan `primero` y `(leido: primero)`, porque interrupt conserva los checkpoints ya guardados. Con **rollback** no: borra el run 1 con su input y sus checkpoints. Ninguno deja la respuesta final al primero; la diferencia es si el agente sigue viendo lo que el usuario escribió antes.",
+   "ref": 11
+  },
+  {
+   "tipo": "predice",
+   "titulo": "interrupt muy temprano",
+   "contenido": "Es el script de `interrupt` del paso 9 con una sola línea cambiada: el segundo mensaje llega a los **0.5 s** en vez de 3 s.\n\n```python\nimport asyncio\nimport httpx\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\nclient = get_client(url=URL)\n\n\ndef msg(texto):\n    return {\"messages\": [{\"role\": \"user\", \"content\": texto}]}\n\n\nasync def mostrar(thread_id):\n    state = await client.threads.get_state(thread_id)\n    for m in state[\"values\"][\"messages\"]:\n        print(m[\"type\"], \"->\", m[\"content\"])\n\n\nasync def main():\n    thread = await client.threads.create()\n    run1 = await client.runs.create(thread[\"thread_id\"], \"eco\", input=msg(\"primero\"))\n    await asyncio.sleep(0.5)  # <- antes era 3 s\n    antes = await client.threads.get_state(thread[\"thread_id\"])\n    print(\"antes del 2.o mensaje, next =\", antes[\"next\"])\n    run2 = await client.runs.create(\n        thread[\"thread_id\"], \"eco\", input=msg(\"segundo\"),\n        multitask_strategy=\"interrupt\",\n    )\n    await client.runs.join(thread[\"thread_id\"], run2[\"run_id\"])\n    print(\"run1:\", (await client.runs.get(thread[\"thread_id\"], run1[\"run_id\"]))[\"status\"])\n    await mostrar(thread[\"thread_id\"])\n\nasyncio.run(main())\n```\n\n¿Qué queda de \"primero\" en el thread?",
+   "respuesta": "**Nada.** Imprime `next = []`, `run1: interrupted` y solo `segundo` con sus dos respuestas. A los 0.5 s el run 1 aún no había guardado ni el checkpoint con su input, así que no hay nada que conservar. (En el notebook, con el LLM a medio contestar, quedó solo el Human message.) La regla: interrupt conserva los checkpoints terminados y tira el node en curso; no es un \"guardar todo\". (Salida real con `langgraph dev`.)"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Threads distintos",
+   "contenido": "Ahora el segundo run va a **otro** thread: lanzas un run en el thread A y, mientras corre, otro en el thread B con `multitask_strategy=\"reject\"`.\n\n```python\nimport asyncio\nimport httpx\nfrom langgraph_sdk import get_client\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev, corriendo en la carpeta de eco.py\nclient = get_client(url=URL)\n\n\ndef msg(texto):\n    return {\"messages\": [{\"role\": \"user\", \"content\": texto}]}\n\n\nasync def main():\n    thread_a = await client.threads.create()\n    thread_b = await client.threads.create()\n    run_a = await client.runs.create(thread_a[\"thread_id\"], \"eco\", input=msg(\"primero\"))\n    try:\n        run_b = await client.runs.create(\n            thread_b[\"thread_id\"], \"eco\", input=msg(\"segundo\"),\n            multitask_strategy=\"reject\",\n        )\n        print(\"run en B aceptado:\", run_b[\"status\"])\n    except httpx.HTTPStatusError as e:\n        print(\"run en B rechazado:\", e.response.status_code)\n        return\n    await client.runs.join(thread_a[\"thread_id\"], run_a[\"run_id\"])\n    await client.runs.join(thread_b[\"thread_id\"], run_b[\"run_id\"])\n    for nombre, t, r in ((\"A\", thread_a, run_a), (\"B\", thread_b, run_b)):\n        print(nombre, (await client.runs.get(t[\"thread_id\"], r[\"run_id\"]))[\"status\"])\n\nasyncio.run(main())\n```\n\n¿El run en B da 409?",
+   "respuesta": "No. Imprime `run en B aceptado: pending` y después `A success` y `B success`. Double texting es sobre runs en el **mismo** thread, porque ahí comparten historia; `reject` solo mira si **ese** thread tiene un run activo. Threads distintos son conversaciones distintas y no chocan. (`pending` solo significa que aún no arranca.) (Salida real con `langgraph dev`.)"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- *Double texting* = un segundo run en el mismo thread mientras el primero corre. Se controla con `multitask_strategy`.\n- **reject** (409) y **enqueue** (espera) dejan terminar al primero.\n- **interrupt** corta y conserva los checkpoints ya guardados; **rollback** corta y borra el run 1 entero.\n- No confíes en el default (cambió de `reject` a `enqueue`): pásalo explícito.\n- Todo se apoya en los checkpoints del thread (1.B, 3.E): interrupt se queda en el último checkpoint; rollback vuelve al de antes del run 1."
+  }
+ ],
+ "fuentes": [
+  "module-6/double-texting.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "El usuario escribe \"olvida eso, mejor...\" mientras el agente corre. ¿interrupt o rollback, y por qué?",
+   "reverso": "rollback: borra el run 1 con su mensaje, así el agente no ve lo que el usuario descartó. interrupt lo dejaría en la historia."
+  },
+  {
+   "frente": "El usuario manda un mensaje en dos partes seguidas. ¿Qué estrategia conviene y por qué?",
+   "reverso": "interrupt (o enqueue): el agente necesita ver las dos partes. interrupt corta la primera respuesta pero conserva lo ya guardado."
+  },
+  {
+   "frente": "Con `interrupt`, ¿por qué no siempre queda en el thread todo lo que el run 1 alcanzó a hacer?",
+   "reverso": "Solo quedan los checkpoints terminados. El node que iba a medias se pierde, y si el run ni había empezado no queda nada."
+  },
+  {
+   "frente": "¿Por qué `multitask_strategy` no afecta a dos runs en threads distintos?",
+   "reverso": "Porque el conflicto es compartir historia. Threads distintos tienen checkpoints separados y corren sin choque."
+  },
+  {
+   "frente": "Usas `enqueue`. ¿Qué precio paga el usuario comparado con interrupt?",
+   "reverso": "Espera a que termine la respuesta al primer mensaje aunque ya no le importe; el segundo corre después y ve toda la historia."
+  },
+  {
+   "frente": "¿Por qué conviene pasar `multitask_strategy` explícito en vez de usar el default?",
+   "reverso": "Porque el default cambió entre versiones (el notebook muestra `reject`; langgraph-api 0.17.1 usa `enqueue`). Explícito, tu app no cambia al actualizar."
+  }
+ ]
+}

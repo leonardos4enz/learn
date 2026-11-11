@@ -1,0 +1,121 @@
+{
+ "mision_id": "4.A",
+ "titulo": "Delegar en un equipo de subagents",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Imagina el newsletter del lab: 4 géneros, y por cada uno varias búsquedas web de ~20 KB. Si un solo agente hace todo,\nsu historial se llena con ~80 KB de resultados crudos que ya no necesita, y el modelo se distrae o se sale de la ventana.\n\nDeep Agents da dos herramientas de coordinación que es fácil confundir:\n\n- **Planning** (`write_todos`): una lista de pendientes para que el agente no pierda el hilo. Es **opt-in**: solo\n  aparece si agregas `TodoListMiddleware()` a `middleware=`.\n- **Delegación** (subagents): mandar trabajo a **otro agente** con su propio contexto.\n\nPlanear organiza al agente; delegar saca trabajo pesado de su contexto. Esta lección es sobre delegar."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué es un subagent",
+   "contenido": "Un subagent es un **agente completo** (su propio system prompt, tools, modelo y permisos) que el principal llama\n**como si fuera una tool**: la tool built-in `task(description, subagent_type)`.\n\nLa regla que más importa, **aislamiento de contexto**:\n\n1. El subagent recibe **un solo mensaje**: la `description` que escribió el padre. **No** hereda el historial del\n   padre ni su system prompt.\n2. Trabaja solo (puede hacer 40 tool calls) y devuelve **un solo mensaje**: su respuesta final.\n3. Al padre le llega eso como un `ToolMessage`. Los pasos intermedios nunca entran a su historial.\n\nLo único que sí comparten es el **estado**, como el filesystem del agente."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El subagent del lab (archivo del curso)",
+   "contenido": "# --- The research subagent -------------------------------------------------\nGENRE_PROMPT = \"\"\"You are a music journalist researching one genre for an\nonline music distributor's weekly newsletter.\n\nYou will be given a single genre and an assigned research folder to work in.\n\nHow to work:\n1. Use internet_search to find recent, noteworthy developments in that genre\n   — new releases, notable artists, trends, or events. Run a few searches.\n2. Save the COMPLETE, verbatim output of ALL your searches to a single file:\n   write_file(\"/research/<genre>/sources.md\", ...). Paste the results exactly\n   as the tool returned them — every result's title, URL, and full content\n   snippet. Do NOT summarize, trim, or reformat. This one file is your raw\n   archive: all the bulky material stays here so it never clutters the\n   editor's context.\n3. Only then, from what you found, write one tight newsletter segment.\n\nReturn ONLY the finished segment as your reply:\n- A markdown section: a \"## <Genre>\" heading followed by ~120-180 words.\n- Lively but factual newsletter tone; name specific artists and releases.\n- Do NOT paste raw search results or link dumps into your reply — those live\n  in your research files. Return just the polished segment.\"\"\"\n\n# Researchers may write under /research/** and are denied writes elsewhere.\nresearch_permissions = [\n    FilesystemPermission(operations=[\"read\", \"write\"], paths=[\"/research/**\"], mode=\"allow\"),\n    FilesystemPermission(operations=[\"write\"], paths=[\"/**\"], mode=\"deny\"),\n]\n\ngenre_researcher = {\n    \"name\": \"genre-researcher\",\n    \"description\": (\n        \"Research one music genre and write a short newsletter segment about \"\n        \"what's new in it. Delegate one genre per call.\"\n    ),\n    \"system_prompt\": GENRE_PROMPT,         # its own brain — never inherited\n    \"tools\": [internet_search],            # override — replaces the inherited set\n    \"model\": model,                        # override — the cheaper Haiku 4.5\n    \"permissions\": research_permissions,   # override — scoped write access\n}\n\n\n# --- The editor (main agent) -----------------------------------------------\nEDITOR_PROMPT = f\"\"\"You are the editor of an online music distributor's weekly\nnewsletter. This week you are featuring the distributor's top genres:\n{\", \".join(TOP_GENRES)}.\n\nYour job:\n1. For EACH genre, delegate to the genre-researcher subagent using the task\n   tool — fire them off in parallel. Tell each one which genre to cover and\n   which assigned folder to use (/research/<genre>/), and ask for one segment.\n2. Collect the four returned segments. Do NOT research genres yourself.\n3. Assemble them into one Markdown newsletter: a top-level \"# This Week in\n   Music\" title, a one-sentence intro, then the four \"## <Genre>\" sections.\n4. Call markdown_to_html on the assembled Markdown, then write_file the\n   returned HTML to /output/newsletter.html.\n\nKeep your own context focused on coordination and assembly.\"\"\"\n\n# The editor uses the stronger shared model; the researcher overrides to the\n# cheaper `model` (Haiku 4.5) above. Both come from models.py.\n\n# The editor may read the research area but must not write into it.\neditor_permissions = [\n    FilesystemPermission(operations=[\"write\"], paths=[\"/research/**\"], mode=\"deny\"),\n]\n\nagent = create_deep_agent(\n    model=strong_model,\n    tools=[markdown_to_html],\n    system_prompt=EDITOR_PROMPT,\n    subagents=[genre_researcher],\n    permissions=editor_permissions,\n)",
+   "notas": "Es la segunda mitad de `m4/m4_2_newsletter_agent.py` (la primera define `internet_search`, que pide\n`TAVILY_API_KEY`, y `markdown_to_html`; `model` y `strong_model` vienen de `models.py`). No se corre aquí: necesita\n`ANTHROPIC_API_KEY` y `TAVILY_API_KEY`.\nMira el dict `genre_researcher`: un solo **tipo** de subagent, y el editor lo llama 4 veces, una por género. El\ngénero no es un subagent distinto: es la `description` de cada `task`.",
+   "resaltar": [
+    36,
+    37,
+    72
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Ejemplo resuelto: qué ve cada agente",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import FilesystemPermission, create_deep_agent\n\n\nclass Guion(BaseChatModel):\n    \"\"\"Modelo falso: devuelve sus respuestas en orden e imprime lo que recibe.\"\"\"\n    nombre: str\n    guion: list\n    i: int = 0\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        print(f\"[{self.nombre} recibe] {[m.type for m in messages]}\")\n        print(f\"    último mensaje: {messages[-1].content[:60]!r}\")\n        respuesta = self.guion[self.i]\n        self.i += 1\n        return ChatResult(generations=[ChatGeneration(message=respuesta)])\n\n\n# El subagent: escribe sus notas en bruto y devuelve solo el segmento.\nmodelo_sub = Guion(nombre=\"SUB\", guion=[\n    AIMessage(content=\"\", tool_calls=[{\n        \"name\": \"write_file\",\n        \"args\": {\"file_path\": \"/research/Rock/sources.md\",\n                 \"content\": \"resultado 1 ...\\nresultado 2 ...\\n(20 KB de búsquedas)\"},\n        \"id\": \"w1\"}]),\n    AIMessage(content=\"## Rock\\nEsta semana el rock ... (150 palabras)\"),\n])\n\ngenre_researcher = {\n    \"name\": \"genre-researcher\",\n    \"description\": \"Investiga un género musical y escribe un segmento corto.\",\n    \"system_prompt\": \"Eres periodista musical. Guarda tus notas y devuelve solo el segmento.\",\n    \"model\": modelo_sub,\n    \"permissions\": [\n        FilesystemPermission(operations=[\"read\", \"write\"], paths=[\"/research/**\"], mode=\"allow\"),\n        FilesystemPermission(operations=[\"write\"], paths=[\"/**\"], mode=\"deny\"),\n    ],\n}\n\n# El editor (agente principal): delega Rock con la tool `task`.\nmodelo_editor = Guion(nombre=\"EDITOR\", guion=[\n    AIMessage(content=\"\", tool_calls=[{\n        \"name\": \"task\",\n        \"args\": {\"subagent_type\": \"genre-researcher\",\n                 \"description\": \"Investiga Rock. Usa la carpeta /research/Rock/.\"},\n        \"id\": \"t1\"}]),\n    AIMessage(content=\"Newsletter armado con el segmento de Rock.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo_editor,\n    system_prompt=\"Eres el editor del newsletter.\",\n    subagents=[genre_researcher],\n)\n\nresult = agent.invoke({\"messages\": [\n    {\"role\": \"user\", \"content\": \"Me llamo Leo y odio el reguetón.\"},\n    {\"role\": \"assistant\", \"content\": \"Anotado, Leo.\"},\n    {\"role\": \"user\", \"content\": \"Arma el newsletter de esta semana.\"},\n]})\n\nprint()\nfor m in result[\"messages\"]:\n    print(m.type, \"|\", repr(m.content)[:70])\nprint()\nprint(\"Archivos en el state:\", list(result[\"files\"]))",
+   "notas": "Sin LLM: `Guion` es un modelo falso que responde en orden e **imprime lo que recibe**. El usuario dijo su\nnombre antes de pedir el newsletter. Salida real:\n```\n[EDITOR recibe] ['system', 'human', 'ai', 'human']\n    último mensaje: 'Arma el newsletter de esta semana.'\n[SUB recibe] ['system', 'human']\n    último mensaje: 'Investiga Rock. Usa la carpeta /research/Rock/.'\n[SUB recibe] ['system', 'human', 'ai', 'tool']\n    último mensaje: 'Updated file /research/Rock/sources.md'\n[EDITOR recibe] ['system', 'human', 'ai', 'human', 'ai', 'tool']\n    último mensaje: '## Rock\\nEsta semana el rock ... (150 palabras)'\n\nhuman | 'Me llamo Leo y odio el reguetón.'\nai | 'Anotado, Leo.'\nhuman | 'Arma el newsletter de esta semana.'\nai | ''\ntool | '## Rock\\nEsta semana el rock ... (150 palabras)'\nai | 'Newsletter armado con el segmento de Rock.'\n\nArchivos en el state: ['/research/Rock/sources.md']\n```\nEl editor recibe los 4 mensajes de la conversación. El SUB recibe solo `['system', 'human']`: su propio prompt y la\n`description`. Nunca supo que el usuario se llama Leo.",
+   "resaltar": [
+    54,
+    21
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El viaje de un task",
+   "contenido": "graph LR\n  U([usuario]) --> E[editor]\n  E -->|task: description| S[genre-researcher]\n  S -->|write_file| F[(state files: /research/Rock/sources.md)]\n  S -->|un mensaje final| E\n  E --> R([respuesta])\n  class S clave",
+   "notas": "Entra una `description`, sale un mensaje. Las notas crudas (20 KB en el lab) se quedan en un archivo del\n**state compartido**: el editor podría leerlas con `read_file`, pero no le llegan solas a su historial. Así su\ncontexto queda para coordinar."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué volvió al editor",
+   "contenido": "En la salida del paso 4, el historial del editor terminó así:\n\n`human, ai, human, ai(tool_call task), tool('## Rock ...'), ai('Newsletter armado...')`\n\n- El `ToolMessage` trae **solo** el segmento final del SUB. Sus dos llamadas al modelo y su `write_file` no aparecen.\n- `result[\"files\"]` sí trae `/research/Rock/sources.md`: lo escribió el SUB en el filesystem compartido\n  (`StateBackend` por defecto, como en 2.A). En el lab, `m4.2_run_newsletter.py` saca esos archivos del state y\n  los copia a tu disco.\n\nRelación con LangGraph: es un subgrafo que se invoca desde un tool node, con su propio `messages` vacío."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué hereda el subagent y qué no",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langchain_core.tools import tool\nfrom deepagents import FilesystemPermission, create_deep_agent\n\n\nclass Guion(BaseChatModel):\n    \"\"\"Modelo falso: anota qué tools recibe y qué lee, y responde en orden.\"\"\"\n    nombre: str\n    guion: list\n    i: int = 0\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        if self.i == 0:\n            print(f\"[{self.nombre} tools] {[t.name for t in tools]}\")\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        if self.i == 0:\n            print(f\"[{self.nombre} system prompt] {messages[0].content!r}\")\n        else:\n            print(f\"[{self.nombre} lee] {messages[-1].content!r}\")\n        respuesta = self.guion[self.i]\n        self.i += 1\n        return ChatResult(generations=[ChatGeneration(message=respuesta)])\n\n\n@tool\ndef internet_search(query: str) -> str:\n    \"\"\"Busca noticias en la web.\"\"\"\n    return f\"resultados para {query}\"\n\n\n@tool\ndef markdown_to_html(markdown_text: str) -> str:\n    \"\"\"Convierte Markdown a HTML.\"\"\"\n    return \"<html>...</html>\"\n\n\n# El sub intenta escribir FUERA de /research/.\nmodelo_sub = Guion(nombre=\"SUB\", guion=[\n    AIMessage(content=\"\", tool_calls=[{\n        \"name\": \"write_file\",\n        \"args\": {\"file_path\": \"/output/hack.html\", \"content\": \"x\"}, \"id\": \"w1\"}]),\n    AIMessage(content=\"## Rock\\nsegmento\"),\n])\n\n# El editor delega y luego intenta escribir DENTRO de /research/.\nmodelo_editor = Guion(nombre=\"EDITOR\", guion=[\n    AIMessage(content=\"\", tool_calls=[{\n        \"name\": \"task\",\n        \"args\": {\"subagent_type\": \"genre-researcher\", \"description\": \"Investiga Rock.\"},\n        \"id\": \"t1\"}]),\n    AIMessage(content=\"\", tool_calls=[{\n        \"name\": \"write_file\",\n        \"args\": {\"file_path\": \"/research/Rock/notas.md\", \"content\": \"x\"}, \"id\": \"w2\"}]),\n    AIMessage(content=\"fin\"),\n])\n\nagent = create_deep_agent(\n    model=modelo_editor,\n    tools=[markdown_to_html],\n    system_prompt=\"Eres el editor del newsletter.\",\n    subagents=[{\n        \"name\": \"genre-researcher\",\n        \"description\": \"Investiga un género musical.\",\n        \"system_prompt\": \"Eres periodista musical.\",\n        \"tools\": [internet_search],\n        \"model\": modelo_sub,\n        \"permissions\": [\n            FilesystemPermission(operations=[\"read\", \"write\"], paths=[\"/research/**\"], mode=\"allow\"),\n            FilesystemPermission(operations=[\"write\"], paths=[\"/**\"], mode=\"deny\"),\n        ],\n    }],\n    permissions=[\n        FilesystemPermission(operations=[\"write\"], paths=[\"/research/**\"], mode=\"deny\"),\n    ],\n)\n\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Arma el newsletter.\"}]})",
+   "notas": "Mismo patrón que el lab: el editor tiene `markdown_to_html`; el sub declara `tools=[internet_search]` y sus\npropios permisos. Salida real:\n```\n[EDITOR tools] ['ls', 'read_file', 'write_file', 'edit_file', 'delete', 'glob', 'grep', 'task', 'markdown_to_html']\n[EDITOR system prompt] 'Eres el editor del newsletter.'\n[SUB tools] ['ls', 'read_file', 'write_file', 'edit_file', 'delete', 'glob', 'grep', 'internet_search']\n[SUB system prompt] 'Eres periodista musical.'\n[SUB lee] 'Error: permission denied for write on /output/hack.html'\n[EDITOR lee] '## Rock\\nsegmento'\n[EDITOR lee] 'Error: permission denied for write on /research/Rock/notas.md'\n```\n`tools=` del sub **reemplaza** las tools propias del padre (no hay `markdown_to_html`), pero los built-ins de archivos\nsiguen. El system prompt es el suyo. Y cada uno choca con **sus** permisos: primera regla que coincide gana.",
+   "resaltar": [
+    73,
+    77,
+    81
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Herencia: la tabla",
+   "contenido": "| Campo del subagent | Si no lo pones | Si lo pones |\n|---|---|---|\n| `system_prompt` | obligatorio: **nunca** se hereda | el suyo |\n| `tools` | hereda las tools propias del padre | **reemplaza** (los built-ins de archivos quedan) |\n| `model` | el del padre | el suyo (en el lab, Haiku más barato) |\n| `permissions` | las del padre | **reemplaza** |\n\nAdemás, todo agente trae gratis un subagent **`general-purpose`**: mismas tools y modelo que el principal, para\naislar contexto en tareas que no encajan con ningún subagent tuyo. Lo verás en la descripción de `task`.\n\nEstos subagents son **síncronos**: el padre espera hasta que el más lento termina. Los asíncronos llegan en 5.C."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos task en el mismo turno",
+   "contenido": "El editor pide **dos** `task` en el mismo `AIMessage` (Rock y Metal). El SUB imprime lo que recibe:\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\n\n\nclass Guion(BaseChatModel):\n    \"\"\"Modelo falso: imprime lo que recibe (si es el SUB) y responde en orden.\"\"\"\n    nombre: str\n    guion: list\n    i: int = 0\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        if self.nombre == \"SUB\":\n            print(f\"[SUB recibe] {[m.type for m in messages]} -> {messages[-1].content!r}\")\n        respuesta = self.guion[self.i % len(self.guion)]\n        self.i += 1\n        return ChatResult(generations=[ChatGeneration(message=respuesta)])\n\n\nmodelo_sub = Guion(nombre=\"SUB\", guion=[AIMessage(content=\"## Segmento listo\")])\n\n# El editor pide DOS task en el mismo AIMessage.\nmodelo_editor = Guion(nombre=\"EDITOR\", guion=[\n    AIMessage(content=\"\", tool_calls=[\n        {\"name\": \"task\", \"args\": {\"subagent_type\": \"genre-researcher\",\n                                  \"description\": \"Investiga Rock.\"}, \"id\": \"t1\"},\n        {\"name\": \"task\", \"args\": {\"subagent_type\": \"genre-researcher\",\n                                  \"description\": \"Investiga Metal.\"}, \"id\": \"t2\"},\n    ]),\n    AIMessage(content=\"Newsletter armado.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo_editor,\n    system_prompt=\"Eres el editor.\",\n    subagents=[{\"name\": \"genre-researcher\", \"description\": \"Investiga un género.\",\n                \"system_prompt\": \"Eres periodista musical.\", \"model\": modelo_sub}],\n)\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Arma el newsletter.\"}]})\nprint([m.type for m in r[\"messages\"]])\nprint(\"Llamadas al modelo del SUB:\", modelo_sub.i)\n```\n\n1. ¿Cuántas veces se llama al modelo del SUB y qué mensajes recibe cada vez?\n2. ¿Qué tipos de mensaje quedan en el historial del editor?",
+   "respuesta": "Salida real:\n```\n[SUB recibe] ['system', 'human'] -> 'Investiga Rock.'\n[SUB recibe] ['system', 'human'] -> 'Investiga Metal.'\n['human', 'ai', 'tool', 'tool', 'ai']\nLlamadas al modelo del SUB: 2\n```\nDos llamadas, cada una **aislada**: `['system', 'human']` con solo su género. Metal no ve lo que hizo Rock. Al editor\nle llegan dos `ToolMessage`, uno por `task`, y después responde. Así es el fan-out en paralelo del lab: 4 `task` en un\npaso, y el editor sigue cuando vuelve el más lento."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: el subagent que no sabe tu nombre",
+   "contenido": "En el turno 1 el usuario escribe: \"Me llamo Ana y mi cliente es Globex\". En el turno 3 pide un correo de seguimiento.\nEl agente principal delega con `task(description=\"Redacta un correo de seguimiento\", subagent_type=\"writer\")`.\nEl correo sale con \"Estimado cliente\" y sin nombres. ¿Cuál es la causa más probable?\n\n- A) El checkpointer no guardó el turno 1.\n- B) El subagent solo recibe la `description`; el nombre y la empresa no estaban ahí.\n- C) `writer` necesita `memory=` para leer el historial del padre.\n- D) Los subagents no pueden recibir texto libre, solo un `subagent_type`.",
+   "respuesta": "**B.** El subagent arranca con su system prompt y la `description`, nada más. El padre sí tenía el dato (está en su\nhistorial), pero no lo puso en la tarea. El arreglo: escribir una `description` completa (\"Correo para Ana, de Globex,\nsobre...\").\nA no: el padre lo vio. C no: `memory=` carga archivos `AGENTS.md`, no el historial del padre. D no: la `description` es\ntexto libre. (En versiones más nuevas que la 0.7.0 existe `mode: \"fork\"` para heredar la conversación; el curso no lo usa.)"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Permisos cruzados",
+   "contenido": "En el ejemplo del paso 7, el SUB intenta `write_file(\"/output/hack.html\")` y el editor intenta\n`write_file(\"/research/Rock/notas.md\")`. ¿Qué pasa con cada escritura, y por qué el SUB sí puede escribir en\n`/research/Rock/sources.md` si su segunda regla dice `deny` en `/**`?",
+   "respuesta": "Las dos se niegan: `Error: permission denied for write on ...`. El SUB solo puede escribir bajo `/research/**`\ny el editor tiene `deny` justo ahí. El SUB sí escribe en `/research/...` porque las reglas se evalúan **en orden y gana\nla primera que coincide**: su `allow` de `/research/**` va antes del `deny` de `/**`. Si las inviertes, el sub queda\nbloqueado en su propia carpeta. Y el error del SUB no llega al editor: se queda en el contexto del SUB.",
+   "ref": 7
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un subagent es un agente completo que se llama con la tool `task`: **entra una `description`, sale un mensaje**.\n- No hereda el historial ni el system prompt del padre. Lo que necesite saber va en la `description`.\n- Comparten el filesystem del state: lo bulky se guarda en archivos y solo vuelve el resumen.\n- `tools`, `model` y `permissions` del subagent **reemplazan** lo heredado; los built-ins de archivos siempre quedan.\n- `write_todos` (planning) es otra cosa y es opt-in con `TodoListMiddleware`.\n\nRelación: es la idea de `trim`/filtrar de LangGraph 2.D llevada al extremo: el padre ni siquiera recibe el trabajo intermedio.\n\nDónde buscarlo en docs: docs.langchain.com → Deep Agents → *Subagents* y *Context engineering*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m4/m4.1-delegation.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m4/m4.2-building-a-subagent-team.html",
+  "python/m4/m4_2_newsletter_agent.py",
+  "python/m4/m4.2_run_newsletter.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "El usuario dijo su nombre hace 3 turnos y el principal delega con `task`. ¿El subagent sabe el nombre?",
+   "reverso": "No, salvo que el padre lo escriba en la `description`. El subagent solo recibe su system prompt y ese mensaje."
+  },
+  {
+   "frente": "Un subagent hace 40 tool calls. ¿Qué entra al historial del agente principal?",
+   "reverso": "Un solo `ToolMessage` con la respuesta final del subagent. Los pasos intermedios se quedan en su contexto."
+  },
+  {
+   "frente": "¿Por qué el researcher del lab guarda sus búsquedas en `/research/<genre>/sources.md` en vez de devolverlas?",
+   "reverso": "Para que los ~20 KB crudos no entren al contexto del editor. Solo vuelve el segmento; el archivo queda en el state compartido."
+  },
+  {
+   "frente": "El padre tiene `tools=[markdown_to_html]` y el subagent `tools=[internet_search]`. ¿Puede el sub usar `write_file`?",
+   "reverso": "Sí. `tools=` reemplaza las tools propias heredadas, pero los built-ins de archivos los pone siempre el harness."
+  },
+  {
+   "frente": "¿Cuándo NO conviene delegar en un subagent?",
+   "reverso": "Si la tarea es simple y de un paso, o si necesitas conservar el contexto intermedio y no solo el resultado final."
+  },
+  {
+   "frente": "¿Planear con `write_todos` es delegar?",
+   "reverso": "No. `write_todos` es la lista de pendientes del propio agente (opt-in con `TodoListMiddleware`); delegar manda trabajo a otro agente con contexto aislado."
+  }
+ ]
+}

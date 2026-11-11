@@ -1,0 +1,157 @@
+{
+ "mision_id": "4.D",
+ "titulo": "Juntarlo todo",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Ya tienes todas las piezas sueltas: memoria, human-in-the-loop, ramas paralelas, subgraphs y `Send`. Falta verlas trabajar juntas.\n\nEl proyecto del módulo es un **asistente de investigación** (inspirado en el paper STORM):\n\n1. Le das un tema. Un LLM crea un equipo de **analistas**, cada uno con un enfoque.\n2. **Tú** revisas el equipo y puedes pedir cambios antes de seguir.\n3. Cada analista **entrevista** a un experto de IA, varias vueltas, y el experto busca en la web y en Wikipedia.\n4. Cada entrevista produce una sección, y al final se escribe el reporte completo.\n\nAquí no se trata de escribirlo, sino de **leer la arquitectura** y saber qué pieza resuelve qué."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "La arquitectura completa",
+   "contenido": "graph TD\n  S([START]) --> create_analysts\n  create_analysts --> human_feedback\n  human_feedback -. feedback .-> create_analysts\n  human_feedback -. \"Send x N\" .-> ci_start\n  subgraph conduct_interview\n    ci_start([start]) --> ask_question\n    ask_question --> search_web\n    ask_question --> search_wikipedia\n    search_web --> answer_question\n    search_wikipedia --> answer_question\n    answer_question -. otra pregunta .-> ask_question\n    answer_question -. ya basta .-> save_interview\n    save_interview --> write_section\n  end\n  write_section --> write_report\n  write_section --> write_introduction\n  write_section --> write_conclusion\n  write_report --> finalize_report\n  write_introduction --> finalize_report\n  write_conclusion --> finalize_report\n  finalize_report --> E([END])\n  class human_feedback clave",
+   "notas": "Arriba, el padre (`ResearchGraphState`). En la caja, el subgraph `conduct_interview` (`InterviewState`).\nLas flechas punteadas son condicionales. De `human_feedback` sale una de dos: regresar a `create_analysts` o **N `Send`**, uno por analista.\nEs la forma que da `get_graph(xray=1)` del grafo compilado (lo comprobé con stubs)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué hace cada node del padre",
+   "contenido": "| Node | Qué hace | Concepto |\n|---|---|---|\n| `create_analysts` | LLM con `with_structured_output(Perspectives)` crea `max_analysts` analistas | structured output |\n| `human_feedback` | No hace nada: el grafo se **pausa antes** (`interrupt_before`) | human-in-the-loop |\n| `initiate_all_interviews` | Edge: si hay feedback, regresa; si no, un `Send` por analista | map con `Send` |\n| `conduct_interview` | El subgraph de la entrevista, N copias en paralelo | subgraph |\n| `write_report`, `write_introduction`, `write_conclusion` | Tres LLM en paralelo con todas las `sections` | fan-out / reduce |\n| `finalize_report` | Pega intro + contenido + conclusión | fan-in |"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué pasa dentro de una entrevista",
+   "contenido": "El subgraph `conduct_interview` tiene su propio state, con sus `messages`:\n\n1. **`ask_question`**: el analista (LLM con su persona) hace una pregunta.\n2. **`search_web`** y **`search_wikipedia`** en paralelo: cada una convierte la conversación en una query y escribe en `context` (con `operator.add`, como en 4.A).\n3. **`answer_question`**: el experto responde solo con ese `context`, con citas. Su mensaje lleva `name=\"expert\"`.\n4. **`route_messages`**: si el experto ya respondió `max_num_turns` veces, o el analista dijo *\"Thank you so much for your help\"*, termina; si no, otra pregunta.\n5. **`save_interview`** guarda la conversación como texto y **`write_section`** escribe la sección en `sections`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "1. Los tres states",
+   "contenido": "import operator\nfrom typing import Annotated, List\nfrom typing_extensions import TypedDict\nfrom pydantic import BaseModel\nfrom langchain_core.messages import AIMessage, HumanMessage, get_buffer_string\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.types import Send\n\n\n# ---------- Schemas (iguales al notebook) ----------\nclass Analyst(BaseModel):\n    affiliation: str\n    name: str\n    role: str\n    description: str\n\nclass GenerateAnalystsState(TypedDict):\n    topic: str\n    max_analysts: int\n    human_analyst_feedback: str\n    analysts: List[Analyst]\n\nclass InterviewState(MessagesState):\n    max_num_turns: int\n    context: Annotated[list, operator.add]  # las dos búsquedas escriben aquí en paralelo\n    analyst: Analyst\n    interview: str\n    sections: list  # la key que comparte con el padre\n\nclass ResearchGraphState(TypedDict):\n    topic: str\n    max_analysts: int\n    human_analyst_feedback: str\n    analysts: List[Analyst]\n    sections: Annotated[list, operator.add]  # aquí se juntan las secciones de TODAS las entrevistas\n    introduction: str\n    content: str\n    conclusion: str\n    final_report: str",
+   "notas": "Tres states: uno para crear analistas, uno por entrevista y el del padre.\n`sections` es la key que **comparten** padre y subgraph (4.B). En el subgraph es una lista normal; en el padre lleva `operator.add`, porque ahí llegan las N entrevistas a la vez.\nLos schemas son los del notebook, sin las descripciones de `Field`.",
+   "resaltar": [
+    24,
+    29,
+    36
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "2. Analistas, pausa humana y el map",
+   "contenido": "# Continúa del paso anterior\n# ---------- Nodes del padre (stubs en lugar del LLM) ----------\ndef create_analysts(state: GenerateAnalystsState):\n    nombres = [\"Ana\", \"Beto\", \"Carla\", \"Dani\", \"Eva\"][: state[\"max_analysts\"]]\n    if state.get(\"human_analyst_feedback\"):\n        nombres[-1] = \"Fundadora de startup\"  # el LLM \"hace caso\" al feedback\n    return {\"analysts\": [Analyst(affiliation=\"X\", name=n, role=\"analista\", description=f\"foco de {n}\")\n                         for n in nombres]}\n\ndef human_feedback(state: GenerateAnalystsState):\n    \"\"\"No-op: el grafo se interrumpe antes de este node\"\"\"\n    pass\n\ndef initiate_all_interviews(state: ResearchGraphState):\n    # ¿Hay feedback? Regresa a crear analistas\n    if state.get(\"human_analyst_feedback\"):\n        return \"create_analysts\"\n    # Si no: map. Un Send por analista, cada uno con su propio state de entrevista\n    topic = state[\"topic\"]\n    return [Send(\"conduct_interview\",\n                 {\"analyst\": analyst,\n                  \"messages\": [HumanMessage(content=f\"So you said you were writing an article on {topic}?\")]})\n            for analyst in state[\"analysts\"]]",
+   "notas": "Los LLM son **stubs**: `create_analysts` inventa nombres en vez de llamar a `gpt-4o`. El flujo es el mismo.\n`human_feedback` está vacío a propósito: es solo el lugar donde el grafo se pausa.\n`initiate_all_interviews` es la función del conditional edge: o un nombre de node, o una lista de `Send` (4.C). Cada `Send` lleva el analista y el primer mensaje.",
+   "resaltar": [
+    17,
+    20
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "3. El subgraph de la entrevista",
+   "contenido": "# Continúa del paso anterior\n# ---------- Nodes del subgraph de entrevista (stubs) ----------\ndef generate_question(state: InterviewState):\n    return {\"messages\": [AIMessage(content=f\"{state['analyst'].name} pregunta algo\")]}\n\ndef search_web(state: InterviewState):\n    return {\"context\": [\"doc web\"]}\n\ndef search_wikipedia(state: InterviewState):\n    return {\"context\": [\"doc wikipedia\"]}\n\ndef generate_answer(state: InterviewState):\n    return {\"messages\": [AIMessage(content=f\"respuesta con {len(state['context'])} docs\", name=\"expert\")]}\n\ndef save_interview(state: InterviewState):\n    return {\"interview\": get_buffer_string(state[\"messages\"])}\n\ndef route_messages(state: InterviewState, name: str = \"expert\"):\n    messages = state[\"messages\"]\n    max_num_turns = state.get(\"max_num_turns\", 2)\n    num_responses = len([m for m in messages if isinstance(m, AIMessage) and m.name == name])\n    if num_responses >= max_num_turns:\n        return \"save_interview\"\n    last_question = messages[-2]\n    if \"Thank you so much for your help\" in last_question.content:\n        return \"save_interview\"\n    return \"ask_question\"\n\ndef write_section(state: InterviewState):\n    return {\"sections\": [f\"## Sección de {state['analyst'].name} ({len(state['context'])} docs)\"]}\n\ninterview_builder = StateGraph(InterviewState)\ninterview_builder.add_node(\"ask_question\", generate_question)\ninterview_builder.add_node(\"search_web\", search_web)\ninterview_builder.add_node(\"search_wikipedia\", search_wikipedia)\ninterview_builder.add_node(\"answer_question\", generate_answer)\ninterview_builder.add_node(\"save_interview\", save_interview)\ninterview_builder.add_node(\"write_section\", write_section)\ninterview_builder.add_edge(START, \"ask_question\")\ninterview_builder.add_edge(\"ask_question\", \"search_web\")\ninterview_builder.add_edge(\"ask_question\", \"search_wikipedia\")\ninterview_builder.add_edge(\"search_web\", \"answer_question\")\ninterview_builder.add_edge(\"search_wikipedia\", \"answer_question\")\ninterview_builder.add_conditional_edges(\"answer_question\", route_messages, [\"ask_question\", \"save_interview\"])\ninterview_builder.add_edge(\"save_interview\", \"write_section\")\ninterview_builder.add_edge(\"write_section\", END)",
+   "notas": "Las búsquedas y respuestas son stubs. En el notebook, `search_web` usa `TavilySearch` y `search_wikipedia` usa `WikipediaLoader`, cada una con una query que genera el LLM.\n`route_messages` es del notebook tal cual: cuenta las respuestas con `name == \"expert\"` y mira `messages[-2]`, la última pregunta del analista.\n`max_num_turns` no viene en el `Send`, así que vale 2 por el `.get(..., 2)`.",
+   "resaltar": [
+    40,
+    41,
+    44
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "4. El reduce y el grafo padre",
+   "contenido": "# Continúa del paso anterior\n# ---------- Reduce: escribir el reporte (stubs) ----------\ndef write_report(state: ResearchGraphState):\n    return {\"content\": \"## Insights\\n\" + \"\\n\".join(state[\"sections\"])}\n\ndef write_introduction(state: ResearchGraphState):\n    return {\"introduction\": f\"# Intro ({len(state['sections'])} secciones)\"}\n\ndef write_conclusion(state: ResearchGraphState):\n    return {\"conclusion\": \"## Conclusión\"}\n\ndef finalize_report(state: ResearchGraphState):\n    return {\"final_report\": state[\"introduction\"] + \"\\n\\n\" + state[\"content\"] + \"\\n\\n\" + state[\"conclusion\"]}\n\nbuilder = StateGraph(ResearchGraphState)\nbuilder.add_node(\"create_analysts\", create_analysts)\nbuilder.add_node(\"human_feedback\", human_feedback)\nbuilder.add_node(\"conduct_interview\", interview_builder.compile())\nbuilder.add_node(\"write_report\", write_report)\nbuilder.add_node(\"write_introduction\", write_introduction)\nbuilder.add_node(\"write_conclusion\", write_conclusion)\nbuilder.add_node(\"finalize_report\", finalize_report)\nbuilder.add_edge(START, \"create_analysts\")\nbuilder.add_edge(\"create_analysts\", \"human_feedback\")\nbuilder.add_conditional_edges(\"human_feedback\", initiate_all_interviews, [\"create_analysts\", \"conduct_interview\"])\nbuilder.add_edge(\"conduct_interview\", \"write_report\")\nbuilder.add_edge(\"conduct_interview\", \"write_introduction\")\nbuilder.add_edge(\"conduct_interview\", \"write_conclusion\")\nbuilder.add_edge([\"write_conclusion\", \"write_report\", \"write_introduction\"], \"finalize_report\")\nbuilder.add_edge(\"finalize_report\", END)\n\ngraph = builder.compile(interrupt_before=[\"human_feedback\"], checkpointer=MemorySaver())",
+   "notas": "El subgraph entra como node: `interview_builder.compile()` (4.B).\n`finalize_report` espera a los tres escritores con la lista en `add_edge` (4.A).\n`interrupt_before` necesita checkpointer: la pausa se guarda en el thread, como en el módulo 3.",
+   "resaltar": [
+    18,
+    29,
+    32
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "5. Correrlo: pausa, feedback y aprobación",
+   "contenido": "# Continúa del paso anterior\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\n\n# 1) Corre hasta la pausa\nfor event in graph.stream({\"topic\": \"LangGraph\", \"max_analysts\": 3}, thread, stream_mode=\"values\"):\n    if event.get(\"analysts\"):\n        print([a.name for a in event[\"analysts\"]])\nprint(\"next:\", graph.get_state(thread).next)\n\n# 2) El humano pide un cambio\ngraph.update_state(thread, {\"human_analyst_feedback\": \"Agrega a alguien de una startup\"}, as_node=\"human_feedback\")\nfor event in graph.stream(None, thread, stream_mode=\"updates\"):\n    print(list(event.keys()))\nprint(\"next:\", graph.get_state(thread).next)\nprint([a.name for a in graph.get_state(thread).values[\"analysts\"]])\n\n# 3) El humano aprueba: sin feedback\ngraph.update_state(thread, {\"human_analyst_feedback\": None}, as_node=\"human_feedback\")\nfor event in graph.stream(None, thread, stream_mode=\"updates\"):\n    print(\"--Node--\", next(iter(event.keys())))\nprint(graph.get_state(thread).values[\"final_report\"])",
+   "notas": "`update_state(..., as_node=\"human_feedback\")` escribe en el state **como si** el node `human_feedback` hubiera corrido; luego `stream(None, ...)` sigue desde ahí.\nSalida real:\n```\n['Ana', 'Beto', 'Carla']\nnext: ('human_feedback',)\n['create_analysts']\n['__interrupt__']\nnext: ('human_feedback',)\n['Ana', 'Beto', 'Fundadora de startup']\n--Node-- conduct_interview\n--Node-- conduct_interview\n--Node-- conduct_interview\n--Node-- write_conclusion\n--Node-- write_introduction\n--Node-- write_report\n--Node-- finalize_report\n# Intro (3 secciones)\n\n## Insights\n## Sección de Ana (4 docs)\n## Sección de Beto (4 docs)\n## Sección de Fundadora de startup (4 docs)\n\n## Conclusión\n```\nTambién sale un aviso `Deserializing unregistered type ... Analyst`: el checkpointer guarda un modelo de pydantic propio. No afecta aquí.",
+   "resaltar": [
+    11,
+    18
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué cada pieza",
+   "contenido": "- **Human-in-the-loop**: crear analistas es barato y lanzar entrevistas es caro (muchas llamadas). Revisas el equipo **antes** de gastar.\n- **`Send`**: el número de analistas lo decide `max_analysts` y el LLM, no tú al compilar.\n- **Subgraph**: cada entrevista tiene **su** conversación (`messages`) y **su** `context`. Si fueran keys del padre, las tres entrevistas se mezclarían.\n- **Ramas paralelas**: web y Wikipedia no dependen una de la otra, así que corren en el mismo superstep.\n- **Reduce**: `sections` junta las N secciones; tres escritores trabajan a la vez y `finalize_report` las pega."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La corrida real del notebook",
+   "contenido": "Con `gpt-4o` y Tavily (salida del notebook original, no la corrí aquí) el orden de nodes es el mismo que con los stubs:\n\n```\n--Node-- conduct_interview\n--Node-- conduct_interview\n--Node-- conduct_interview\n--Node-- write_conclusion\n--Node-- write_introduction\n--Node-- write_report\n--Node-- finalize_report\n```\n\nDos diferencias con `module-4/studio/research_assistant.py`: ahí se aprueba escribiendo `'approve'` en vez de `None`, y se importa `Send` de `langgraph.constants`. En 1.2.19 eso funciona pero avisa que está deprecado: usa `from langgraph.types import Send`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: cuántos docs por entrevista",
+   "contenido": "En el subgraph de entrevista del paso 7, `max_num_turns` vale 2 (el default): cada entrevista hace preguntas hasta que el experto responde 2 veces. Cada vuelta corre `search_web` y `search_wikipedia`.\n\n¿Cuántos documentos tiene el `context` de **cada** entrevista? ¿Y si sumas las tres?",
+   "respuesta": "**4** por entrevista (2 vueltas × 2 búsquedas), y la salida real lo confirma: `## Sección de Ana (4 docs)`. No son 12: cada `Send` arranca un subgraph con su **propio** state, y `context` no es una key del padre. Lo que sí se junta en el padre es `sections`, porque es la key compartida.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: el humano pide un cambio",
+   "contenido": "En la corrida del paso 9, el grafo está pausado antes de `human_feedback`. Haces `update_state` con `{\"human_analyst_feedback\": \"Agrega a alguien de una startup\"}` y luego `stream(None, thread)`.\n\n¿Qué nodes corren y dónde se detiene?",
+   "respuesta": "Corre `human_feedback` (vacío), el edge ve feedback y regresa a **`create_analysts`**, que crea el equipo nuevo. Luego se **vuelve a pausar** antes de `human_feedback`: `interrupt_before` aplica cada vez que el grafo llega ahí. Salida real: `['create_analysts']`, `['__interrupt__']` y `next: ('human_feedback',)`. No arranca ninguna entrevista hasta que mandas `None`.",
+   "ref": 9
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: tres entrevistas, ¿tres reportes?",
+   "contenido": "En el grafo padre del paso 8 hay 3 tareas `conduct_interview`, y de `conduct_interview` salen edges a `write_report`, `write_introduction` y `write_conclusion`.\n\n¿Cuántas veces corre `write_report`? ¿Y `finalize_report`?",
+   "respuesta": "**Una vez cada uno.** Las 3 entrevistas están en el mismo superstep; cuando terminan todas, sus `sections` se juntan con `operator.add` y los tres escritores corren una vez, en paralelo, en el superstep siguiente. `finalize_report` corre una vez porque su edge es una lista: espera a los tres. Salida real: tres `conduct_interview` y después un solo `write_report`.",
+   "ref": 8
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: sections sin reducer",
+   "contenido": "Juntas los pasos 5 a 8 (con los mismos stubs, sin LLM), cambias en `ResearchGraphState` `sections: Annotated[list, operator.add]` por `sections: list` (la línea con `# <- sin reducer`) y apruebas el equipo de 3. Código completo:\n\n```python\nimport operator\nfrom typing import Annotated, List\nfrom typing_extensions import TypedDict\nfrom pydantic import BaseModel\nfrom langchain_core.messages import AIMessage, HumanMessage, get_buffer_string\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.types import Send\n\n\n# ---------- Schemas (iguales al notebook) ----------\nclass Analyst(BaseModel):\n    affiliation: str\n    name: str\n    role: str\n    description: str\n\nclass GenerateAnalystsState(TypedDict):\n    topic: str\n    max_analysts: int\n    human_analyst_feedback: str\n    analysts: List[Analyst]\n\nclass InterviewState(MessagesState):\n    max_num_turns: int\n    context: Annotated[list, operator.add]  # las dos búsquedas escriben aquí en paralelo\n    analyst: Analyst\n    interview: str\n    sections: list  # la key que comparte con el padre\n\nclass ResearchGraphState(TypedDict):\n    topic: str\n    max_analysts: int\n    human_analyst_feedback: str\n    analysts: List[Analyst]\n    sections: list  # <- sin reducer\n    introduction: str\n    content: str\n    conclusion: str\n    final_report: str\n\n# ---------- Nodes del padre (stubs en lugar del LLM) ----------\ndef create_analysts(state: GenerateAnalystsState):\n    nombres = [\"Ana\", \"Beto\", \"Carla\", \"Dani\", \"Eva\"][: state[\"max_analysts\"]]\n    if state.get(\"human_analyst_feedback\"):\n        nombres[-1] = \"Fundadora de startup\"  # el LLM \"hace caso\" al feedback\n    return {\"analysts\": [Analyst(affiliation=\"X\", name=n, role=\"analista\", description=f\"foco de {n}\")\n                         for n in nombres]}\n\ndef human_feedback(state: GenerateAnalystsState):\n    \"\"\"No-op: el grafo se interrumpe antes de este node\"\"\"\n    pass\n\ndef initiate_all_interviews(state: ResearchGraphState):\n    # ¿Hay feedback? Regresa a crear analistas\n    if state.get(\"human_analyst_feedback\"):\n        return \"create_analysts\"\n    # Si no: map. Un Send por analista, cada uno con su propio state de entrevista\n    topic = state[\"topic\"]\n    return [Send(\"conduct_interview\",\n                 {\"analyst\": analyst,\n                  \"messages\": [HumanMessage(content=f\"So you said you were writing an article on {topic}?\")]})\n            for analyst in state[\"analysts\"]]\n\n# ---------- Nodes del subgraph de entrevista (stubs) ----------\ndef generate_question(state: InterviewState):\n    return {\"messages\": [AIMessage(content=f\"{state['analyst'].name} pregunta algo\")]}\n\ndef search_web(state: InterviewState):\n    return {\"context\": [\"doc web\"]}\n\ndef search_wikipedia(state: InterviewState):\n    return {\"context\": [\"doc wikipedia\"]}\n\ndef generate_answer(state: InterviewState):\n    return {\"messages\": [AIMessage(content=f\"respuesta con {len(state['context'])} docs\", name=\"expert\")]}\n\ndef save_interview(state: InterviewState):\n    return {\"interview\": get_buffer_string(state[\"messages\"])}\n\ndef route_messages(state: InterviewState, name: str = \"expert\"):\n    messages = state[\"messages\"]\n    max_num_turns = state.get(\"max_num_turns\", 2)\n    num_responses = len([m for m in messages if isinstance(m, AIMessage) and m.name == name])\n    if num_responses >= max_num_turns:\n        return \"save_interview\"\n    last_question = messages[-2]\n    if \"Thank you so much for your help\" in last_question.content:\n        return \"save_interview\"\n    return \"ask_question\"\n\ndef write_section(state: InterviewState):\n    return {\"sections\": [f\"## Sección de {state['analyst'].name} ({len(state['context'])} docs)\"]}\n\ninterview_builder = StateGraph(InterviewState)\ninterview_builder.add_node(\"ask_question\", generate_question)\ninterview_builder.add_node(\"search_web\", search_web)\ninterview_builder.add_node(\"search_wikipedia\", search_wikipedia)\ninterview_builder.add_node(\"answer_question\", generate_answer)\ninterview_builder.add_node(\"save_interview\", save_interview)\ninterview_builder.add_node(\"write_section\", write_section)\ninterview_builder.add_edge(START, \"ask_question\")\ninterview_builder.add_edge(\"ask_question\", \"search_web\")\ninterview_builder.add_edge(\"ask_question\", \"search_wikipedia\")\ninterview_builder.add_edge(\"search_web\", \"answer_question\")\ninterview_builder.add_edge(\"search_wikipedia\", \"answer_question\")\ninterview_builder.add_conditional_edges(\"answer_question\", route_messages, [\"ask_question\", \"save_interview\"])\ninterview_builder.add_edge(\"save_interview\", \"write_section\")\ninterview_builder.add_edge(\"write_section\", END)\n\n# ---------- Reduce: escribir el reporte (stubs) ----------\ndef write_report(state: ResearchGraphState):\n    return {\"content\": \"## Insights\\n\" + \"\\n\".join(state[\"sections\"])}\n\ndef write_introduction(state: ResearchGraphState):\n    return {\"introduction\": f\"# Intro ({len(state['sections'])} secciones)\"}\n\ndef write_conclusion(state: ResearchGraphState):\n    return {\"conclusion\": \"## Conclusión\"}\n\ndef finalize_report(state: ResearchGraphState):\n    return {\"final_report\": state[\"introduction\"] + \"\\n\\n\" + state[\"content\"] + \"\\n\\n\" + state[\"conclusion\"]}\n\nbuilder = StateGraph(ResearchGraphState)\nbuilder.add_node(\"create_analysts\", create_analysts)\nbuilder.add_node(\"human_feedback\", human_feedback)\nbuilder.add_node(\"conduct_interview\", interview_builder.compile())\nbuilder.add_node(\"write_report\", write_report)\nbuilder.add_node(\"write_introduction\", write_introduction)\nbuilder.add_node(\"write_conclusion\", write_conclusion)\nbuilder.add_node(\"finalize_report\", finalize_report)\nbuilder.add_edge(START, \"create_analysts\")\nbuilder.add_edge(\"create_analysts\", \"human_feedback\")\nbuilder.add_conditional_edges(\"human_feedback\", initiate_all_interviews, [\"create_analysts\", \"conduct_interview\"])\nbuilder.add_edge(\"conduct_interview\", \"write_report\")\nbuilder.add_edge(\"conduct_interview\", \"write_introduction\")\nbuilder.add_edge(\"conduct_interview\", \"write_conclusion\")\nbuilder.add_edge([\"write_conclusion\", \"write_report\", \"write_introduction\"], \"finalize_report\")\nbuilder.add_edge(\"finalize_report\", END)\n\ngraph = builder.compile(interrupt_before=[\"human_feedback\"], checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\n\n# Corre hasta la pausa antes de human_feedback\nfor event in graph.stream({\"topic\": \"LangGraph\", \"max_analysts\": 3}, thread, stream_mode=\"values\"):\n    if event.get(\"analysts\"):\n        print([a.name for a in event[\"analysts\"]])\n\n# El humano aprueba el equipo de 3: sin feedback\ngraph.update_state(thread, {\"human_analyst_feedback\": None}, as_node=\"human_feedback\")\nfor event in graph.stream(None, thread, stream_mode=\"updates\"):\n    print(\"--Node--\", next(iter(event.keys())))\n```\n\n¿Qué pasa?",
+   "respuesta": "`InvalidUpdateError: At key 'sections': Can receive only one value per step.` Salida real: `['Ana', 'Beto', 'Carla']`, tres `--Node-- conduct_interview` y después el error. Las 3 entrevistas sí corren, pero publican `sections` en el mismo superstep y al juntar sus updates el padre no sabe con cuál quedarse. Es el mismo error de 4.A, 4.B y 4.C: muchas ramas, una key, sin reducer. En el subgraph `sections: list` sí está bien: ahí cada entrevista escribe una sola vez."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Human-in-the-loop** (`interrupt_before` + `update_state(as_node=...)`) revisa lo barato antes de lanzar lo caro.\n- **`Send`** lanza una entrevista por analista; el número sale al correr.\n- Cada entrevista es un **subgraph** con su propio state; solo `sections` cruza al padre.\n- Dentro de la entrevista hay **ramas paralelas** (web y Wikipedia) y un **loop** con conditional edge, como el ReAct del módulo 1.\n- Todo fan-in que escribe una misma key necesita **reducer**; un edge con lista espera a todas las ramas."
+  }
+ ],
+ "fuentes": [
+  "module-4/research-assistant.ipynb",
+  "module-4/studio/research_assistant.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "En el research assistant, ¿por qué hay una pausa humana antes de las entrevistas?",
+   "reverso": "Crear analistas es barato; las entrevistas son muchas llamadas al LLM y a búsquedas. Revisas y corriges el equipo antes de gastar."
+  },
+  {
+   "frente": "¿Por qué cada entrevista es un subgraph y no nodes del padre?",
+   "reverso": "Cada una necesita su propia conversación (`messages`) y su `context`. Como keys del padre, las N entrevistas paralelas se mezclarían."
+  },
+  {
+   "frente": "¿Qué key cruza del subgraph de entrevista al padre, y por qué necesita reducer en el padre?",
+   "reverso": "`sections`. Las N entrevistas la escriben en el mismo superstep; `operator.add` las junta en una lista."
+  },
+  {
+   "frente": "¿Qué hace `update_state(thread, {...}, as_node=\"human_feedback\")`?",
+   "reverso": "Escribe en el state como si ese node hubiera corrido. Al seguir con `stream(None, thread)`, el grafo continúa desde los edges de `human_feedback`."
+  },
+  {
+   "frente": "Con `max_num_turns=2`, ¿cuántos documentos junta el `context` de una entrevista?",
+   "reverso": "4: dos vueltas, y en cada una corren en paralelo `search_web` y `search_wikipedia`. No se suman con las otras entrevistas."
+  },
+  {
+   "frente": "¿Cómo decide `route_messages` si la entrevista sigue?",
+   "reverso": "Termina si el experto (`name=\"expert\"`) ya respondió `max_num_turns` veces o si la última pregunta dice \"Thank you so much for your help\". Si no, otra pregunta."
+  },
+  {
+   "frente": "Tres entrevistas terminan. ¿Por qué `write_report` corre una vez y no tres?",
+   "reverso": "Las tres están en el mismo superstep: sus updates se aplican juntos y el siguiente superstep activa `write_report` una sola vez."
+  }
+ ]
+}

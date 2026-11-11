@@ -1,0 +1,115 @@
+{
+ "mision_id": "2.A",
+ "titulo": "Tendencias con Insights",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Leer una traza te dice qué pasó en **una** conversación. Con miles por semana no puedes leerlas todas, y las preguntas importantes son de conjunto: ¿de qué hablan los usuarios?, ¿dónde se atora el agente?, ¿hay fallas que ni sabías que buscar?\n\nUn conteo con palabras clave no alcanza: el usuario no usa tus palabras. **Insights** es la herramienta de LangSmith para esto: lee un lote de trazas, las agrupa por tema y te da un reporte. Requiere plan **Plus** ($39/mes) y gasta tu key de proveedor, así que esta lección es conceptual: lo que el examen pregunta es cómo funciona y qué haces con el resultado."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo funciona: resumir, agrupar, reportar",
+   "contenido": "Insights procesa **hasta 1,000 trazas** en tres pasos:\n\n1. **Resumir:** un LLM condensa cada traza en una línea (qué pidió el usuario y qué pasó).\n2. **Agrupar:** otro LLM junta los resúmenes en **clusters** de comportamiento parecido.\n3. **Reportar:** genera un reporte con los hallazgos clave.\n\nEl reporte tiene tres capas: **executive summary** (hallazgos con porcentajes y links a trazas de ejemplo), **categorías** (grupos amplios, con barra de distribución y métricas agregadas: error rate, latencia, feedback) y **subcategorías** (patrones finos dentro de cada categoría, con sus trazas). El valor real suele estar en las subcategorías: no \"integraciones\", sino \"32 % son de tokens OAuth expirados\".\n\nTarda hasta ~30 minutos. Costo aproximado por 1,000 threads: $1–2 con OpenAI, $3–4 con Anthropic."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El pipeline de Insights",
+   "contenido": "graph LR\n  T[Hasta 1,000 trazas<br/>filtro opcional] --> S[1. Resumir<br/>LLM: una línea por traza]\n  S --> C[2. Agrupar<br/>LLM: clusters]\n  C --> R[3. Reporte<br/>summary, categorías,<br/>subcategorías]\n  class C clave",
+   "notas": "Los dos pasos con LLM corren en LangSmith con la key de **Provider Secrets**.\nEl agrupamiento es lo que una regla de palabras clave no hace bien: junta \"no me llega el código\" con \"no puedo entrar\" aunque no compartan palabras."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Categorías propias y preguntas guía",
+   "contenido": "**Automáticas (default):** Insights descubre las categorías en los datos. Bueno para explorar; malo para comparar semana contra semana, porque el mismo tema puede salir con **otro nombre** en el siguiente reporte.\n\n**Definidas por ti:** das las áreas que ya conoces (p. ej. `billing`, `onboarding`, `integrations`) y Insights clasifica cada traza en una de ellas o la marca sin categoría; las subcategorías las sigue descubriendo. Da una estructura **estable** para ver tendencias.\n\nEn el lab defines las líneas de producto de ACME **más una categoría \"None\"** para lo que no es de ningún producto. Lo que cae en \"None\" también enseña: temas transversales que no tenían dueño.\n\n**Preguntas guía** (en ambos casos): *¿qué hace tu agente?* y *¿qué quieres aprender?* Mientras más específicas, más accionable el reporte."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Por qué un LLM agrupa mejor que un conteo",
+   "contenido": "from collections import Counter\n\n# Preguntas de un agente de soporte de una app de bancos (inventadas)\npreguntas = [\n    \"¿Cómo activo mi tarjeta nueva?\",\n    \"La tarjeta no pasa en ninguna tienda\",\n    \"¿Cuánto cobran por transferir a otro banco?\",\n    \"La transferencia lleva 3 días sin llegar\",\n    \"¿Puedo cambiar el NIP desde la app?\",\n    \"Me cobraron dos veces el mismo café\",\n    \"La app se cierra al abrir el estado de cuenta\",\n    \"No me llega el código para entrar\",\n]\n\n# Categorías definidas por ti, con palabras clave\ncategorias = {\n    \"tarjeta\": [\"tarjeta\", \"nip\"],\n    \"transferencias\": [\"transfer\"],\n    \"app\": [\"app\", \"código\"],\n}\n\nconteo = Counter()\nfor p in preguntas:\n    texto = p.lower()\n    encontradas = [c for c, claves in categorias.items()\n                   if any(k in texto for k in claves)]\n    if not encontradas:\n        encontradas = [\"None\"]\n    conteo.update(encontradas)\n    print(f\"{p:48} -> {encontradas}\")\n\nprint(conteo)",
+   "notas": "Un \"Insights\" casero con palabras clave sobre preguntas inventadas de una app de banco.\n- `any(k in texto for k in claves)`: ¿aparece **alguna** de las claves dentro del texto? Es búsqueda de subcadena, no de palabra.\n- Salida real:\n```\n¿Cómo activo mi tarjeta nueva?                   -> ['tarjeta']\nLa tarjeta no pasa en ninguna tienda             -> ['tarjeta']\n¿Cuánto cobran por transferir a otro banco?      -> ['transferencias']\nLa transferencia lleva 3 días sin llegar         -> ['transferencias']\n¿Puedo cambiar el NIP desde la app?              -> ['tarjeta', 'app']\nMe cobraron dos veces el mismo café              -> ['None']\nLa app se cierra al abrir el estado de cuenta    -> ['app']\nNo me llega el código para entrar                -> ['app']\nCounter({'tarjeta': 3, 'app': 3, 'transferencias': 2, 'None': 1})\n```\n\"Me cobraron dos veces\" es un cargo duplicado en la **tarjeta**, pero cae en `None`: no usa ninguna clave. El NIP cuenta doble. Un LLM que lee el sentido no comete esos errores.",
+   "resaltar": [
+    26
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El snippet del SDK (y por qué no corre tal cual)",
+   "contenido": "from langsmith import Client\nimport os\n\nclient = Client()\n\nreport = client.generate_insights(\n    name=\"Product Trends - March 2026\",\n    instructions=\"What are users asking about? Where are they struggling? Are there common confusion points or recurring errors?\",\n    openai_api_key=os.environ[\"OPENAI_API_KEY\"],\n)",
+   "notas": "Es el código de la página oficial. Con `langsmith` 0.14 (lo probé con una key falsa, sin red) falla antes de llamar a nada:\n```\nTypeError: Client.generate_insights() missing 1 required keyword-only argument: 'chat_histories'\n```\nEl método del SDK recibe **`chat_histories`**: una lista de conversaciones (cada una, lista de mensajes `{\"role\", \"content\"}`, máx. 1,000) que **sube como trazas** y analiza. Para analizar las trazas que ya están en un proyecto, usa la UI: proyecto > **+ New > New Insights Report**. Además, si pasas `openai_api_key`, el SDK la guarda como workspace secret.",
+   "resaltar": [
+    6
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Reportes programados y comparar en el tiempo",
+   "contenido": "En la configuración del reporte eliges un **schedule**:\n\n- **Daily:** cada día a las 8:00 UTC.\n- **Weekly on Monday:** cada lunes a las 8:00 UTC.\n- **Custom:** una expresión **cron**.\n\nCada corrida usa un **rango dinámico** (\"últimos 7 días\"), así que cada lunes tienes una foto nueva. Comparas semana contra semana: ¿bajaron los errores de OAuth después de cambiar la doc?, ¿apareció una confusión nueva?\n\nPara que la comparación sea justa: **guarda la configuración** del reporte y usa **categorías definidas**. Con categorías automáticas, el cambio de nombre de una categoría parece un cambio en los datos."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Cerrar el ciclo: de Insights a una eval offline",
+   "contenido": "graph LR\n  I[Insights<br/>subcategoría sospechosa] --> Q[Annotation queue<br/>revisión humana]\n  Q --> D[Dataset<br/>con reference outputs]\n  D --> E[Offline eval<br/>verifica el arreglo,<br/>evita regresiones]\n  class Q clave",
+   "notas": "No saltes de Insights directo al dataset. La **revisión humana** confirma que el patrón es real y agrega lo que hace útil al ejemplo: la respuesta correcta y notas de casos borde.\nDesde el reporte puedes mandar las trazas de una subcategoría a una annotation queue nueva o existente (lo viste en Building Reliable Agents)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El lab (sin respuestas)",
+   "contenido": "Requiere plan Plus y key en Provider Secrets (costó menos de $3 al grabarlo). Si no tienes Plus, **leer** este módulo basta para seguir.\n\n```bash\ncd lca-production-monitoring/python/module-2\nuv run python upload_traces.py --project ACME-product-analytics --input module2_traces.json\n```\n(sin `--input` truena: el default `synthetic_traces.json` no existe).\n\n1. **Abierto:** + New > New Insights Report, \"General Customer Trends\", contestas las preguntas guía y **Run job**.\n2. **Por categorías:** otro reporte, pero **Generate config** en vez de Run job; en *Categories* defines las 5 líneas de producto de ACME + \"None\". Revisa que corra sobre 500 trazas de las últimas 24 h.\n3. Compara: ¿qué te enseñó cada uno que el otro no?"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: después del reporte",
+   "contenido": "Un reporte de Insights muestra una subcategoría nueva: \"18 % de las conversaciones de facturación terminan con el usuario pidiendo hablar con un humano\". Quieres que tu equipo de producto lo arregle y que no vuelva a pasar. ¿Cuál es el siguiente paso recomendado?\n\n- **A)** Agregar esas trazas directo a un dataset y correr una offline eval hoy mismo.\n- **B)** Mandar las trazas de la subcategoría a una annotation queue para que el equipo dueño las revise y deje feedback estructurado.\n- **C)** Crear una alerta de Run Count con umbral 1 sobre esa subcategoría.\n- **D)** Volver a correr Insights con más trazas hasta que el porcentaje sea estable.",
+   "respuesta": "**B.** Primero la revisión humana confirma que el patrón es real y agrega la respuesta correcta; luego eso pasa al dataset y a la offline eval.\n- A: saltarse la revisión llena el dataset de ejemplos sin confirmar y sin reference output.\n- C: las alertas son para incidentes urgentes (errores, PII), no para hallazgos de producto.\n- D: más trazas no te dicen *por qué* pasa ni cómo debería responder el agente."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Comparar semana contra semana",
+   "contenido": "Programas un reporte **semanal** con categorías **automáticas**. La semana 1 trae la categoría \"Problemas de acceso\" con 20 %. La semana 2 no la trae, pero aparece \"Login y autenticación\" con 19 %. Tu jefe pregunta si se resolvieron los problemas de acceso. ¿Qué contestas y qué cambiarías en el reporte?",
+   "respuesta": "No puedes concluir que se resolvieron: lo más probable es que sea **el mismo tema con otro nombre**. Con categorías automáticas el LLM puede etiquetar distinto en cada corrida.\nCambio: define las categorías tú (p. ej. `acceso`, `pagos`, `envíos` + \"None\") y guarda la configuración. Así cada semana las trazas caen en las mismas cajas y el 20 % → 19 % sí es comparable."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos preguntas nuevas al contador del paso 5",
+   "contenido": "Mismas categorías del paso 5, ahora con dos preguntas nuevas:\n\n```python\ncategorias = {\n    \"tarjeta\": [\"tarjeta\", \"nip\"],\n    \"transferencias\": [\"transfer\"],\n    \"app\": [\"app\", \"código\"],\n}\nfor p in [\"Apple Pay no acepta mi plástico\", \"Quiero mandarle dinero a mi hermana\"]:\n    texto = p.lower()\n    encontradas = [c for c, claves in categorias.items() if any(k in texto for k in claves)]\n    print(p, \"->\", encontradas or [\"None\"])\n```\n\n¿Qué imprime cada una? ¿En qué categoría debería ir, según su sentido?",
+   "respuesta": "```\nApple Pay no acepta mi plástico -> ['app']\nQuiero mandarle dinero a mi hermana -> ['None']\n```\n\"apple\" **contiene** \"app\" (búsqueda de subcadena), así que cae en `app` cuando es un problema de **tarjeta** (\"plástico\" no está en las claves). \"Mandarle dinero\" es una **transferencia** sin la palabra \"transfer\". Un falso positivo y un falso negativo: justo lo que el paso de agrupar con LLM de Insights evita.",
+   "ref": 5
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Insights = **resumir (LLM) → agrupar (LLM) → reporte**, sobre hasta 1,000 trazas. Plan Plus; usa la key de Provider Secrets; ~30 min.\n- Reporte: executive summary, categorías y **subcategorías** (donde está el valor).\n- Categorías **propias + \"None\"** dan estructura estable para comparar reportes programados (daily, weekly, cron) con rango dinámico.\n- Ciclo: Insights → **annotation queue** (humanos) → dataset → offline eval. No saltes la revisión.\n- Para trazas de un proyecto, crea el reporte en la UI; `client.generate_insights` pide `chat_histories`. Relación: annotation queues y offline evals de Building Reliable Agents.\n\n**Dónde buscarlo en docs:** LangSmith > Observability > Insights."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-2/intro",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-2/insights",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-2/lab",
+  "lca-production-monitoring/python/module-2/upload_traces.py",
+  "lca-production-monitoring/python/module-2/module2_traces.json"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué hacen los dos LLM del pipeline de Insights?",
+   "reverso": "El primero resume cada traza en una línea; el segundo agrupa los resúmenes en clusters. Luego se genera el reporte."
+  },
+  {
+   "frente": "¿Por qué definir tus propias categorías en un reporte semanal?",
+   "reverso": "Con categorías automáticas el mismo tema puede cambiar de nombre entre corridas; con categorías fijas las semanas son comparables."
+  },
+  {
+   "frente": "¿Para qué sirve la categoría \"None\" en un reporte por categorías?",
+   "reverso": "Atrapa lo que no encaja en ninguna categoría definida, y así muestra temas transversales que no tenían dueño."
+  },
+  {
+   "frente": "Insights encontró una subcategoría problemática. ¿Por qué no pasarla directo a un dataset?",
+   "reverso": "Falta la revisión humana: confirmar que el patrón es real y agregar la respuesta correcta. Va a una annotation queue primero."
+  },
+  {
+   "frente": "¿Por qué un conteo con palabras clave no reemplaza a Insights?",
+   "reverso": "No entiende sentido: falla con sinónimos (falsos negativos) y con subcadenas como \"apple\" ⊃ \"app\" (falsos positivos)."
+  }
+ ]
+}

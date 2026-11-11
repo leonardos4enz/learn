@@ -1,0 +1,99 @@
+{
+ "mision_id": "1.B",
+ "titulo": "Investigar un pico de costo: volumen vs costo por traza",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "El dashboard te dice **que** algo cambió: la mediana de costo por traza se dispara a media hora, o un cliente gasta el triple que los demás. No te dice **por qué**. Para eso hay que comparar trazas y separar dos preguntas que se confunden mucho:\n\n1. ¿Cada traza cuesta más? (**costo por traza**)\n2. ¿Hay más trazas? (**volumen**)\n\n`costo total = volumen × costo por traza`. Un cliente puede gastar más por cualquiera de los dos factores, y la acción correcta es distinta en cada caso. Esta lección te da el método con datos inventados; el lab lo aplica a las trazas de ACME."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El método para investigar un pico",
+   "contenido": "1. **Ubica la ventana** en el chart de *median cost per trace* del Monitor tab.\n2. **Compara dentro vs fuera:** abre trazas de la ventana y de antes/después. ¿Qué campo cambió?\n3. **Agrupa** con *Group by* por una llave de metadata (cliente, versión, modelo) para ver si el cambio vive en un grupo.\n4. **Separa volumen de costo unitario:** mira el número de trazas *y* la mediana por traza de cada grupo.\n\nCada causa deja una **huella distinta** en los datos:\n\n| Causa | Huella |\n|---|---|\n| Modelo más caro | `ls_model_name` cambia; tokens parecidos |\n| Loop de tools | más runs LLM/tool por traza; muchos más tokens |\n| Se perdió el prompt caching | `cache_read` cae a 0; input tokens iguales |\n| Más tráfico | más trazas; costo **por traza** igual |"
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Datos de práctica con la forma de `traces.json`",
+   "contenido": "\"\"\"Genera trazas FALSAS con la misma forma que module-1/traces.json.\"\"\"\nfrom datetime import datetime, timedelta\n\ndef fake_trace(n, customer, minuto, model, input_tokens, cache_read, output_tokens):\n    inicio = datetime(2026, 11, 11, 14, 0) + timedelta(minutes=minuto)\n    root = {\"id\": f\"t{n}\", \"trace_id\": f\"t{n}\", \"parent_run_id\": None,\n            \"run_type\": \"chain\", \"name\": \"ACME Support\",\n            \"start_time\": inicio.isoformat(),\n            \"extra\": {\"metadata\": {\"customer\": customer}}}\n    llm = {\"id\": f\"t{n}-llm\", \"trace_id\": f\"t{n}\", \"parent_run_id\": f\"t{n}\",\n           \"run_type\": \"llm\", \"name\": \"ChatOpenAI\",\n           \"start_time\": inicio.isoformat(),\n           \"extra\": {\"metadata\": {\"customer\": customer, \"ls_model_name\": model}},\n           \"outputs\": {\"generations\": [[{\"message\": {\"kwargs\": {\"usage_metadata\": {\n               \"input_tokens\": input_tokens,\n               \"input_token_details\": {\"cache_read\": cache_read},\n               \"output_tokens\": output_tokens}}}}]]}}\n    return [root, llm]\n\ndef generar():\n    runs, n = [], 0\n    # 60 minutos de tráfico, una traza por minuto de cada cliente activo\n    for minuto in range(60):\n        sin_cache = 20 <= minuto < 30          # el proveedor deja de usar la caché\n        clientes = [\"norte\"]\n        if minuto % 2 == 0:\n            clientes.append(\"centro\")\n        if minuto % 5 == 0:\n            clientes.append(\"sur\")\n        for c in clientes:\n            n += 1\n            # sur manda contratos largos y pide respuestas largas\n            entrada, salida = (12000, 1000) if c == \"sur\" else (1200, 300)\n            cache = 0 if sin_cache else int(entrada * 0.6)\n            runs += fake_trace(n, c, minuto, \"modelo-std\", entrada, cache, salida)\n    return runs",
+   "notas": "Genera trazas **falsas** con la misma estructura que el lab: una raíz con `metadata.customer` y un run `llm` con `ls_model_name` y `usage_metadata` dentro de `outputs.generations[0][0].message.kwargs`.\n- Tres clientes: `norte` (una traza por minuto), `centro` (cada 2 minutos) y `sur` (cada 5 minutos, pero manda contratos largos).\n- Entre el minuto 20 y 29 el proveedor deja de usar la caché.\n- `range(60)` = minutos 0 a 59; `minuto % 5 == 0` es cierto en 0, 5, 10…",
+   "resaltar": [
+    24,
+    33
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El análisis: por cliente y por ventana de tiempo",
+   "contenido": "import json\nimport statistics\nfrom collections import defaultdict\nfrom datetime import datetime\n\nfrom c1_datos import generar\n\n# Precios SUPUESTOS por 1M de tokens (input, cache_read, output)\nPRECIOS = {\"modelo-std\": (2.00, 0.20, 8.00)}\n\ndef costo_llm(run):\n    u = run[\"outputs\"][\"generations\"][0][0][\"message\"][\"kwargs\"][\"usage_metadata\"]\n    p_in, p_cache, p_out = PRECIOS[run[\"extra\"][\"metadata\"][\"ls_model_name\"]]\n    cache = (u.get(\"input_token_details\") or {}).get(\"cache_read\", 0)\n    return (cache * p_cache + (u[\"input_tokens\"] - cache) * p_in\n            + u[\"output_tokens\"] * p_out) / 1_000_000\n\ndef por_traza(runs):\n    \"\"\"Junta cada run LLM con su traza: cliente, minuto, modelos, cache_read y costo.\"\"\"\n    trazas = {}\n    for r in runs:\n        if r[\"parent_run_id\"] is None:\n            trazas[r[\"trace_id\"]] = {\"customer\": r[\"extra\"][\"metadata\"].get(\"customer\"),\n                                     \"inicio\": datetime.fromisoformat(r[\"start_time\"]),\n                                     \"modelos\": set(), \"cache\": 0, \"costo\": 0.0}\n    for r in runs:\n        if r[\"run_type\"] == \"llm\":\n            t = trazas[r[\"trace_id\"]]\n            t[\"modelos\"].add(r[\"extra\"][\"metadata\"][\"ls_model_name\"])\n            u = r[\"outputs\"][\"generations\"][0][0][\"message\"][\"kwargs\"][\"usage_metadata\"]\n            t[\"cache\"] += (u.get(\"input_token_details\") or {}).get(\"cache_read\", 0)\n            t[\"costo\"] += costo_llm(r)\n    return list(trazas.values())\n\ntrazas = por_traza(generar())     # después del lab: json.load(open(\"traces.json\"))\n\nprint(\"== Por cliente ==\")\ngrupos = defaultdict(list)\nfor t in trazas:\n    grupos[t[\"customer\"]].append(t[\"costo\"])\nfor cliente, costos in sorted(grupos.items()):\n    print(f\"{cliente:7} trazas={len(costos):3}  total=${sum(costos):.4f}  \"\n          f\"mediana por traza=${statistics.median(costos):.5f}\")\n\nprint(\"== Por bloque de 10 minutos ==\")\nbloques = defaultdict(list)\nfor t in trazas:\n    bloques[t[\"inicio\"].minute // 10 * 10].append(t)\nfor b, ts in sorted(bloques.items()):\n    modelos = set().union(*(t[\"modelos\"] for t in ts))\n    print(f\"min {b:2}-{b + 9:2}  trazas={len(ts):2}  modelos={sorted(modelos)}  \"\n          f\"cache_read medio={statistics.mean(t['cache'] for t in ts):6.0f}  \"\n          f\"mediana costo=${statistics.median(t['costo'] for t in ts):.5f}\")",
+   "notas": "- `por_traza` junta cada run LLM con su raíz por `trace_id` y suma el costo (con precios **supuestos**, en `PRECIOS`).\n- `defaultdict(list)`: un diccionario que crea una lista vacía la primera vez que usas una llave. Así `grupos[cliente].append(...)` no truena con clientes nuevos.\n- `t[\"inicio\"].minute // 10 * 10` redondea hacia abajo a bloques de 10 (37 → 30).\n- Salida real:\n```\n== Por cliente ==\ncentro  trazas= 30  total=$0.1116  mediana por traza=$0.00350\nnorte   trazas= 60  total=$0.2232  mediana por traza=$0.00350\nsur     trazas= 12  total=$0.2544  mediana por traza=$0.01904\n== Por bloque de 10 minutos ==\nmin  0- 9  trazas=17  modelos=['modelo-std']  cache_read medio=  1482  mediana costo=$0.00350\nmin 10-19  trazas=17  modelos=['modelo-std']  cache_read medio=  1482  mediana costo=$0.00350\nmin 20-29  trazas=17  modelos=['modelo-std']  cache_read medio=     0  mediana costo=$0.00480\nmin 30-39  trazas=17  modelos=['modelo-std']  cache_read medio=  1482  mediana costo=$0.00350\n...\n```",
+   "resaltar": [
+    40,
+    48
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo leer esa salida",
+   "contenido": "**Por cliente:** `sur` tiene el **mayor total** ($0.2544) con **la menor cantidad** de trazas (12). Su mediana por traza es 5 veces la de los otros. Su costo viene de **consultas caras**, no de volumen. `norte` gasta el doble que `centro` solo porque manda el doble de trazas: mismo costo por traza.\n\n**Por tiempo:** en 20–29 la mediana sube de $0.00350 a $0.00480 con el **mismo modelo** y el **mismo volumen** (17 trazas). Lo único que cambió es `cache_read`, que cae a 0. La huella es la de \"se perdió el caching\".\n\nLas acciones son distintas: a `sur` le revisas el tamaño del contexto (resumir, recortar); el pico de 20–29 lo hablas con el proveedor o revisas que el prefijo del prompt no cambie entre llamadas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El lab, paso a paso (sin respuestas)",
+   "contenido": "```bash\ncd lca-production-monitoring/python/module-1\nuv run python upload_traces.py --project ACME-cost\n```\n\n1. Abre `ACME-cost` > **Monitor**. Busca el pico en *median cost per trace*.\n2. Abre trazas **dentro** de la ventana y **fuera**. En cada run LLM mira la metadata (`ls_model_name`) y el desglose de tokens. Usa la tabla de huellas del paso 2.\n3. En el Monitor, **Group by** > metadata > `customer`. ¿Quién tiene el mayor costo total?\n4. Para ese cliente: ¿más trazas, o trazas más caras? Compara conteo y mediana.\n\nDespués del lab puedes comprobar tus respuestas con el script del paso 4: cambia `generar()` por `json.load(open(\"traces.json\"))` y pon en `PRECIOS` los modelos que encuentres. Contesta el quiz de Academy **antes**."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: un pico que no es el modelo",
+   "contenido": "Tu dashboard muestra que la mediana de costo por traza subió 40 % entre las 14:20 y las 14:30. Abres trazas de esa ventana y de antes:\n\n| | Antes | 14:20–14:30 |\n|---|---|---|\n| Trazas por minuto | 17 | 17 |\n| `ls_model_name` | `modelo-std` | `modelo-std` |\n| Input tokens por llamada | ~1,200 | ~1,200 |\n| `cache_read` por llamada | ~720 | 0 |\n| Runs LLM por traza | 2 | 2 |\n\n¿Cuál es la causa más probable?\n\n- **A)** El agente cambió a un modelo más caro.\n- **B)** Un loop de tools disparó el número de tokens.\n- **C)** El prompt caching dejó de aplicarse y el input se cobró a precio completo.\n- **D)** Subió el tráfico y eso subió el costo por traza.",
+   "respuesta": "**C.** Lo único que cambia es `cache_read`: los mismos 1,200 tokens de input ahora se cobran todos a precio normal (es el bloque 20–29 del paso 4).\n- A: el modelo es el mismo.\n- B: un loop daría más runs por traza y muchos más tokens; ambos siguen igual.\n- D: el volumen no cambió y, aunque cambiara, el tráfico sube el **total**, no el costo de cada traza.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Volumen o consultas caras?",
+   "contenido": "Con la fórmula `total = volumen × costo por traza`, en otro proyecto tienes:\n\n| Cliente | Trazas | Mediana por traza |\n|---|---|---|\n| uno | 400 | $0.002 |\n| dos | 50 | $0.010 |\n| tres | 100 | $0.002 |\n\n¿Quién tiene el mayor total (aproximado)? ¿Qué lo explica: volumen o costo por traza? ¿Qué harías distinto con `dos`?",
+   "respuesta": "Aproximando total ≈ trazas × mediana: uno ≈ $0.80, dos ≈ $0.50, tres ≈ $0.20. **Gana `uno` por volumen**: sus trazas cuestan lo mismo que las de `tres`, solo manda 4 veces más.\n`dos` es el caso contrario: pocas trazas pero 5 veces más caras. Ahí sí vale revisar *qué* pregunta (contexto largo, más tools, otro modelo).\nOjo: mediana × conteo es aproximado; el total real es la suma de cada traza."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Más tráfico sube la mediana?",
+   "contenido": "Mira el bloque de 10 minutos del paso 4. Imagina que en el minuto 40–49 llegan **el doble** de trazas de `norte`, todas iguales a las de antes (mismo modelo, mismos tokens, caché activa).\n\n¿Qué pasa con estas tres columnas en ese bloque: `trazas`, `mediana costo` y el costo total del bloque?",
+   "respuesta": "- `trazas`: sube de 17 a **27** (10 de `norte` más).\n- **`mediana costo`: igual**, $0.00350 (lo corrí). Las trazas nuevas cuestan lo mismo que las de antes; solo hay más baratas en la mezcla, así que la mediana no sube.\n- Costo total: sube.\nPor eso el lab mira la **mediana por traza** para buscar picos: el volumen mueve el total, no el costo de cada traza.",
+   "ref": 4
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Total = volumen × costo por traza.** Antes de concluir, separa los dos factores con conteo y mediana por grupo.\n- Para un pico: compara trazas **dentro vs fuera** de la ventana y busca la huella (modelo, loop, caché, tráfico).\n- **Group by metadata** en el Monitor solo funciona con llaves que pusiste en la metadata de cada traza (`customer`, `app_version`…).\n- El mismo análisis se puede hacer en Python sobre las trazas exportadas: útil para comprobar lo que ves en la UI.\n- Relación: mismo `trim_messages`/resumen de LangGraph 2.D para bajar el costo de clientes con contextos largos.\n\n**Dónde buscarlo en docs:** LangSmith > Observability > Dashboards (prebuilt dashboards, Group by) y Cost tracking."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-1/lab",
+  "lca-production-monitoring/python/module-1/upload_traces.py",
+  "lca-production-monitoring/python/module-1/traces.json"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Un cliente tiene el mayor costo total. ¿Qué dos números miras para saber por qué?",
+   "reverso": "El número de trazas (volumen) y la mediana de costo por traza. Total = volumen × costo por traza."
+  },
+  {
+   "frente": "¿Por qué buscar picos en la mediana de costo por traza y no en el costo total?",
+   "reverso": "El total sube con el tráfico aunque nada esté mal. La mediana por traza solo sube si cada traza se volvió más cara."
+  },
+  {
+   "frente": "Sube el costo por traza, mismo modelo y mismos tokens, pero `cache_read` cae a 0. ¿Causa?",
+   "reverso": "Se perdió el prompt caching: el mismo input se cobra completo en vez de a precio de caché."
+  },
+  {
+   "frente": "¿Qué huella deja un loop de tools en las trazas?",
+   "reverso": "Más runs LLM y tool por traza y muchos más tokens por traza, con el mismo modelo."
+  },
+  {
+   "frente": "Quieres el costo por cliente en el dashboard. ¿Qué tiene que traer cada traza?",
+   "reverso": "Una llave de metadata con el cliente (p. ej. `customer`), para usar Group by metadata en el Monitor."
+  }
+ ]
+}

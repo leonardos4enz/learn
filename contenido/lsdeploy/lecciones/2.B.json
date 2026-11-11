@@ -1,0 +1,124 @@
+{
+ "mision_id": "2.B",
+ "titulo": "Conectar la UI y custom routes",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Ya sabes llamar al agente con el SDK. Ahora quieres una página web para los alumnos. Dos problemas:\n\n1. El SDK necesita tu LangSmith API key. Si el navegador llamara al agente directo, **la key quedaría en el navegador** de cualquiera.\n2. No quieres desplegar y pagar **otro servidor** solo para la UI.\n\nLa solución del curso: un servidor *proxy* (FastAPI) que se monta **dentro de la misma deployment** como *custom routes*."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El patrón proxy",
+   "contenido": "graph TD\n  b[\"Navegador<br/>index.html\"] -->|\"POST /chat\"| f[\"FastAPI: ui/app.py<br/>custom routes (http.app)\"]\n  f -->|\"LangGraph SDK<br/>POST /threads/{id}/runs/stream\"| s[\"Rutas integradas<br/>del Agent Server\"]\n  s --> g[\"Grafo tutor\"]\n  g --> l[LLM]\n  class f clave",
+   "notas": "El navegador **solo** habla con FastAPI; la key vive en el servidor (`DEEP_TUTOR_API_KEY`).\nFastAPI y el Agent Server están en la **misma deployment y la misma URL**: `http.app` en `langgraph.json` monta la app junto a las rutas integradas.\nEs la misma idea que el server proxy de cualquier app web: el cliente nunca ve las credenciales."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Las rutas propias: deep_tutor/ui/app.py",
+   "contenido": "\"\"\"\napp.py — FastAPI custom routes app\n\nServes index.html and proxies chat requests to the agent via agent_client.py.\nRegistered as a custom route in langgraph.json via the http.app field.\n\"\"\"\n\nimport sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent.parent))\n\nfrom fastapi import FastAPI, HTTPException, Request\nfrom fastapi.responses import FileResponse, StreamingResponse\nfrom pydantic import BaseModel\n\nfrom ui.agent_client import MODULES, create_client, create_student_sessions, stream_response\nfrom ui.deployment import get_deployment_url\n\napp = FastAPI()\n\nUI_DIR = Path(__file__).parent\n\n_client_cache: dict[str, object] = {}\n\n\ndef get_cached_client(deployment_url: str):\n    if deployment_url not in _client_cache:\n        _client_cache[deployment_url] = create_client(deployment_url)\n    return _client_cache[deployment_url]\n\n\n@app.get(\"/healthz\")\nasync def healthz():\n    return {\"status\": \"ok\"}\n\n\n@app.get(\"/\")\nasync def index():\n    return FileResponse(UI_DIR / \"index.html\")\n\n\n@app.get(\"/modules\")\nasync def modules():\n    return {\"modules\": MODULES}\n\n\n# ==========================================================\n# Auth helpers\n# ==========================================================\n\ndef email_to_namespace(email: str) -> str:\n    # Note: full password auth handled in m5 — namespace only for now\n    return email.replace(\".\", \"_\")\n\n\n# ==========================================================\n# Register — new students\n# ==========================================================\n\nclass RegisterRequest(BaseModel):\n    first_name: str\n    last_name: str\n    email: str\n    goals: str = \"\"\n\n\n@app.post(\"/register\")\nasync def register(request: Request, req: RegisterRequest):\n    \"\"\"Create profile + sessions for a new student and persist to Store.\"\"\"\n    client = get_cached_client(get_deployment_url(request))\n    namespace = email_to_namespace(req.email)\n\n    await client.store.put_item(\n        (namespace,),\n        key=\"profile\",\n        value={\n            \"first_name\": req.first_name,\n            \"last_name\": req.last_name,\n            \"email\": req.email,\n            \"goals\": req.goals,\n        },\n    )\n\n    sessions = await create_student_sessions(\n        client,\n        first_name=req.first_name,\n        last_name=req.last_name,\n        email=req.email,\n        namespace=namespace,\n    )\n\n    await client.store.put_item(\n        (namespace,),\n        key=\"sessions\",\n        value={\"sessions\": sessions},\n    )\n\n    return {\"sessions\": sessions, \"profile\": {\"first_name\": req.first_name, \"last_name\": req.last_name}}\n\n\n# ==========================================================\n# Login — returning students\n# ==========================================================\n\nclass LoginRequest(BaseModel):\n    email: str\n    # Note: password field — authentication handled in m5\n\n\n@app.post(\"/login\")\nasync def login(request: Request, req: LoginRequest):\n    \"\"\"Look up a returning student's profile and sessions from the Store.\"\"\"\n    client = get_cached_client(get_deployment_url(request))\n    namespace = email_to_namespace(req.email)\n\n    profile_item = await client.store.get_item((namespace,), key=\"profile\")\n    if profile_item is None:\n        raise HTTPException(status_code=404, detail=\"user not found\")\n\n    sessions_item = await client.store.get_item((namespace,), key=\"sessions\")\n    if sessions_item is None:\n        raise HTTPException(status_code=404, detail=\"sessions not found\")\n\n    return {\"sessions\": sessions_item[\"value\"][\"sessions\"], \"profile\": profile_item[\"value\"]}\n\n\n# ==========================================================\n# Chat\n# ==========================================================\n\nclass ChatRequest(BaseModel):\n    message: str\n    assistant_id: str\n    thread_id: str\n\n\n@app.post(\"/chat\")\nasync def chat(request: Request, req: ChatRequest):\n    \"\"\"Stream a response from the agent.\"\"\"\n    client = get_cached_client(get_deployment_url(request))\n    return StreamingResponse(\n        stream_response(client, req.thread_id, req.assistant_id, req.message),\n        media_type=\"text/plain\",\n    )\n\n\n# ==========================================================\n# Resources — threads and assistants\n# ==========================================================\n\n@app.get(\"/resources\")\nasync def resources(request: Request):\n    \"\"\"Return all threads and assistants.\"\"\"\n    client = get_cached_client(get_deployment_url(request))\n    assistants = await client.assistants.search(limit=100)\n    threads = await client.threads.search(limit=100)\n    return {\"assistants\": assistants, \"threads\": threads}",
+   "notas": "Seis rutas propias: `/` (la página), `/modules`, `/register`, `/login`, `/chat` (streaming) y `/resources` (para depurar), más `/healthz`.\n- `/register` escribe el perfil en el Store y crea un assistant y un thread por módulo.\n- `/chat` devuelve un `StreamingResponse` con los tokens del agente.\n- `get_deployment_url(request)` saca la URL de la propia deployment de los headers `x-forwarded-host` y `x-forwarded-proto` (`ui/deployment.py`).\nNo lo corrí: el `.venv` de LangGraph no trae FastAPI. Las llamadas que hace al SDK sí están verificadas (pasos 5 y 6).",
+   "resaltar": [
+    20,
+    68,
+    138
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Las llamadas al SDK: deep_tutor/ui/agent_client.py",
+   "contenido": "\"\"\"\nagent_client.py — LangGraph client\n\nConnects to a deployed LangGraph agent, creates threads, and streams responses.\n\nDocumentation:\n  LangGraph SDK (Python): https://langchain-ai.github.io/langgraph/cloud/reference/sdk/python_sdk_ref/\n\"\"\"\n\nimport os\nfrom collections.abc import AsyncGenerator\n\nfrom dotenv import load_dotenv\nfrom langgraph_sdk import get_client\nfrom langgraph_sdk.client import LangGraphClient\n\nload_dotenv(override=True)  # prefer .env file\n\nMODULES = [\n    {\"id\": \"module-1\", \"label\": \"deployment architecture\", \"active\": True},\n    {\"id\": \"module-2\", \"label\": \"using your deployment\", \"active\": True},\n    {\"id\": \"module-3\", \"label\": \"dashboard\", \"active\": True},\n    {\"id\": \"module-4\", \"label\": \"storage\", \"active\": True},\n    {\"id\": \"module-5\", \"label\": \"auth\", \"active\": True},\n    {\"id\": \"module-6\", \"label\": \"deepagents cli\", \"active\": True},\n]\n\n\ndef create_client(deployment_url: str) -> LangGraphClient:\n    \"\"\"Create a LangGraph client connected to the deployment.\"\"\"\n    api_key = os.environ.get(\"DEEP_TUTOR_API_KEY\", \"\")\n    return get_client(url=deployment_url, api_key=api_key)\n\n\nasync def stream_response(\n    client: LangGraphClient,\n    thread_id: str,\n    assistant_id: str,\n    message: str,\n) -> AsyncGenerator[str, None]:\n    \"\"\"Send a message and stream the agent's response.\"\"\"\n    async for event in client.runs.stream(\n        thread_id,\n        assistant_id,\n        input={\"messages\": [{\"role\": \"user\", \"content\": message}]},\n        stream_mode=\"messages-tuple\",\n    ):\n        if event.event != \"messages\":\n            continue\n        message_chunk, _metadata = event.data\n        if message_chunk.get(\"type\") != \"AIMessageChunk\":\n            continue  # skip tool calls / tool results — show only the agent's reply\n        content = message_chunk.get(\"content\", \"\")\n        if isinstance(content, list):\n            content = \"\".join(\n                b.get(\"text\", \"\") for b in content\n                if isinstance(b, dict) and b.get(\"type\") == \"text\"\n            )\n        if content:\n            yield content\n\n\nasync def create_student_sessions(\n    client: LangGraphClient,\n    first_name: str = \"Student\",\n    last_name: str = \"\",\n    email: str = \"\",\n    namespace: str = \"\",\n) -> list[dict]:\n    \"\"\"Create one assistant + thread per module for a student.\"\"\"\n    student_name = f\"{first_name} {last_name}\".strip()\n    sessions = []\n    for module in MODULES:\n        assistant = await client.assistants.create(\n            graph_id=\"tutor\",\n            name=f\"{student_name} — {module['id']}\",\n            context={\n                \"module_id\": module[\"id\"],\n                \"store_namespace\": namespace,\n            },\n        )\n        thread = await client.threads.create()\n        sessions.append({\n            \"module_id\": module[\"id\"],\n            \"assistant_id\": assistant[\"assistant_id\"],\n            \"thread_id\": thread[\"thread_id\"],\n        })\n    return sessions",
+   "notas": "Todo lo que habla con el agente está aquí:\n- `create_client`: el SDK con `DEEP_TUTOR_API_KEY` (el alias de 1.B).\n- `stream_response`: `runs.stream` con `stream_mode=\"messages-tuple\"`; cada evento es `(message_chunk, metadata)` y solo deja pasar los `AIMessageChunk`.\n- `create_student_sessions`: un `assistants.create` y un `threads.create` por cada uno de los 6 módulos.",
+   "resaltar": [
+    46,
+    51,
+    74
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: lo que hace /register",
+   "contenido": "import sys, json, asyncio, itertools\nimport dotenv\ndotenv.load_dotenv = lambda *a, **k: False      # no cargar ningún .env real\nsys.path.insert(0, r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/deep_tutor\")\nimport httpx\nfrom langgraph_sdk import get_client\nfrom ui.agent_client import create_student_sessions   # el código real del curso\n\nids = itertools.count(1)\ndef fake_agent_server(request: httpx.Request) -> httpx.Response:\n    \"\"\"Hace del Agent Server: imprime cada llamada que hace la UI con el SDK.\"\"\"\n    body = json.loads(request.content) if request.content else {}\n    print(\"SDK ->\", request.method, request.url.path, body.get(\"context\", \"\"))\n    if request.url.path == \"/assistants\":\n        return httpx.Response(200, json={\"assistant_id\": f\"a{next(ids)}\"})\n    if request.url.path == \"/threads\":\n        return httpx.Response(200, json={\"thread_id\": f\"t{next(ids)}\"})\n    return httpx.Response(204)\n\nasync def main():\n    client = get_client(url=\"https://tutor-xyz.us.langgraph.app\", api_key=\"lsv2_FALSA\")\n    client.http.client._transport = httpx.MockTransport(fake_agent_server)\n    # Lo que hace POST /register de ui/app.py, en orden:\n    await client.store.put_item((\"jane@example_com\",), key=\"profile\",\n                                value={\"first_name\": \"Jane\", \"last_name\": \"Doe\"})\n    sessions = await create_student_sessions(client, \"Jane\", \"Doe\", \"jane@example.com\", \"jane@example_com\")\n    await client.store.put_item((\"jane@example_com\",), key=\"sessions\", value={\"sessions\": sessions})\n    print(len(sessions), \"sesiones; la primera:\", sessions[0])\n\nasyncio.run(main())",
+   "notas": "Corre el `create_student_sessions` **real** del curso contra un `MockTransport` que hace de Agent Server (sin red), con las mismas dos escrituras al Store que hace `/register`. Salida real:\n`SDK -> PUT /store/items` (perfil)\n`SDK -> POST /assistants {'module_id': 'module-1', 'store_namespace': 'jane@example_com'}` y `SDK -> POST /threads`, seis veces, de `module-1` a `module-6`\n`SDK -> PUT /store/items` (sesiones)\n`6 sesiones; la primera: {'module_id': 'module-1', 'assistant_id': 'a1', 'thread_id': 't2'}`",
+   "resaltar": [
+    26
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: el streaming con messages-tuple",
+   "contenido": "import sys, json, asyncio\nimport dotenv\ndotenv.load_dotenv = lambda *a, **k: False      # no cargar ningún .env real\nsys.path.insert(0, r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/deep_tutor\")\nimport httpx\nfrom langgraph_sdk import get_client\nfrom ui.agent_client import stream_response      # el código real del curso\n\nSSE = (\n    'event: metadata\\ndata: {\"run_id\": \"r1\"}\\n\\n'\n    'event: messages\\ndata: [{\"type\": \"AIMessageChunk\", \"content\": \"Un thread \"}, {\"langgraph_node\": \"model\"}]\\n\\n'\n    'event: messages\\ndata: [{\"type\": \"tool\", \"content\": \"texto de la doc\"}, {\"langgraph_node\": \"tools\"}]\\n\\n'\n    'event: messages\\ndata: [{\"type\": \"AIMessageChunk\", \"content\": [{\"type\": \"text\", \"text\": \"guarda el historial.\"}]}, {}]\\n\\n'\n)\ndef fake_agent_server(request: httpx.Request) -> httpx.Response:\n    print(\"SDK ->\", request.method, request.url.path, json.loads(request.content)[\"stream_mode\"])\n    return httpx.Response(200, text=SSE, headers={\"content-type\": \"text/event-stream\"})\n\nasync def main():\n    client = get_client(url=\"https://tutor-xyz.us.langgraph.app\", api_key=\"lsv2_FALSA\")\n    client.http.client._transport = httpx.MockTransport(fake_agent_server)\n    async for token in stream_response(client, \"t1\", \"a1\", \"¿Qué es un thread?\"):\n        print(repr(token))\n\nasyncio.run(main())",
+   "notas": "El `MockTransport` responde con eventos SSE de mentira: un `metadata`, dos chunks del modelo y uno de una tool. `stream_response` es la función real del curso. Salida real:\n`SDK -> POST /threads/t1/runs/stream messages-tuple`\n`'Un thread '`\n`'guarda el historial.'`\nEl chunk de la tool (`\"type\": \"tool\"`) no sale, y el contenido en bloques (`[{\"type\": \"text\", ...}]`) se aplana a texto.",
+   "resaltar": [
+    12,
+    22
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Rutas integradas contra rutas propias",
+   "contenido": "Toda deployment trae la API del **Agent Server**. Contadas en `langgraph-api` 0.17: 12 rutas de assistants, 16 de threads, 21 de runs y 5 del Store, más `/mcp`, `/ok`, `/info`, `/metrics`, `/docs` y `/openapi.json`.\n\n`/docs` (Swagger) lista **todas**, las integradas y las tuyas. En local: `http://localhost:2024/docs`.\n\nDetalle verificado en el código: `/` e `/info` son *shadowable*, o sea que tu app puede reemplazarlas. Así la UI del tutor responde en `/`. `/ok` y `/docs` no se pueden pisar.\n\nTambién puedes apagar grupos enteros con `http.disable_assistants`, `disable_threads`, `disable_runs`, `disable_store` y `disable_mcp`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Custom routes y auth",
+   "contenido": "En `langgraph-api`, el middleware de auth se aplica a las **rutas integradas protegidas** (assistants, threads, runs, store...). Tus custom routes **no pasan por él** por defecto. Para protegerlas:\n\n```json\n\"http\": {\"app\": \"./ui/app.py:app\", \"enable_custom_route_auth\": true}\n```\n\nPor eso, en el tutor, `/register` funciona sin token: la protección llega en el módulo 5.\n\nOtra forma de llamar al propio servidor desde dentro: `get_client(url=None)` usa una conexión **en proceso** (loopback ASGI), sin URL ni red. Solo funciona dentro del Agent Server. El tutor usa la URL de los headers para poder correr también como servidor aparte (6.B)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: una ruta propia sin proteger",
+   "contenido": "Tu deployment tiene un handler `@auth.authenticate` en `langgraph.json` y una app FastAPI montada con `http.app`, con una ruta `POST /admin/reset`. No configuraste nada más. Alguien llama `/admin/reset` sin token. ¿Qué pasa?\n\n- **A)** Recibe un 401: la auth de la deployment cubre todas las rutas.\n- **B)** La ruta corre sin pasar por tu `@auth.authenticate`, salvo que actives `http.enable_custom_route_auth`.\n- **C)** Recibe un 404: las custom routes corren en otro puerto.\n- **D)** Recibe un 403: las custom routes solo aceptan la LangSmith API key.",
+   "respuesta": "**B.** Por defecto, el middleware de auth solo protege las rutas integradas; las tuyas quedan abiertas hasta que pones `enable_custom_route_auth: true` (o validas dentro de la ruta).\nA es el malentendido típico. C: las custom routes viven en la misma URL y el mismo puerto. D: no hay una regla así."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin el filtro de AIMessageChunk",
+   "contenido": "Tomas el `stream_response` del paso 6 y **quitas** el `if message_chunk.get(\"type\") != \"AIMessageChunk\": continue`:\n\n```python\nimport json, asyncio\nimport httpx\nfrom langgraph_sdk import get_client\n\nSSE = (\n    'event: metadata\\ndata: {\"run_id\": \"r1\"}\\n\\n'\n    'event: messages\\ndata: [{\"type\": \"AIMessageChunk\", \"content\": \"Un thread \"}, {\"langgraph_node\": \"model\"}]\\n\\n'\n    'event: messages\\ndata: [{\"type\": \"tool\", \"content\": \"texto de la doc\"}, {\"langgraph_node\": \"tools\"}]\\n\\n'\n    'event: messages\\ndata: [{\"type\": \"AIMessageChunk\", \"content\": [{\"type\": \"text\", \"text\": \"guarda el historial.\"}]}, {}]\\n\\n'\n)\ndef fake_agent_server(request: httpx.Request) -> httpx.Response:\n    return httpx.Response(200, text=SSE, headers={\"content-type\": \"text/event-stream\"})\n\nasync def stream_response_sin_filtro(client, thread_id, assistant_id, message):\n    async for event in client.runs.stream(\n        thread_id, assistant_id,\n        input={\"messages\": [{\"role\": \"user\", \"content\": message}]},\n        stream_mode=\"messages-tuple\",\n    ):\n        if event.event != \"messages\":\n            continue\n        message_chunk, _metadata = event.data\n        content = message_chunk.get(\"content\", \"\")\n        if isinstance(content, list):\n            content = \"\".join(\n                b.get(\"text\", \"\") for b in content\n                if isinstance(b, dict) and b.get(\"type\") == \"text\"\n            )\n        if content:\n            yield content\n\nasync def main():\n    client = get_client(url=\"https://tutor-xyz.us.langgraph.app\", api_key=\"lsv2_FALSA\")\n    client.http.client._transport = httpx.MockTransport(fake_agent_server)\n    async for token in stream_response_sin_filtro(client, \"t1\", \"a1\", \"¿Qué es un thread?\"):\n        print(repr(token))\n\nasyncio.run(main())\n```\n\n¿Qué imprime?",
+   "respuesta": "Salida real:\n`'Un thread '`\n`'texto de la doc'`\n`'guarda el historial.'`\nAhora también sale el contenido del resultado de la tool, en medio de la respuesta. `messages-tuple` manda **todos** los mensajes que produce el grafo (modelo y tools); el filtro por tipo es lo que deja solo la respuesta del agente."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cuántas llamadas hace /register?",
+   "contenido": "Con el `create_student_sessions` del paso 5 (seis módulos), ¿cuántas requests HTTP hace FastAPI al Agent Server cuando Jane se registra, y cuántos assistants nuevos quedan?",
+   "respuesta": "**14 requests**: 2 `PUT /store/items` (perfil y sesiones) + 6 `POST /assistants` + 6 `POST /threads`. Quedan **6 assistants**, todos sobre el mismo graph `tutor`, cada uno con su `module_id` y el `store_namespace` de Jane.\nSi se registran 100 alumnos son 600 assistants, y sigue siendo un solo deploy: los assistants son registros, no cómputo.",
+   "ref": 5
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Patrón proxy:** navegador → FastAPI (custom routes) → SDK → Agent Server. La key nunca llega al navegador.\n- `http.app` en `langgraph.json` monta tu app en la **misma** deployment y URL; `/docs` lista las rutas integradas y las tuyas.\n- `/register` = perfil en el Store + 1 assistant y 1 thread por módulo. `/chat` = `runs.stream` con `messages-tuple`, filtrando los `AIMessageChunk`.\n- Las custom routes **no** pasan por la auth por defecto: `enable_custom_route_auth` (módulo 5).\n- Para llamar a la propia deployment: la URL de los headers o `get_client(url=None)` en proceso.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Custom routes* y *Agent Server API reference*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m2/m2.3-ui.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m2/m2.4-custom-routes.html",
+  "lca-deployment/thinkific/src/m2/m2.3-ui.md",
+  "lca-deployment/thinkific/src/m2/m2.4-custom-routes.md",
+  "lca-deployment/python/deep_tutor/ui/app.py",
+  "lca-deployment/python/deep_tutor/ui/agent_client.py",
+  "lca-deployment/python/deep_tutor/ui/deployment.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué la UI del tutor no llama al agente directo desde el navegador?",
+   "reverso": "Porque el SDK necesita la LangSmith API key, y en el navegador quedaría expuesta. FastAPI hace de proxy y guarda la key en el servidor."
+  },
+  {
+   "frente": "¿Qué hace `http.app` en `langgraph.json`?",
+   "reverso": "Monta tu app (FastAPI o Starlette) junto a las rutas integradas del Agent Server, en la misma deployment y la misma URL."
+  },
+  {
+   "frente": "Configuraste `@auth.authenticate`. ¿Protege tus custom routes?",
+   "reverso": "No por defecto: solo las rutas integradas. Hay que poner `http.enable_custom_route_auth: true` o validar dentro de la ruta."
+  },
+  {
+   "frente": "Con `stream_mode=\"messages-tuple\"`, ¿por qué el tutor filtra `type == \"AIMessageChunk\"`?",
+   "reverso": "Porque el stream trae todos los mensajes del grafo, también los resultados de las tools. Sin el filtro, el texto de las tools se mezcla con la respuesta."
+  },
+  {
+   "frente": "¿Dónde ves todas las rutas de una deployment, las integradas y las tuyas?",
+   "reverso": "En `{deployment-url}/docs` (Swagger). En local, `http://localhost:2024/docs`."
+  }
+ ]
+}

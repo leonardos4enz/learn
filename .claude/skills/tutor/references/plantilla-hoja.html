@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hoja de repaso M1</title>
+<!--
+  HOJA IMPRIMIBLE DEL TUTOR DE LANGGRAPH
+  - Se imprime solo la página de preguntas. Las respuestas no se imprimen: se ven en pantalla (app → Hojas → Respuestas).
+  - Imprimir: abrir en el navegador → Ctrl+P → tamaño Carta. Activa "Gráficos de fondo" para ver colores.
+  - Resuélvela lejos de la computadora, con pluma, sin ver apuntes. Luego revisa la página 2.
+-->
+<style>
+:root{
+  --ink:#1B1F24; --muted:#5B6470; --line:#AEB6BF; --paper:#FFFFFF; --desk:#E9ECEF;
+  --tag:#EEF1F5; --acc:#0E7C66; --soft:#F3F8F6;
+  --f-head: Georgia, "Times New Roman", serif;
+  --f-body: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --f-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--desk);color:var(--ink);font:13px/1.45 var(--f-body);padding:24px 16px}
+.hoja{background:var(--paper);max-width:216mm;margin:0 auto 24px;padding:13mm 13mm;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+header{display:flex;justify-content:space-between;align-items:end;gap:12px;border-bottom:2px solid var(--acc);padding-bottom:8px;margin-bottom:10px}
+.kicker{font:600 10.5px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--acc)}
+h1{font:700 22px/1.15 var(--f-head);margin:2px 0 0}
+.meta{font-size:11px;color:var(--muted);text-align:right;flex:none}
+h2{font:600 11px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--acc);margin:10px 0 4px}
+.instr{font-size:11.5px;color:var(--muted);margin:0 0 4px}
+ol{margin:0;padding-left:20px}
+li{margin:0 0 4px;break-inside:avoid}
+.lineas{height:var(--h,13mm);background:repeating-linear-gradient(transparent 0 6.5mm,var(--line) 6.5mm calc(6.5mm + 1px));margin-top:2px}
+pre{font:11.5px/1.4 var(--f-mono);background:var(--soft);border-left:3px solid var(--acc);padding:6px 10px;margin:4px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+code{font-family:var(--f-mono);font-size:.92em}
+.caja{border:1.5px dashed var(--line);border-radius:6px;height:var(--h,55mm);margin-top:4px}
+.dos{display:grid;grid-template-columns:1fr 1fr;gap:6mm}
+@media (max-width:640px){.dos{grid-template-columns:1fr}.hoja{padding:20px 16px}header{flex-wrap:wrap}.meta{text-align:left}}
+.score{display:flex;gap:16px;align-items:center;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line);margin-top:10px;padding-top:6px}
+.check{display:inline-block;width:11px;height:11px;border:1.5px solid var(--muted);border-radius:2px;vertical-align:-1px;margin-right:3px}
+.resp li{margin-bottom:6px}
+.resp b{color:var(--acc)}
+.aviso{font:600 11px var(--f-mono);color:var(--muted);text-align:center;border:1px solid var(--line);border-radius:4px;padding:4px;margin-bottom:8px}
+@page{size:letter;margin:11mm}
+@media print{
+  body{background:#fff;padding:0;font-size:11px}
+  .hoja{box-shadow:none;margin:0;padding:0;max-width:none;border-radius:0}
+  .respuestas{display:none}
+  pre{font-size:9.5px;line-height:1.3;padding:4px 8px}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+
+<section class="hoja">
+  <header>
+    <div><div class="kicker">Tutor LangGraph · Hoja 00</div><h1>Repaso del Módulo 1</h1></div>
+    <div class="meta">Sin apuntes, sin computadora<br>Fecha: ____________</div>
+  </header>
+
+  <h2>1 · De memoria</h2>
+  <p class="instr">Contesta con tus palabras. Si no te acuerdas, escribe tu mejor intento: equivocarte aquí también sirve.</p>
+  <ol>
+    <li>¿Cuáles son las tres piezas con las que se define un grafo en LangGraph y qué hace cada una?<div class="lineas" style="--h:13mm"></div></li>
+    <li>El state tiene <code>foo = 1</code> y no hay reducer. Un node devuelve <code>{"foo": 2}</code>. ¿Cuánto vale <code>foo</code> después y por qué?<div class="lineas"></div></li>
+    <li>¿Por qué la key <code>messages</code> del state se declara con <code>add_messages</code> y no como una lista normal?<div class="lineas"></div></li>
+    <li>En el agente ReAct, ¿qué revisa <code>tools_condition</code> para decidir entre ir a <code>tools</code> o a <code>END</code>?<div class="lineas"></div></li>
+  </ol>
+
+  <h2>2 · Predice</h2>
+  <pre>class State(TypedDict):
+    graph_state: str
+
+def node_1(s): return {"graph_state": s["graph_state"] + " soy"}
+def node_2(s): return {"graph_state": s["graph_state"] + " feliz"}
+def node_3(s): return {"graph_state": s["graph_state"] + " triste"}
+
+def decide(s):
+    return "node_2" if len(s["graph_state"]) &gt; 8 else "node_3"
+
+# START → node_1 → decide → (node_2 | node_3) → END</pre>
+  <ol start="5">
+    <li>¿Qué devuelve <code>graph.invoke({"graph_state": "Hola"})</code>?<div class="lineas" style="--h:8mm"></div></li>
+    <li>¿Y <code>graph.invoke({"graph_state": "Hola!"})</code>? (Una sola letra de diferencia. Cuenta con cuidado.)<div class="lineas" style="--h:8mm"></div></li>
+    <li>Ya existen dos mensajes: <code>[Human(id="1", "hola"), AI(id="2", "qué tal")]</code>. Un node devuelve <code>AI(id="2", "buenas")</code>. Con <code>add_messages</code>, ¿cómo queda la lista?<div class="lineas"></div></li>
+  </ol>
+
+  <h2>3 · Dibuja</h2>
+  <div class="dos">
+    <div><p class="instr">8. El grafo del agente ReAct del M1: nodes, edges y dónde está la decisión.</p><div class="caja" style="--h:30mm"></div></div>
+    <div><p class="instr">9. El grafo de la pregunta 5, marcando el camino que toma con <code>"Hola"</code>.</p><div class="caja" style="--h:30mm"></div></div>
+  </div>
+
+  <div class="score"><span>Revisa las respuestas en la app (Hojas → Respuestas) y marca las que fallaste:</span>
+    <span><span class="check"></span>1</span><span><span class="check"></span>2</span><span><span class="check"></span>3</span><span><span class="check"></span>4</span><span><span class="check"></span>5</span><span><span class="check"></span>6</span><span><span class="check"></span>7</span><span><span class="check"></span>8</span><span><span class="check"></span>9</span>
+  </div>
+</section>
+
+<section class="hoja respuestas" id="respuestas">
+  <header>
+    <div><div class="kicker">Tutor LangGraph · Hoja 00</div><h1>Respuestas</h1></div>
+    <div class="meta">Revisa solo después de contestar todo</div>
+  </header>
+  <div class="aviso">Dile a Claude qué números fallaste al empezar la siguiente sesión: entran al banco de repaso.</div>
+  <ol class="resp">
+    <li><b>State, nodes y edges.</b> El state es la "memoria compartida" del grafo (un TypedDict). Los nodes son funciones que reciben el state y devuelven un update. Los edges dicen qué node sigue, ya sea fijo o condicional.</li>
+    <li><b><code>foo = 2</code>.</b> Sin reducer, el update <em>sobrescribe</em> la key. El node no modifica el state directamente: devuelve un update y LangGraph lo aplica.</li>
+    <li><b>Para que los mensajes se acumulen.</b> Con una lista normal, cada node borraría el historial. <code>add_messages</code> agrega los mensajes nuevos al final y, si llega uno con un id que ya existe, lo reemplaza.</li>
+    <li><b>Si el último mensaje (un AIMessage) trae <code>tool_calls</code>.</b> Si los trae, va a <code>tools</code>; si no, va a <code>END</code>. El edge no ejecuta nada: solo lee el mensaje y elige la ruta.</li>
+    <li><b><code>{"graph_state": "Hola soy triste"}</code>.</b> <code>"Hola soy"</code> tiene 8 caracteres, y 8 &gt; 8 es falso, así que va a node_3.</li>
+    <li><b><code>{"graph_state": "Hola! soy feliz"}</code>.</b> <code>"Hola! soy"</code> tiene 9 caracteres, y 9 &gt; 8 es verdadero, así que va a node_2. La decisión se toma con el state <em>después</em> de node_1.</li>
+    <li><b><code>[Human(id="1", "hola"), AI(id="2", "buenas")]</code>.</b> Siguen siendo dos mensajes, no tres: el id "2" ya existía, así que lo reemplaza. Con un id nuevo, se habría agregado al final.</li>
+    <li><b>START → assistant.</b> Desde <code>assistant</code> sale un edge condicional (<code>tools_condition</code>) que va a <code>tools</code> o a <code>END</code>. Desde <code>tools</code> se regresa a <code>assistant</code>. Ese regreso es el "loop" de ReAct.</li>
+    <li><b>START → node_1 → (decide) → node_3 → END.</b> node_2 existe en el grafo pero no se visita con <code>"Hola"</code>.</li>
+  </ol>
+  <p class="instr" style="margin-top:10px">Verificado corriendo el código en el <code>.venv</code> del curso (langgraph 1.2.19).</p>
+</section>
+
+</body>
+</html>

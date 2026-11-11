@@ -1,0 +1,122 @@
+{
+ "mision_id": "6.A",
+ "titulo": "Deploy sin código con la CLI de deepagents",
+ "modulo": "6",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Para desplegar `deep_tutor` escribiste código: `agent.py` (modelo, `context_schema`, `@dynamic_prompt`, backend, permisos), `langgraph.json`, `pyproject.toml` y una UI con custom routes.\n\nMuchos agentes no necesitan nada de eso: un system prompt, unos skills, unas tools por MCP y quizá subagents. Es la forma estándar de `create_deep_agent`.\n\nLa **CLI de deepagents** cubre ese caso sin código: escribes archivos de configuración y ella arma y despliega el agente. A cambio es **opinionada**: decide la estructura por ti y no te deja salir de ella. En esta lección ves qué decide y cuándo te conviene."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Un proyecto de la CLI",
+   "contenido": "La CLI encuentra los archivos por su nombre; no hay que registrarlos:\n\n```\nmy-agent/\n├── deepagents.toml    # config (obligatorio)\n├── AGENTS.md          # system prompt (obligatorio)\n├── .env               # keys\n├── mcp.json           # tools por MCP (opcional)\n├── skills/            # un skill por carpeta, con su SKILL.md (opcional)\n├── subagents/         # un subagent por carpeta, con su toml y AGENTS.md (opcional)\n└── user/              # memoria escribible por usuario (opcional)\n```\n\nSolo dos son obligatorios: `deepagents.toml` y `AGENTS.md`. Lo demás se carga si existe.\n\nOjo: la CLI busca el `.env` **junto** a `deepagents.toml`; no sube de carpeta. Por eso `dacli_tutor` necesita su propio `.env`, aunque exista `python/.env`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "deepagents.toml del tutor",
+   "contenido": "[agent]\nname = \"deep_tutor\"\nmodel = \"anthropic:claude-sonnet-4-6\"\n\n# [sandbox] is optional. Omit if not needed for skills or code execution.\n# [sandbox]\n# provider = \"langsmith\"   # langsmith | daytona | modal | runloop\n# scope = \"thread\"         # thread | assistant\n\n[auth]\nprovider = \"anonymous\"\n\n[frontend]\nenabled = true\napp_name = \"LangChain Tutor\"\n\n# Route /memories/ through the LangGraph runtime Store instead of LangSmith Hub.\n# Default is \"hub\", which persists in a remote LangSmith hub repo and is\n# one-shot-seeded (local skill edits don't refresh on restart). \"store\" uses\n# the deployment's own Postgres Store.\n[memories]\nbackend = \"store\"",
+   "notas": "`python/m6/dacli_tutor/deepagents.toml`. Lo leí con `tomllib` (sin la CLI). Salida real:\n`[agent] {'name': 'deep_tutor', 'model': 'anthropic:claude-sonnet-4-6'}`\n`[auth] {'provider': 'anonymous'}` · `[frontend] {'enabled': True, 'app_name': 'LangChain Tutor'}` · `[memories] {'backend': 'store'}`\nEl `[sandbox]` está comentado: no se usa. `model` usa el formato `provider:model` de `init_chat_model`.",
+   "resaltar": [
+    1,
+    11,
+    22
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las secciones de deepagents.toml",
+   "contenido": "| Sección | ¿Obligatoria? | Qué configura |\n|---|---|---|\n| `[agent]` | **Sí** | Nombre de la deployment y modelo |\n| `[auth]` | No | `anonymous` (abierto a cualquiera), `supabase` o `clerk` (token del usuario en `Authorization: Bearer`). **Sin `[auth]`**: se pide la LangSmith API key en `x-api-key` |\n| `[frontend]` | No | Una UI de chat en React, servida en `/app` |\n| `[sandbox]` | No | Dónde ejecuta código el agente (`langsmith`, `daytona`, `modal`, `runloop`); `scope = \"thread\"` (uno por conversación) o `\"assistant\"` (uno compartido) |\n| `[memories]` | No | Dónde vive `/memories/`: `hub` (por defecto, un repo de LangSmith Hub con versiones) o `store` (el Store de la deployment) |\n\n`anonymous` sirve para demos: cualquiera con la URL puede usar el agente (y gastar tus tokens)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "mcp.json: tools por HTTP",
+   "contenido": "{\n  \"mcpServers\": {\n    \"docs\": {\n      \"url\": \"https://docs.langchain.com/mcp\",\n      \"transport\": \"http\"\n    }\n  }\n}",
+   "notas": "`python/m6/dacli_tutor/mcp.json`: un servidor MCP, la documentación de LangChain.\nSolo se aceptan transportes **HTTP y SSE**. Un MCP por **stdio** (que lanza un proceso local) se **rechaza al empaquetar**: en el contenedor desplegado no hay ese proceso que lanzar. Es el mismo MCP que `deep_tutor` carga en `agent.py` con `MultiServerMCPClient`.",
+   "resaltar": [
+    4,
+    5
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que arma la CLI por ti",
+   "contenido": "Con esos archivos, el *bundler* genera `langgraph.json`, `deploy_graph.py`, `auth.py` y `pyproject.toml`. Por dentro llama a `create_deep_agent` con:\n\n- un **`CompositeBackend`** que monta todo bajo `/memories/` (`/memories/AGENTS.md`, `/memories/skills/…`, `/memories/user/…`);\n- **MemoryMiddleware** (`AGENTS.md` en cada prompt) y **SkillsMiddleware** (progressive disclosure), los de 4.B;\n- permisos fijos: `AGENTS.md` y `skills/` de solo lectura; `/memories/user/**` escribible por usuario.\n\nLo que **no** puedes: agregar middleware propio, cambiar el backend, cambiar la forma del grafo ni montar custom routes. Para eso está el camino con código, como `deep_tutor`.\n\nAbajo corre lo mismo de siempre: Agent Server, Postgres, Redis, checkpointer y Store."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lo mismo, hecho con código",
+   "contenido": "{\n  \"dependencies\": [\".\"],\n  \"graphs\": {\n    \"tutor\": \"./agent/agent.py:graph\"\n  },\n  \"http\": {\n    \"app\": \"./ui/app.py:app\"\n  },\n  \"env\": \"../.env\"\n}",
+   "notas": "`python/deep_tutor/langgraph.json`, el camino con código de los módulos 1–5. Compáralo con el toml del paso 3:\n- `graphs` → `agent.py` escrito a mano; en la CLI, `AGENTS.md` + `skills/` + `mcp.json`.\n- `http.app` → la UI como custom routes; la CLI **no** las tiene (por eso la 6.B).\n- El grafo se llama `tutor` (assistant por defecto `\"tutor\"`); en la CLI, el grafo siempre se llama `\"agent\"`, y su assistant por defecto también.",
+   "resaltar": [
+    4,
+    7
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres comandos y la auth por usuario",
+   "contenido": "```\nuv run deepagents init [name]   # crea el proyecto\nuv run deepagents dev           # servidor local (localhost:2024, UI en /app)\nuv run deepagents deploy        # imagen nueva y revisión nueva\n```\n\n`dev` expone la misma API que producción: itera ahí. **Cada `deploy` crea una revisión nueva**, aunque no hayas cambiado nada; no compara.\n\nCon `[auth]` = `supabase` o `clerk`, la CLI genera un `@auth.on.threads` que marca y filtra por `owner` (lo de 5.B): aislamiento de threads automático. **No** genera `@auth.on.store`. La memoria `/memories/user/**` se aísla de otra forma: al ejecutar, el `StoreBackend` arma el namespace `(assistant_id, user_identity)` con `runtime.server_info.user.identity`. Es el `namespace=lambda rt: ...` que viste en 4.B.\n\nNota: `deepagents-cli` no está instalada aquí; esto sale del material oficial (m6.1, m6.2)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: ¿CLI o código?",
+   "contenido": "Tu agente necesita un middleware propio que oculte datos personales antes de cada llamada al modelo y una ruta `POST /webhook` para recibir eventos de Stripe. ¿Cómo lo despliegas?\n\nA) Con la CLI: pones el middleware en `deepagents.toml` y la ruta en `mcp.json`.\nB) Con la CLI y `[frontend] enabled = true`, que trae las rutas extra.\nC) Con el camino con código: tu `agent.py` con `create_deep_agent(middleware=[...])` y `http.app` en `langgraph.json`.\nD) Con la CLI y un subagent que haga de middleware.",
+   "respuesta": "**C.** La CLI no deja insertar middleware ni montar custom routes; para eso escribes el agente y el `langgraph.json` tú, como en `deep_tutor`.\nA: no existen esas opciones. B: `[frontend]` solo sirve la UI de chat incluida. D: un subagent es otro agente al que se delega con `task`, no un middleware sobre las llamadas del principal."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: un MCP local",
+   "contenido": "Encontraste un servidor MCP de búsqueda que solo funciona por stdio (`\"command\": \"npx\", \"args\": [...]`). Lo agregas a `mcp.json` de tu proyecto de la CLI. ¿Qué pasa?\n\nA) Funciona en `deepagents dev` y en `deploy`.\nB) La CLI lo rechaza al empaquetar: solo acepta MCP por HTTP o SSE.\nC) Funciona en producción, porque el contenedor trae Node.\nD) Hay que declararlo en `deepagents.toml` en vez de `mcp.json`.",
+   "respuesta": "**B.** Stdio lanza un proceso local; en el contenedor desplegado no hay ese proceso, así que el bundler lo rechaza al empaquetar (no espera a fallar en producción). Necesitas un MCP alcanzable por HTTP o SSE.\nA y C suponen que stdio está soportado. D: los MCP van en `mcp.json`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La misma persona, dos assistants",
+   "contenido": "Tu deployment de la CLI tiene `[auth] provider = \"supabase\"`. Creas un segundo assistant sobre el grafo `\"agent\"` (otro context). Jane usa el primero y el agente escribe `/memories/user/preferencias.md`. Al día siguiente usa el **segundo** assistant y le pide leer ese archivo. ¿Lo encuentra? ¿Por qué?",
+   "respuesta": "No. El `StoreBackend` de la CLI arma el namespace `(assistant_id, user_identity)`: la misma Jane tiene un namespace distinto en cada assistant. Lo que escribió con el primero no existe para el segundo.\nFíjate que no hay `@auth.on.store` de por medio: el aislamiento lo hace el backend al ejecutar, no la auth."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- La CLI despliega un Deep Agent sin código: `deepagents.toml` (solo `[agent]` es obligatorio) + `AGENTS.md`, y opcionales `mcp.json`, `skills/`, `subagents/`, `user/`.\n- Genera `langgraph.json`, `deploy_graph.py`, `auth.py` y `pyproject.toml`; el agente es un `create_deep_agent` con `CompositeBackend` bajo `/memories/`.\n- Es opinionada: sin middleware propio, sin cambiar backend, sin custom routes. Para eso, el camino con código.\n- MCP solo por HTTP/SSE (stdio se rechaza al empaquetar). Sin `[auth]` se usa `x-api-key` de LangSmith. Cada `deploy` crea una revisión nueva. El assistant por defecto es `\"agent\"`.\n- Threads aislados por `@auth.on.threads` generado; `/memories/user/**` aislado por el `StoreBackend` con `(assistant_id, user_identity)`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → Deep Agents → *Deploy* / *deepagents CLI*; LangSmith → *Agent Server API*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m6/m6.1-deepagents-cli.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m6/m6.2-exercise.html",
+  "lca-deployment/python/m6/dacli_tutor/deepagents.toml",
+  "lca-deployment/python/m6/dacli_tutor/mcp.json",
+  "lca-deployment/python/m6/dacli_tutor/AGENTS.md",
+  "lca-deployment/python/deep_tutor/langgraph.json",
+  "lca-deployment/thinkific/src/m6/m6.1-deepagents-cli.md",
+  "lca-deployment/thinkific/src/m6/m6.2-exercise.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Cuándo usas la CLI de deepagents y cuándo el camino con código?",
+   "reverso": "CLI: el agente cabe en la forma estándar (prompt, skills, MCP, subagents). Código: necesitas middleware propio, otro backend, otra forma de grafo o custom routes."
+  },
+  {
+   "frente": "¿Qué archivos son obligatorios en un proyecto de la CLI?",
+   "reverso": "deepagents.toml (con [agent]) y AGENTS.md. Lo demás se carga si existe."
+  },
+  {
+   "frente": "¿Por qué un MCP por stdio se rechaza en la CLI?",
+   "reverso": "Stdio lanza un proceso local que no existe en el contenedor desplegado. Se rechaza al empaquetar; solo HTTP o SSE."
+  },
+  {
+   "frente": "Corres deepagents deploy dos veces sin cambios. ¿Qué pasa?",
+   "reverso": "Se crean dos revisiones nuevas: deploy no compara cambios. Para iterar, deepagents dev."
+  },
+  {
+   "frente": "Tu deepagents.toml no tiene [auth]. ¿Cómo se autentica un cliente?",
+   "reverso": "Con la LangSmith API key en el header x-api-key (la auth por defecto)."
+  },
+  {
+   "frente": "¿Cómo aísla la CLI la memoria /memories/user/** entre usuarios?",
+   "reverso": "No con @auth.on.store: el StoreBackend usa el namespace (assistant_id, user_identity) al ejecutar. Otro assistant = otro namespace."
+  }
+ ]
+}

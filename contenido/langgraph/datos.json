@@ -1,0 +1,291 @@
+{
+ "nombre": "02 Introduction to LangGraph",
+ "siguiente": "1.1",
+ "modulos": [
+  {
+   "n": 1,
+   "nombre": "Fundamentos"
+  },
+  {
+   "n": 2,
+   "nombre": "State y memoria"
+  },
+  {
+   "n": 3,
+   "nombre": "Humano en el loop"
+  },
+  {
+   "n": 4,
+   "nombre": "Paralelismo"
+  },
+  {
+   "n": 5,
+   "nombre": "Memoria larga"
+  },
+  {
+   "n": 6,
+   "nombre": "Deploy"
+  }
+ ],
+ "misiones": [
+  {
+   "id": "1.1",
+   "modulo": 1,
+   "titulo": "El grafo más simple",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.2",
+   "modulo": 1,
+   "titulo": "Chain: mensajes, tools y reducers",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.3",
+   "modulo": 1,
+   "titulo": "Agente ReAct",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.4",
+   "modulo": 1,
+   "titulo": "Deployment: el Agent Server",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.A",
+   "modulo": 1,
+   "titulo": "El grafo que decide",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.B",
+   "modulo": 1,
+   "titulo": "El grafo que recuerda",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.A",
+   "modulo": 2,
+   "titulo": "La forma del state",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.B",
+   "modulo": 2,
+   "titulo": "Quién gana cuando dos escriben",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.C",
+   "modulo": 2,
+   "titulo": "State privado y entrada/salida",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.D",
+   "modulo": 2,
+   "titulo": "Que el historial no explote",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.E",
+   "modulo": 2,
+   "titulo": "Resumir la conversación",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.F",
+   "modulo": 2,
+   "titulo": "Memoria que sobrevive reinicios",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.A",
+   "modulo": 3,
+   "titulo": "Ver mientras corre",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.B",
+   "modulo": 3,
+   "titulo": "Pausa para aprobar",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.C",
+   "modulo": 3,
+   "titulo": "Editar el state en pausa",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.D",
+   "modulo": 3,
+   "titulo": "Pausa decidida por el grafo",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.E",
+   "modulo": 3,
+   "titulo": "Viajar en el tiempo",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.A",
+   "modulo": 4,
+   "titulo": "Varias ramas a la vez",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.B",
+   "modulo": 4,
+   "titulo": "Grafos dentro de grafos",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.C",
+   "modulo": 4,
+   "titulo": "Map-reduce dinámico",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.D",
+   "modulo": 4,
+   "titulo": "Juntarlo todo",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.A",
+   "modulo": 5,
+   "titulo": "Memoria entre threads",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.B",
+   "modulo": 5,
+   "titulo": "Perfil del usuario",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.C",
+   "modulo": 5,
+   "titulo": "Colección de recuerdos",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.D",
+   "modulo": 5,
+   "titulo": "Agente que decide qué recordar",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "6.A",
+   "modulo": 6,
+   "titulo": "Hablarle al server",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "6.B",
+   "modulo": 6,
+   "titulo": "Un grafo, varias personalidades",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "6.C",
+   "modulo": 6,
+   "titulo": "Cuando el usuario escribe dos veces",
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  }
+ ],
+ "proyecto": null,
+ "hilos": [
+  {
+   "id": "nanograph",
+   "nombre": "nanograph",
+   "descripcion": "Un mini-LangGraph en Python puro para ver cómo funciona por dentro.",
+   "etapa": 0,
+   "etapas": [
+    {
+     "n": 1,
+     "titulo": "Nodes, edges y conditional edges",
+     "modulo": 1
+    },
+    {
+     "n": 2,
+     "titulo": "Reducers por key",
+     "modulo": 2
+    },
+    {
+     "n": 3,
+     "titulo": "Checkpointer e interrupt_before",
+     "modulo": 3
+    },
+    {
+     "n": 4,
+     "titulo": "Supersteps paralelos y Send",
+     "modulo": 4
+    }
+   ]
+  }
+ ],
+ "sesiones": [],
+ "hojas": {},
+ "banco": [],
+ "examenes": []
+}

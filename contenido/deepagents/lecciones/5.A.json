@@ -1,0 +1,110 @@
+{
+ "mision_id": "5.A",
+ "titulo": "El proyecto y su deploy local",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora corrías cada agente con `agent.invoke(...)` en un script: arranca, responde y se apaga. Una app de chat\nnecesita otra cosa: un **servicio** que siga vivo, reciba pedidos por HTTP, guarde conversaciones y atienda a varios\nclientes.\n\nEl Módulo 5 es el capstone: un asistente de ventas que junta todo el curso. Antes de armarlo, hay que saber\nservir un agente. La herramienta es `langgraph dev`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El capstone en una frase",
+   "contenido": "Un deep agent es **poco código y mucho texto**:\n\n| Código (poco) | Texto (mucho) |\n|---|---|\n| tools (funciones) | `AGENTS.md`: el manual de operación |\n| subagents (dicts) | `skills/`: un playbook por tarea |\n| una llamada a `create_deep_agent(...)` | |\n\nY luego `langgraph dev` lo sirve por HTTP. El Sales Assistant (5.B) usa todo: subagents, skills, `AGENTS.md`,\nfilesystem, intérprete para la cuenta del quote, HITL en dos escrituras y MCP para el correo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente del lab: hello/agent.py",
+   "contenido": "# python/m5/hello/agent.py\n\"\"\"A minimal deep agent, exposed as a graph for `langgraph dev`.\n\nThis is the whole agent: a model, nothing else. The point of this lab is the\n*deployment*, not the agent — so we keep the agent as small as it gets and let\n`langgraph dev` serve it over HTTP.\n\"\"\"\n\nfrom deepagents import create_deep_agent\n\nfrom models import model\n\n# `langgraph.json` points at this module-level variable: \"./agent.py:graph\".\ngraph = create_deep_agent(model=model)",
+   "notas": "Archivo del curso. Es solo el modelo: lo que importa es el deploy. `langgraph dev` busca la variable `graph`.\nSu `langgraph.json`:\n```json\n{\n  \"dependencies\": [\"../..\"],\n  \"graphs\": {\n    \"agent\": \"./agent.py:graph\"\n  },\n  \"env\": \"../../.env\"\n}\n```\n`graphs` mapea un **nombre** (`agent`, que será el `graph_id`/assistant) a `archivo:variable`. `env` apunta al `.env`\ndel curso. No lo corrí: pide `ANTHROPIC_API_KEY`.",
+   "resaltar": [
+    14
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La misma idea con un modelo falso",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\n\n\nclass Contador(BaseChatModel):\n    \"\"\"Modelo falso: responde cuántos mensajes recibió (sin LLM, sin key).\"\"\"\n\n    @property\n    def _llm_type(self):\n        return \"contador\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        n = len([m for m in messages if m.type != \"system\"])\n        texto = f\"Recibí {n} mensajes. El último: {messages[-1].content!r}\"\n        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=texto))])\n\n\n# langgraph.json apunta a esta variable: \"./agent.py:graph\"\ngraph = create_deep_agent(model=Contador())",
+   "notas": "Para probar el servidor sin gastar: `Contador` responde cuántos mensajes recibió. Fíjate que **no** le paso\n`checkpointer`. Su `langgraph.json` (sin `env`, porque no hay keys):\n```json\n{\n  \"dependencies\": [\".\"],\n  \"graphs\": {\n    \"agent\": \"./agent.py:graph\"\n  }\n}\n```\nLo serví con `langgraph dev --no-browser --port 2077` desde esa carpeta. En tu máquina sería `uv run langgraph dev`\ndentro de `m5/hello` (puerto 2024 y abre Studio solo).",
+   "resaltar": [
+    24
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Qué agrega langgraph dev",
+   "contenido": "graph LR\n  C[cliente: Studio, chat UI o tu script] -->|HTTP| A[API del Agent Server]\n  A --> G[tu graph]\n  A --- P[(persistencia de threads)]\n  A --- S[(Store)]\n  A --- Q[cola de runs]\n  class A clave",
+   "notas": "Tú escribes el grafo; el servidor pone el API, la persistencia, el Store y la cola. **Studio es un cliente más**\nde ese API, no el servidor. Es el mismo Agent Server del notebook `deployment` de LangGraph M1, solo que en local."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Hablarle por HTTP con el SDK",
+   "contenido": "import asyncio\n\nfrom langgraph_sdk import get_client\n\nAPI_URL = \"http://127.0.0.1:2077\"\nASSISTANT_ID = \"agent\"  # la llave \"agent\" de \"graphs\" en langgraph.json\n\n\ndef _last_ai_text(messages: list) -> str:\n    for msg in reversed(messages):\n        if msg.get(\"type\") == \"ai\":\n            return msg.get(\"content\", \"\")\n    return \"\"\n\n\nasync def main() -> None:\n    client = get_client(url=API_URL)\n\n    thread = await client.threads.create()\n    print(\"Thread creado:\", thread[\"thread_id\"][:8], \"...\")\n\n    for pregunta in [\"Hola\", \"¿Sigues ahí?\"]:\n        result = await client.runs.wait(\n            thread[\"thread_id\"],\n            ASSISTANT_ID,\n            input={\"messages\": [{\"role\": \"user\", \"content\": pregunta}]},\n        )\n        print(_last_ai_text(result[\"messages\"]))\n\n    otro = await client.threads.create()\n    result = await client.runs.wait(\n        otro[\"thread_id\"],\n        ASSISTANT_ID,\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"Hola desde otro thread\"}]},\n    )\n    print(_last_ai_text(result[\"messages\"]))\n\n\nasyncio.run(main())",
+   "notas": "Es el `call_agent_api.py` de la tarea, ampliado: dos runs en el mismo thread y uno en otro. Salida real con\nel servidor del paso 4 corriendo:\n```\nThread creado: 01a1cb9b ...\nRecibí 1 mensajes. El último: 'Hola'\nRecibí 3 mensajes. El último: '¿Sigues ahí?'\nRecibí 1 mensajes. El último: 'Hola desde otro thread'\n```\nNada de `agent.invoke()`: `threads.create` = `POST /threads`, `runs.wait` = `POST /threads/{id}/runs/wait`.",
+   "resaltar": [
+    19,
+    23
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El API en cuatro grupos",
+   "contenido": "| Grupo | Qué es | Ejemplo |\n|---|---|---|\n| **Assistants** | un grafo + su configuración | `POST /assistants/search` |\n| **Threads** | el estado acumulado de una conversación | `POST /threads`, `GET /threads/{id}/state` |\n| **Runs** | una invocación del grafo sobre un thread | `POST /threads/{id}/runs/wait`, `/stream` |\n| **Store** | memoria de largo plazo entre threads | `PUT /store/items` |\n\nEl servidor se documenta solo en `http://localhost:2024/docs`. Un mensaje del usuario = **un run**; una conversación =\n**un thread**. Producción (Cloud, standalone, self-hosted) es el curso *LangSmith Deployment*."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Contar mensajes",
+   "contenido": "En el paso 6, ¿por qué el segundo run dice **3** mensajes si el grafo del paso 4 se compiló **sin checkpointer**?\n¿Y por qué el tercero vuelve a decir 1?",
+   "respuesta": "Porque el **servidor** pone la persistencia: guarda el state de cada thread y lo recarga en cada run. El segundo run del\nmismo thread ve `Hola`, la respuesta y `¿Sigues ahí?` = 3 (sin contar el system). El tercero usa **otro** thread,\nque empieza vacío: 1. Es el `thread_id` de LangGraph 1.B, pero ahora lo maneja el Agent Server (por eso en un deploy\nno pasas tu propio checkpointer).",
+   "ref": 6
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: el grafo que no aparece",
+   "contenido": "Tu `agent.py` termina con `agent = create_deep_agent(model=model)` y tu `langgraph.json` dice\n`\"graphs\": {\"agent\": \"./agent.py:graph\"}`. Corres `langgraph dev`. ¿Qué pasa?\n\n- A) Funciona: `langgraph dev` busca cualquier grafo compilado en el archivo.\n- B) Falla al cargar el grafo: no existe la variable `graph` en `agent.py`.\n- C) Funciona, pero Studio muestra el assistant con el nombre `graph`.\n- D) Falla porque el assistant debe llamarse igual que el archivo.",
+   "respuesta": "**B.** `\"./agent.py:graph\"` significa \"importa `agent.py` y toma la variable `graph`\". Si se llama `agent`, no la\nencuentra. El arreglo: renombrar la variable o cambiar a `./agent.py:agent`. A no: no escanea el archivo. C no: el\nnombre del assistant es la **llave** (`\"agent\"`), no la variable. D no: la llave puede ser cualquier nombre."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Studio y tu script a la vez",
+   "contenido": "Tienes el servidor del paso 4 corriendo. En Studio llevas una conversación de 6 mensajes. Al mismo tiempo corres el\nscript del paso 6. ¿El primer run del script dirá \"Recibí 1 mensajes\" o \"Recibí 7 mensajes\"?",
+   "respuesta": "**1.** Studio y el script son dos clientes del **mismo servidor y el mismo assistant**, pero el script crea su propio\nthread con `threads.create()`. Cada thread tiene su propio state. Para continuar la conversación de Studio tendrías que\nusar su `thread_id`.",
+   "ref": 6
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `langgraph dev` convierte tu grafo en un **servicio HTTP** con persistencia, Store y cola; se llama por el API, no con `invoke()`.\n- `langgraph.json` dice qué servir: `\"nombre\": \"./archivo.py:variable\"` (o una función fábrica, como verás en 5.B).\n- Assistants, Threads, Runs y Store; un mensaje = un run; una conversación = un thread. Docs vivas en `/docs`.\n- Studio es un cliente del API (chat + debugger), igual que cualquier chat UI o el SDK.\n- Un deep agent es poco código y mucho texto (`AGENTS.md`, skills).\n\nRelación: es el Agent Server de `deployment` (LangGraph M1), en local. Dónde buscarlo en docs: docs.langchain.com → *Run a local server*\ny *Agent Server API reference*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m5/m5.1-putting-it-all-together.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m5/m5.2-local-deployment.html",
+  "python/m5/hello/agent.py",
+  "python/m5/hello/langgraph.json",
+  "python/m5/homework_filled/call_agent_api.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué te da `langgraph dev` que no te da un script con `agent.invoke()`?",
+   "reverso": "Un servicio HTTP que sigue vivo, con persistencia de threads, Store y cola de runs, al que llegan Studio o cualquier chat UI."
+  },
+  {
+   "frente": "Un usuario manda 3 mensajes en la misma conversación. En términos del Agent Server, ¿cuántos threads y runs son?",
+   "reverso": "Un thread (el estado de la conversación) y tres runs (una invocación por mensaje)."
+  },
+  {
+   "frente": "¿Qué significa `\"agent\": \"./agent.py:graph\"` en `langgraph.json`?",
+   "reverso": "Sirve la variable `graph` de `agent.py` con el nombre (assistant/graph_id) `agent`."
+  },
+  {
+   "frente": "¿Por qué un grafo servido con `langgraph dev` recuerda la conversación aunque no le pasaste checkpointer?",
+   "reverso": "Porque el servidor pone la persistencia y guarda el state de cada thread."
+  },
+  {
+   "frente": "¿Studio es el servidor?",
+   "reverso": "No. Es un cliente del Agent Server API (chat + debugger), igual que el SDK o agent-chat-ui."
+  }
+ ]
+}

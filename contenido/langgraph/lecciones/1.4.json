@@ -1,0 +1,115 @@
+{
+ "mision_id": "1.4",
+ "titulo": "Deployment: el Agent Server",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora el grafo vive dentro de tu notebook. Cuando cierras el kernel, se acaba. Nadie más puede usarlo, no hay historial guardado y si una corrida tarda diez minutos, tu notebook se queda esperando.\n\nPara que una app, un bot o Studio usen tu agente, el grafo tiene que vivir en un **servidor** que lo exponga por HTTP. Eso es un Agent Server. Se puede desplegar en la nube o en un servidor propio (self-hosted); para practicar te basta `langgraph dev`, que levanta uno en tu laptop."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las piezas, con nombre",
+   "contenido": "- **LangGraph**: la librería con la que escribes el grafo.\n- **Agent Server** (antes LangGraph API): empaqueta tu grafo y lo sirve por HTTP. Trae cola de tareas y persistencia.\n- **LangSmith Deployment** (antes LangGraph Cloud): el mismo server, pero alojado por LangChain. La otra opción es hospedarlo tú (self-hosted).\n- **Studio**: una interfaz web que habla con el server para ver y probar el grafo.\n- **SDK** (`langgraph_sdk`): el cliente de Python para hablarle al server."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "langgraph.json: qué grafos sirve el server",
+   "contenido": "{\n  \"dockerfile_lines\": [],\n  \"graphs\": {\n    \"simple_graph\": \"./simple.py:graph\",\n    \"router\": \"./router.py:graph\",\n    \"agent\": \"./agent.py:graph\"\n  },\n  \"env\": \"./.env\",\n  \"python_version\": \"3.11\",\n  \"dependencies\": [\n    \".\"\n  ]\n}",
+   "notas": "Cada entrada de `graphs` es un nombre y la ruta `archivo:variable` del grafo compilado.\nEse nombre (`agent`, `router`, `simple_graph`) es el `graph_id` que usas desde el SDK.\n`env` dice de dónde lee las keys el server; en un server desplegado (por ejemplo, uno self-hosted) van en sus variables de entorno.",
+   "resaltar": [
+    6
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "agent.py: el grafo que sirve el server",
+   "contenido": "from langchain_core.messages import SystemMessage\nfrom langchain_openai import ChatOpenAI\n\nfrom langgraph.graph import START, StateGraph, MessagesState\nfrom langgraph.prebuilt import tools_condition, ToolNode\n\ndef add(a: int, b: int) -> int:\n    \"\"\"Adds a and b.\n\n    Args:\n        a: first int\n        b: second int\n    \"\"\"\n    return a + b\n\ndef multiply(a: int, b: int) -> int:\n    \"\"\"Multiplies a and b.\n\n    Args:\n        a: first int\n        b: second int\n    \"\"\"\n    return a * b\n\ndef divide(a: int, b: int) -> float:\n    \"\"\"Divide a and b.\n\n    Args:\n        a: first int\n        b: second int\n    \"\"\"\n    return a / b\n\ntools = [add, multiply, divide]\n\n# Define LLM with bound tools\nllm = ChatOpenAI(model=\"gpt-4o\")\nllm_with_tools = llm.bind_tools(tools)\n\n# System message\nsys_msg = SystemMessage(content=\"You are a helpful assistant tasked with writing performing arithmetic on a set of inputs.\")\n\n# Node\ndef assistant(state: MessagesState):\n   return {\"messages\": [llm_with_tools.invoke([sys_msg] + state[\"messages\"])]}\n\n# Build graph\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"assistant\", assistant)\nbuilder.add_node(\"tools\", ToolNode(tools))\nbuilder.add_edge(START, \"assistant\")\nbuilder.add_conditional_edges(\n    \"assistant\",\n    # If the latest message (result) from assistant is a tool call -> tools_condition routes to tools\n    # If the latest message (result) from assistant is a not a tool call -> tools_condition routes to END\n    tools_condition,\n)\nbuilder.add_edge(\"tools\", \"assistant\")\n\n# Compile graph\ngraph = builder.compile()",
+   "notas": "Es el mismo ReAct de `agent.ipynb`.\nMira la última línea: se compila **sin checkpointer**. Aun así, el server recuerda las conversaciones.\nEl Agent Server le pone su propia persistencia: en un server desplegado es Postgres (en tu `docker-compose.yml` era el servicio `langgraph-postgres`); con `langgraph dev`, se guarda en local. Lo vas a entender del todo en `agent-memory`.",
+   "resaltar": [
+    61
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Cómo se conecta todo",
+   "contenido": "graph LR\n  SDK[Tu notebook con el SDK] -->|HTTPS| API[Agent Server desplegado]\n  Studio[Studio] -->|HTTPS| API\n  API --> PG[(Postgres: threads y checkpoints)]\n  API --> R[(Redis: cola de runs)]\n  API -->|llama| OAI[OpenAI]\n  class API clave",
+   "notas": "El grafo corre **en el server**, no en tu laptop. La key de OpenAI la necesita el server, no el notebook.\nPostgres guarda el state de cada thread; Redis coordina los runs.\nTu notebook y Studio son solo clientes del mismo server."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Assistant, thread y run",
+   "contenido": "Tres palabras que el SDK usa todo el tiempo:\n\n- **Assistant**: un grafo listo para usarse. Por defecto hay uno por cada entrada de `langgraph.json`.\n- **Thread**: una conversación. Es donde el server guarda el state entre una corrida y otra.\n- **Run**: una ejecución del grafo dentro de un thread, con un input.\n\nUn thread puede tener muchos runs: cada mensaje nuevo del usuario es un run en el mismo thread."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Hablarle al server con el SDK",
+   "contenido": "import asyncio\nimport os\n\nfrom dotenv import load_dotenv\nfrom langchain_core.messages import HumanMessage\nfrom langgraph_sdk import get_client\n\nload_dotenv(\"module-1/studio/.env\")\n\nURL = \"http://127.0.0.1:2024\"  # langgraph dev; en un server desplegado, su URL\n\n\nasync def main():\n    # Solo si el server tiene auth: el token se lee del entorno y nunca se imprime\n    client = get_client(url=URL, api_key=os.environ.get(\"LANGGRAPH_AUTH_TOKEN\"))\n\n    # 1) Assistants: los grafos que sirve el server (salen de langgraph.json)\n    assistants = await client.assistants.search()\n    print([a[\"graph_id\"] for a in assistants])\n\n    # 2) Thread: donde el server guarda el state de una conversación\n    thread = await client.threads.create()\n\n    # 3) Run: una ejecución del grafo \"agent\" dentro de ese thread\n    entrada = {\"messages\": [HumanMessage(content=\"Multiply 3 by 2.\")]}\n    async for chunk in client.runs.stream(\n        thread[\"thread_id\"],\n        \"agent\",\n        input=entrada,\n        stream_mode=\"values\",\n    ):\n        if chunk.data and chunk.event != \"metadata\":\n            ultimo = chunk.data[\"messages\"][-1]\n            print(ultimo[\"type\"], repr(ultimo[\"content\"]), ultimo.get(\"tool_calls\"))\n\n\nasyncio.run(main())",
+   "notas": "Es el código del notebook `deployment.ipynb` ordenado como script. Para correrlo, levanta antes `langgraph dev` en `module-1/studio` (ahí no hace falta token).\nEl token se lee del entorno y **nunca se imprime**: en un server con auth, cualquiera con él puede usarlo (y gastar tu key de OpenAI).\n`stream_mode=\"values\"` manda el **state completo** después de cada paso; por eso se mira `messages[-1]`.\nEl SDK es async: en el notebook usas `await` directo; en un script, `asyncio.run`.",
+   "resaltar": [
+    22,
+    26,
+    30
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida de ejemplo",
+   "contenido": "Salida de ejemplo de un Agent Server self-hosted con el mismo `langgraph.json` (corriendo el código de `deployment.ipynb`). El assistant `agent` que devolvió:\n\n```\n{'assistant_id': 'fe096781-5601-53d2-b2f6-0d3403f7e9ca', 'graph_id': 'agent', 'version': 1, 'metadata': {'created_by': 'system'}, 'name': 'agent', ...}\n```\n\nY el stream del run, un chunk por paso (resumido a tipo, content y tool_calls):\n\n```\nhuman 'Multiply 3 by 2.' None\nai '' [{'name': 'multiply', 'args': {'a': 3, 'b': 2}, ...}]\ntool '6' None\nai '3 multiplied by 2 equals 6.' []\n```\n\nEs el mismo recorrido que viste con `stream` local: assistant, tools, assistant."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: un thread nuevo por mensaje",
+   "contenido": "Con el script del SDK del paso 7 mandas `\"Multiply 3 by 2.\"` en un run. Luego creas **otro** thread con `client.threads.create()` y mandas `\"Now add 10 to that.\"`. ¿El agente sabe qué es \"that\"?",
+   "respuesta": "No. El state se guarda **por thread**; el thread nuevo empieza vacío y el modelo solo ve \"Now add 10 to that.\".\nPara seguir la conversación tienes que mandar el segundo run al **mismo** `thread_id`. Es la idea central de la siguiente misión.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: dónde hace falta la key de OpenAI",
+   "contenido": "Corres el script del SDK del paso 7 en tu laptop sin `OPENAI_API_KEY` en el entorno (solo el token del server). ¿El run funciona?",
+   "respuesta": "Sí. El grafo, y con él la llamada a OpenAI, corre **en el server**. La key tiene que estar en el entorno del server (con `langgraph dev`, en `studio/.env`).\nTu laptop solo manda el input por HTTP y recibe el stream; para eso le basta el token del server.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: stream_mode values",
+   "contenido": "En el script del SDK del paso 7, ¿por qué el código imprime `chunk.data[\"messages\"][-1]` y no `chunk.data[\"messages\"]`? ¿Qué verías con el segundo?",
+   "respuesta": "Con `stream_mode=\"values\"`, cada chunk trae el **state completo** después de ese paso. Imprimir toda la lista repetiría el historial en cada chunk: 1 mensaje, luego 2, luego 3, luego 4.\nCon `[-1]` ves solo lo que agregó ese paso.",
+   "ref": 7
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un Agent Server sirve tus grafos por HTTP: los declaras en `langgraph.json` y cada uno es un assistant.\n- **Thread** = conversación con state guardado; **run** = una ejecución dentro de un thread.\n- El grafo corre en el server: las keys del modelo van en el entorno del server; el cliente solo necesita el token del server, y nunca se imprime.\n- El server pone la persistencia (Postgres en un server desplegado) aunque `agent.py` compile sin checkpointer.\n- `stream_mode=\"values\"` da el state completo tras cada paso; `\"updates\"`, solo lo que cambió."
+  }
+ ],
+ "fuentes": [
+  "module-1/deployment.ipynb",
+  "module-1/studio/langgraph.json",
+  "module-1/studio/docker-compose.yml"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Assistant, thread y run en un Agent Server: ¿qué es cada uno?",
+   "reverso": "**Assistant**: un grafo listo para usarse (uno por entrada de `langgraph.json`). **Thread**: una conversación con su state guardado. **Run**: una ejecución del grafo dentro de un thread."
+  },
+  {
+   "frente": "Tu `studio/agent.py` compila el grafo sin checkpointer. ¿Por qué el server recuerda las conversaciones igual?",
+   "reverso": "Porque el Agent Server le pone su propia persistencia: guarda el state de cada thread en Postgres (el servicio `langgraph-postgres` de tu compose)."
+  },
+  {
+   "frente": "Mandas dos runs al server, cada uno en un thread recién creado. ¿El segundo sabe lo que pasó en el primero?",
+   "reverso": "No. El state se guarda por thread; un thread nuevo empieza vacío. Para continuar, usa el mismo `thread_id`."
+  },
+  {
+   "frente": "Llamas a tu Agent Server desde la laptop. ¿Dónde tiene que estar la key de OpenAI y por qué?",
+   "reverso": "En el entorno del **server**: el grafo y la llamada al modelo corren allá. El cliente solo necesita el token del server."
+  },
+  {
+   "frente": "Con `stream_mode=\"values\"`, ¿qué trae cada chunk?",
+   "reverso": "El **state completo** después de ese paso. Por eso se imprime `messages[-1]`: lo nuevo de ese paso. Con `\"updates\"` llegaría solo lo que devolvió cada node."
+  }
+ ]
+}

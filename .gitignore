@@ -5,3 +5,7 @@ data/
 *.db-*
 .env
 .env.*
+
+# Configuración personal (cada quien la suya)
+.mcp.json
+CLAUDE.local.md

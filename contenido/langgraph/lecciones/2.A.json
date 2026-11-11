@@ -1,0 +1,126 @@
+{
+ "mision_id": "2.A",
+ "titulo": "La forma del state",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora declaraste el state con `TypedDict` y escribiste `mood: Literal[\"happy\", \"sad\"]`. Parece una regla. Pero si un node devuelve `mood = \"mad\"`, ¿alguien lo detiene?\n\nEn esta lección ves las tres formas de declarar el state (`TypedDict`, `dataclass` y Pydantic) y descubres que **solo una de ellas revisa los valores mientras el grafo corre**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El schema son canales",
+   "contenido": "El *state schema* dice qué keys existen y de qué tipo deberían ser. LangGraph trata cada key como un **canal** separado.\n\nPor eso un node no devuelve el state entero: devuelve un dict con las keys que quiere cambiar, y LangGraph actualiza solo esos canales. Esto ya lo viste en el Módulo 1: sin reducer, el update sobrescribe el valor del canal.\n\nLa forma del schema (`TypedDict`, `dataclass` o Pydantic) cambia dos cosas: cómo lees el state dentro del node y si alguien valida los valores."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "TypedDict: el grafo de referencia",
+   "contenido": "import random\nfrom typing import Literal\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass TypedDictState(TypedDict):\n    name: str\n    mood: Literal[\"happy\", \"sad\"]\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"name\": state[\"name\"] + \" is ... \"}\n\ndef node_2(state):\n    print(\"---Node 2---\")\n    return {\"mood\": \"happy\"}\n\ndef node_3(state):\n    print(\"---Node 3---\")\n    return {\"mood\": \"sad\"}\n\ndef decide_mood(state) -> Literal[\"node_2\", \"node_3\"]:\n    if random.random() < 0.5:\n        return \"node_2\"\n    return \"node_3\"\n\nbuilder = StateGraph(TypedDictState)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_conditional_edges(\"node_1\", decide_mood)\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"name\": \"Lance\"}))",
+   "notas": "Es el grafo del notebook: `node_1` modifica `name` y un conditional edge elige al azar entre `node_2` (happy) y `node_3` (sad). Lees el state con corchetes: `state[\"name\"]`. Salida real (puede salir `node_3` en tu corrida, es 50/50):\n`---Node 1---` / `---Node 2---` / `{'name': 'Lance is ... ', 'mood': 'happy'}`",
+   "resaltar": [
+    6,
+    8
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo",
+   "contenido": "graph LR\n  S([START]) --> n1[node_1]\n  n1 -.->|decide_mood| n2[node_2]\n  n1 -.->|decide_mood| n3[node_3]\n  n2 --> E([END])\n  n3 --> E\n  class n1 clave",
+   "notas": "Las flechas punteadas son el conditional edge que ya conoces del router (1.A). Lo importante hoy no es el flujo: es qué pasa con los valores que viajan por `mood`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "TypedDict no valida nada",
+   "contenido": "from typing import Literal\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass TypedDictState(TypedDict):\n    name: str\n    mood: Literal[\"happy\", \"sad\"]\n\ndef node_mad(state):\n    return {\"mood\": \"mad\"}\n\nbuilder = StateGraph(TypedDictState)\nbuilder.add_node(\"node_mad\", node_mad)\nbuilder.add_edge(START, \"node_mad\")\nbuilder.add_edge(\"node_mad\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"name\": 123}))",
+   "notas": "Pasas `name = 123` (un int, no un str) y un node escribe `mood = \"mad\"`. Salida real: `{'name': 123, 'mood': 'mad'}`. Ningún error. Los type hints de `TypedDict` solo sirven para que mypy o tu editor te avisen **antes** de correr; en runtime son un dict normal.",
+   "resaltar": [
+    10,
+    18
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Dataclass: acceso con punto, mismo problema",
+   "contenido": "from dataclasses import dataclass\nfrom typing import Literal\nfrom langgraph.graph import StateGraph, START, END\n\n@dataclass\nclass DataclassState:\n    name: str\n    mood: Literal[\"happy\", \"sad\"]\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"name\": state.name + \" is ... \"}\n\ndef node_3(state):\n    print(\"---Node 3---\")\n    return {\"mood\": \"sad\"}\n\nbuilder = StateGraph(DataclassState)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_3\")\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke(DataclassState(name=\"Lance\", mood=\"happy\")))\nprint(DataclassState(name=\"Lance\", mood=\"mad\"))",
+   "notas": "Con `dataclass` lees `state.name` en vez de `state[\"name\"]`. Pero el node **sigue devolviendo un dict**: LangGraph guarda cada key como canal y solo necesita que las keys coincidan. Salida real: `{'name': 'Lance is ... ', 'mood': 'sad'}` y luego `DataclassState(name='Lance', mood='mad')`: la dataclass acepta `mad` sin quejarse.",
+   "resaltar": [
+    12,
+    27
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Pydantic sí valida",
+   "contenido": "from pydantic import BaseModel, field_validator, ValidationError\n\nclass PydanticState(BaseModel):\n    name: str\n    mood: str  # \"happy\" o \"sad\"\n\n    @field_validator(\"mood\")\n    @classmethod\n    def validate_mood(cls, value):\n        if value not in [\"happy\", \"sad\"]:\n            raise ValueError(\"Each mood must be either 'happy' or 'sad'\")\n        return value\n\ntry:\n    state = PydanticState(name=\"John Doe\", mood=\"mad\")\nexcept ValidationError as e:\n    print(\"Validation Error:\", e)",
+   "notas": "Pydantic revisa los datos al crear el objeto. El `field_validator` rechaza cualquier `mood` que no sea happy o sad. Salida real:\n`Validation Error: 1 validation error for PydanticState` / `mood  Value error, Each mood must be either 'happy' or 'sad'`.",
+   "resaltar": [
+    7,
+    11
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Pydantic dentro del grafo",
+   "contenido": "from typing import Literal\nfrom pydantic import BaseModel, ValidationError\nfrom langgraph.graph import StateGraph, START, END\n\nclass PydanticState(BaseModel):\n    name: str\n    mood: Literal[\"happy\", \"sad\"]\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"name\": state.name + \" is ... \"}\n\ndef node_3(state):\n    print(\"---Node 3---\")\n    return {\"mood\": \"sad\"}\n\nbuilder = StateGraph(PydanticState)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_3\")\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"name\": \"Lance\", \"mood\": \"happy\"}))\n\ntry:\n    graph.invoke({\"name\": \"Lance\", \"mood\": \"mad\"})\nexcept ValidationError as e:\n    print(\"ValidationError:\", e.errors()[0][\"msg\"])",
+   "notas": "Aquí el validador es más corto: `mood: Literal[...]` en un `BaseModel` ya se valida. Salida real:\n`---Node 1---` / `---Node 3---` / `{'name': 'Lance is ... ', 'mood': 'sad'}` y después `ValidationError: Input should be 'happy' or 'sad'`. El input inválido truena **antes** de que corra `node_1`.",
+   "resaltar": [
+    5,
+    28
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las tres formas, lado a lado",
+   "contenido": "| | Lees con | ¿Valida en runtime? |\n|---|---|---|\n| `TypedDict` | `state[\"name\"]` | No |\n| `dataclass` | `state.name` | No |\n| Pydantic `BaseModel` | `state.name` | Sí, al **entrar** a cada node |\n\nEn las tres, el node devuelve un dict con las keys que cambia.\n\nPydantic cuesta un poco de rendimiento. Úsalo cuando el state recibe datos de fuera (el usuario, un LLM, una API) y prefieres que un valor raro truene pronto a que viaje en silencio."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "TypedDict con un input inválido",
+   "contenido": "Tomas el grafo de `TypedDictState` del paso 3 y solo cambias el input: ahora mandas también `mood = \"mad\"`.\n\n```python\nimport random\nfrom typing import Literal\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass TypedDictState(TypedDict):\n    name: str\n    mood: Literal[\"happy\", \"sad\"]\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"name\": state[\"name\"] + \" is ... \"}\n\ndef node_2(state):\n    print(\"---Node 2---\")\n    return {\"mood\": \"happy\"}\n\ndef node_3(state):\n    print(\"---Node 3---\")\n    return {\"mood\": \"sad\"}\n\ndef decide_mood(state) -> Literal[\"node_2\", \"node_3\"]:\n    if random.random() < 0.5:\n        return \"node_2\"\n    return \"node_3\"\n\nbuilder = StateGraph(TypedDictState)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_conditional_edges(\"node_1\", decide_mood)\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"name\": \"Lance\", \"mood\": \"mad\"}))\n```\n\n¿Truena? ¿Qué `mood` sale al final?",
+   "respuesta": "No truena: `TypedDict` no valida. `mad` entra al state sin que nadie lo revise. Al final `mood` es `happy` o `sad`, porque `node_2` o `node_3` sobrescriben el canal (salida real de una corrida: `{'name': 'Lance is ... ', 'mood': 'sad'}`). El valor inválido estuvo en el state y nadie se enteró."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Pydantic: un node escribe un valor inválido",
+   "contenido": "State Pydantic con `mood: Literal[\"happy\", \"sad\"]` y un grafo `START → node_mad → node_next → END`:\n\n```python\nfrom typing import Literal\nfrom pydantic import BaseModel, ValidationError\nfrom langgraph.graph import StateGraph, START, END\n\nclass PydanticState(BaseModel):\n    name: str\n    mood: Literal[\"happy\", \"sad\"]\n\ndef node_mad(state):\n    print(\"---node_mad---\")\n    return {\"mood\": \"mad\"}\n\ndef node_next(state):\n    print(\"---node_next---\", state.mood)\n    return {}\n\nbuilder = StateGraph(PydanticState)\nbuilder.add_node(\"node_mad\", node_mad)\nbuilder.add_node(\"node_next\", node_next)\nbuilder.add_edge(START, \"node_mad\")\nbuilder.add_edge(\"node_mad\", \"node_next\")\nbuilder.add_edge(\"node_next\", END)\ngraph = builder.compile()\n\ntry:\n    print(graph.invoke({\"name\": \"Lance\", \"mood\": \"happy\"}))\nexcept ValidationError as e:\n    print(\"ValidationError:\", e.errors()[0][\"msg\"])\n```\n\n¿Se imprime `---node_mad---`? ¿Y `---node_next---`?",
+   "respuesta": "Salida real: se imprime `---node_mad---` y luego `ValidationError: Input should be 'happy' or 'sad'`. `---node_next---` **no** se imprime. Pydantic no revisa lo que un node devuelve: revisa el state cuando se lo va a entregar al siguiente node. El error salta al armar la entrada de `node_next`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Pydantic sin node siguiente",
+   "contenido": "Mismo state Pydantic, pero el grafo es solo `START → node_mad → END` (sin `node_next`):\n\n```python\nfrom typing import Literal\nfrom pydantic import BaseModel, ValidationError\nfrom langgraph.graph import StateGraph, START, END\n\nclass PydanticState(BaseModel):\n    name: str\n    mood: Literal[\"happy\", \"sad\"]\n\ndef node_mad(state):\n    print(\"---node_mad---\")\n    return {\"mood\": \"mad\"}\n\nbuilder = StateGraph(PydanticState)\nbuilder.add_node(\"node_mad\", node_mad)\nbuilder.add_edge(START, \"node_mad\")\nbuilder.add_edge(\"node_mad\", END)\ngraph = builder.compile()\n\ntry:\n    print(graph.invoke({\"name\": \"Lance\", \"mood\": \"happy\"}))\nexcept ValidationError as e:\n    print(\"ValidationError:\", e.errors()[0][\"msg\"])\n```\n\n¿Qué devuelve `invoke`?",
+   "respuesta": "Salida real: `---node_mad---` y `{'name': 'Lance', 'mood': 'mad'}`, sin error. Como la validación ocurre en la **entrada** de los nodes, y después de `node_mad` no hay otro node, nadie valida el update. Pydantic protege a tus nodes, no la salida final del grafo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Cada key del state es un canal; el node devuelve un dict con las keys que cambia, sea cual sea el schema.\n- `TypedDict` y `dataclass` son type hints: **no validan** en runtime. `Literal` no te protege.\n- Pydantic sí valida, al armar la entrada de cada node. Lo que devuelve el último node no se revisa.\n- Relación con lo visto: el `MessagesState` del Módulo 1 es un `TypedDict` con una key `messages`; y en `create_agent` (curso 01) también podías pasar un state schema propio."
+  }
+ ],
+ "fuentes": [
+  "module-2/state-schema.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Tu state es un `TypedDict` con `mood: Literal[\"happy\", \"sad\"]` y un node devuelve `{\"mood\": \"mad\"}`. ¿Qué pasa al correr el grafo?",
+   "reverso": "Nada: `mad` entra al state sin error. Los type hints de `TypedDict` solo los revisan mypy o el editor antes de correr, no LangGraph en runtime."
+  },
+  {
+   "frente": "¿Por qué un node devuelve un dict aunque el state sea una `dataclass` o un modelo Pydantic?",
+   "reverso": "Porque LangGraph guarda cada key del state como un canal separado. El update solo tiene que nombrar las keys (canales) que cambia."
+  },
+  {
+   "frente": "Con un state Pydantic, un node devuelve un valor inválido. ¿En qué momento salta el `ValidationError`?",
+   "reverso": "Cuando LangGraph arma la entrada del **siguiente** node. Si después no hay ningún node, el valor inválido sale en el resultado sin error."
+  },
+  {
+   "frente": "¿Cuándo elegirías Pydantic en vez de `TypedDict` para el state?",
+   "reverso": "Cuando el state recibe datos de fuera (usuario, LLM, API) y quieres que un valor inválido truene pronto. A cambio pagas algo de rendimiento."
+  },
+  {
+   "frente": "¿Qué cambia dentro del node si pasas de `TypedDict` a `dataclass`?",
+   "reverso": "Solo cómo lees: `state.name` en vez de `state[\"name\"]`. Sigues devolviendo un dict y sigues sin validación."
+  }
+ ]
+}

@@ -1,0 +1,128 @@
+{
+ "mision_id": "1.B",
+ "titulo": "El grafo que recuerda",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Con tu agente ReAct haces dos `invoke` seguidos:\n\n1. \"Add 3 and 4.\" → responde 7.\n2. \"Multiply that by 2.\" → no sabe qué es \"that\".\n\nSalida real del segundo: `Please provide the number you would like to multiply by 2.`\n\nEl state solo existe **durante una ejecución**. Cada `invoke` arranca de cero con lo que tú le pasas. El modelo tampoco guarda nada: en cada llamada solo ve la lista de mensajes que el node le manda. Para conversar en varios turnos, alguien tiene que guardar el state entre un `invoke` y otro."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El checkpointer",
+   "contenido": "Un **checkpointer** guarda el state del grafo después de cada paso. Lo pones al compilar:\n\n```python\nfrom langgraph.checkpoint.memory import MemorySaver\ngraph = builder.compile(checkpointer=MemorySaver())\n```\n\n`MemorySaver` lo guarda en un dict de Python, en la RAM de tu proceso. Cada conversación se guarda aparte, bajo un **`thread_id`** que tú eliges y pasas en el `config` de cada `invoke`:\n\n```python\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n```"
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un contador para ver la memoria",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\nfrom langgraph.checkpoint.memory import MemorySaver\n\n\n# Un node sin LLM: cuenta cuántos mensajes ve en el state\ndef contador(state: MessagesState):\n    n = len(state[\"messages\"])\n    return {\"messages\": [AIMessage(content=f\"Veo {n} mensajes\")]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"contador\", contador)\nbuilder.add_edge(START, \"contador\")\nbuilder.add_edge(\"contador\", END)\n\nmemoria = MemorySaver()\ngraph = builder.compile(checkpointer=memoria)\n\nhilo_1 = {\"configurable\": {\"thread_id\": \"1\"}}\nhilo_2 = {\"configurable\": {\"thread_id\": \"2\"}}\n\nr = graph.invoke({\"messages\": [HumanMessage(content=\"hola\")]}, hilo_1)\nprint(\"hilo 1, turno 1:\", r[\"messages\"][-1].content)\n\nr = graph.invoke({\"messages\": [HumanMessage(content=\"otra vez\")]}, hilo_1)\nprint(\"hilo 1, turno 2:\", r[\"messages\"][-1].content)\n\nr = graph.invoke({\"messages\": [HumanMessage(content=\"hola\")]}, hilo_2)\nprint(\"hilo 2, turno 1:\", r[\"messages\"][-1].content)",
+   "notas": "Sin LLM: el node solo dice cuántos mensajes ve en el state. Así la memoria se ve en un número.\nSalida real: `hilo 1, turno 1: Veo 1 mensajes`, `hilo 1, turno 2: Veo 3 mensajes`, `hilo 2, turno 1: Veo 1 mensajes`.\nEn el turno 2 tú solo mandaste \"otra vez\", pero el node ve 3: los 2 del turno anterior los cargó el checkpointer y `add_messages` añadió el nuevo.\nEl hilo 2 empieza en 1: otro `thread_id` es otra conversación.",
+   "resaltar": [
+    18,
+    20,
+    29
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Qué pasa en cada invoke",
+   "contenido": "graph LR\n  IN[invoke con thread_id 1] --> CP[(checkpointer)]\n  CP -->|carga el state del hilo 1| G[grafo]\n  G -->|guarda un checkpoint por paso| CP\n  class CP clave",
+   "notas": "Antes de correr, el grafo pide al checkpointer el último state de ese `thread_id`.\nTu input se aplica encima como un update más (con el reducer de cada key).\nDespués de cada paso, guarda un checkpoint nuevo en ese mismo thread."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La memoria está en el checkpointer",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\nfrom langgraph.checkpoint.memory import MemorySaver\n\n\ndef contador(state: MessagesState):\n    n = len(state[\"messages\"])\n    return {\"messages\": [AIMessage(content=f\"Veo {n} mensajes\")]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"contador\", contador)\nbuilder.add_edge(START, \"contador\")\nbuilder.add_edge(\"contador\", END)\n\nhilo_1 = {\"configurable\": {\"thread_id\": \"1\"}}\n\n# Grafo A con su checkpointer: dos turnos en el hilo 1\nmemoria = MemorySaver()\ngraph_a = builder.compile(checkpointer=memoria)\ngraph_a.invoke({\"messages\": [HumanMessage(content=\"hola\")]}, hilo_1)\ngraph_a.invoke({\"messages\": [HumanMessage(content=\"otra vez\")]}, hilo_1)\n\n# Grafo B: otro objeto compilado, pero con EL MISMO checkpointer\ngraph_b = builder.compile(checkpointer=memoria)\nr = graph_b.invoke({\"messages\": [HumanMessage(content=\"¿sigo aquí?\")]}, hilo_1)\nprint(\"graph_b, mismo checkpointer:\", r[\"messages\"][-1].content)\n\n# Grafo C: mismo código, pero con un checkpointer NUEVO\ngraph_c = builder.compile(checkpointer=MemorySaver())\nr = graph_c.invoke({\"messages\": [HumanMessage(content=\"¿sigo aquí?\")]}, hilo_1)\nprint(\"graph_c, checkpointer nuevo:\", r[\"messages\"][-1].content)\n\n# Lo que guarda el checkpointer del hilo 1\nestado = graph_a.get_state(hilo_1)\nprint(\"mensajes en el hilo 1:\", [m.content for m in estado.values[\"messages\"]])\nprint(\"checkpoints del hilo 1:\", len(list(graph_a.get_state_history(hilo_1))))",
+   "notas": "`graph_a` y `graph_b` son dos grafos compilados distintos con el **mismo** objeto `memoria`. `graph_c` tiene uno nuevo.\nSalida real: `graph_b, mismo checkpointer: Veo 5 mensajes` y `graph_c, checkpointer nuevo: Veo 1 mensajes`.\n`get_state` del hilo 1 devuelve los 6 mensajes, y `get_state_history` cuenta 9 checkpoints: 3 por cada `invoke` (input, START y `contador`).\nEl grafo no guarda nada; el modelo tampoco. La conversación vive en el checkpointer, bajo su `thread_id`.",
+   "resaltar": [
+    25,
+    30
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lo que exige el checkpointer",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\nfrom langgraph.checkpoint.memory import MemorySaver\n\n\ndef contador(state: MessagesState):\n    n = len(state[\"messages\"])\n    return {\"messages\": [AIMessage(content=f\"Veo {n} mensajes\")]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"contador\", contador)\nbuilder.add_edge(START, \"contador\")\nbuilder.add_edge(\"contador\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\ntry:\n    graph.invoke({\"messages\": [HumanMessage(content=\"hola\")]})\nexcept Exception as e:\n    print(type(e).__name__, \":\", str(e)[:200])\n\nsin_memoria = builder.compile()\nsin_memoria.invoke({\"messages\": [HumanMessage(content=\"hola\")]})\nr = sin_memoria.invoke({\"messages\": [HumanMessage(content=\"otra vez\")]}, {\"configurable\": {\"thread_id\": \"1\"}})\nprint(\"sin checkpointer, con thread_id:\", r[\"messages\"][-1].content)",
+   "notas": "Si compilas con checkpointer y llamas sin `thread_id`, falla. Salida real: `ValueError : Checkpointer requires one or more of the following 'configurable' keys: thread_id, checkpoint_ns, checkpoint_id`.\nAl revés no falla, pero no sirve: sin checkpointer, el `thread_id` se ignora. Salida real: `sin checkpointer, con thread_id: Veo 1 mensajes`.\nHacen falta las dos cosas: el checkpointer al compilar y el `thread_id` al invocar.",
+   "resaltar": [
+    18,
+    22
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente del notebook, con memoria",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\n\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nfrom langgraph.graph import StateGraph, START, MessagesState\nfrom langgraph.prebuilt import ToolNode, tools_condition\nfrom langgraph.checkpoint.memory import MemorySaver\n\n\ndef multiply(a: int, b: int) -> int:\n    \"\"\"Multiply a and b.\"\"\"\n    return a * b\n\n\ndef add(a: int, b: int) -> int:\n    \"\"\"Adds a and b.\"\"\"\n    return a + b\n\n\ndef divide(a: int, b: int) -> float:\n    \"\"\"Divide a and b.\"\"\"\n    return a / b\n\n\ntools = [add, multiply, divide]\nllm_with_tools = ChatOpenAI(model=\"gpt-4o-mini\").bind_tools(tools)\nsys_msg = SystemMessage(content=\"You are a helpful assistant tasked with performing arithmetic on a set of inputs.\")\n\n\ndef assistant(state: MessagesState):\n    return {\"messages\": [llm_with_tools.invoke([sys_msg] + state[\"messages\"])]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"assistant\", assistant)\nbuilder.add_node(\"tools\", ToolNode(tools))\nbuilder.add_edge(START, \"assistant\")\nbuilder.add_conditional_edges(\"assistant\", tools_condition)\nbuilder.add_edge(\"tools\", \"assistant\")\n\n# Sin checkpointer\nreact_graph = builder.compile()\nreact_graph.invoke({\"messages\": [HumanMessage(content=\"Add 3 and 4.\")]})\nr = react_graph.invoke({\"messages\": [HumanMessage(content=\"Multiply that by 2.\")]})\nprint(\"SIN memoria:\", r[\"messages\"][-1].content)\n\n# Con checkpointer\nreact_graph_memory = builder.compile(checkpointer=MemorySaver())\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\nr = react_graph_memory.invoke({\"messages\": [HumanMessage(content=\"Add 3 and 4.\")]}, config)\nprint(\"hilo 1, turno 1:\", r[\"messages\"][-1].content)\nr = react_graph_memory.invoke({\"messages\": [HumanMessage(content=\"Multiply that by 2.\")]}, config)\nprint(\"hilo 1, turno 2:\", r[\"messages\"][-1].content)\nprint(\"mensajes en el hilo 1:\", len(r[\"messages\"]))\n\notro = {\"configurable\": {\"thread_id\": \"2\"}}\nr = react_graph_memory.invoke({\"messages\": [HumanMessage(content=\"Multiply that by 2.\")]}, otro)\nprint(\"hilo 2:\", r[\"messages\"][-1].content)",
+   "notas": "El mismo `builder` compilado dos veces: sin y con checkpointer.\nSalida real: `SIN memoria: Please provide the number you would like to multiply by 2.`\n`hilo 1, turno 2: Multiplying 7 by 2 gives us 14.` y `mensajes en el hilo 1: 8`.\n`hilo 2: Could you please provide the number you would like to multiply by 2?`\nEl modelo es el mismo en los tres casos. Lo único que cambia es qué historial le llega.",
+   "resaltar": [
+    49,
+    50,
+    57
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Un Agent Server ya hace esto",
+   "contenido": "En `deployment` viste que `studio/agent.py` se compila **sin** checkpointer y aun así un Agent Server desplegado recuerda cada thread. Ahora sabes por qué: el Agent Server le pone un checkpointer que guarda en Postgres.\n\n`MemorySaver` vive en la RAM: si reinicias el kernel o el proceso, se pierde todo. Sirve para aprender y probar. En producción se usa uno con base de datos (Postgres, SQLite), que es lo que hace un Agent Server desplegado. El `thread_id` del SDK es el mismo `thread_id` de aquí."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: otro thread_id",
+   "contenido": "Con `react_graph_memory`, el agente con memoria del paso 7, en el hilo `\"1\"` ya preguntaste \"Add 3 and 4.\" (respondió 7). Ahora mandas \"Multiply that by 2.\" con `{\"configurable\": {\"thread_id\": \"2\"}}`. ¿Qué responde y por qué?",
+   "respuesta": "No sabe qué es \"that\" (salida real: `Could you please provide the number you would like to multiply by 2?`).\nEl checkpointer guarda cada conversación **por thread**. El hilo 2 está vacío, así que el modelo solo recibe \"Multiply that by 2.\". El mismo grafo y el mismo modelo, pero otro historial.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: recompilar el grafo",
+   "contenido": "En el contador del paso 5 tienes 2 turnos guardados en el hilo `\"1\"` con `memoria = MemorySaver()`. Haces `graph_b = builder.compile(checkpointer=memoria)` y le mandas un turno nuevo al hilo `\"1\"`. Luego haces `graph_c = builder.compile(checkpointer=MemorySaver())` y lo mismo. ¿Cuántos mensajes ve el contador en cada caso?",
+   "respuesta": "`graph_b` ve **5** y `graph_c` ve **1** (salida real).\n`graph_b` es otro objeto, pero usa el mismo checkpointer, así que encuentra el hilo 1. `graph_c` tiene un checkpointer vacío.\nLa memoria no está en el grafo ni en el modelo: está en el checkpointer.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: checkpointer sin reducer",
+   "contenido": "Es el contador del paso 3, con **una sola diferencia**: el state no usa `MessagesState` sino un `TypedDict` **sin** reducer (`messages: list[AnyMessage]`). Mismo `MemorySaver`, mismo hilo, mismos dos turnos.\n\n```python\nfrom typing import TypedDict\n\nfrom langchain_core.messages import AIMessage, AnyMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\n\n\nclass State(TypedDict):\n    messages: list[AnyMessage]  # SIN reducer: no hay add_messages\n\n\ndef contador(state: State):\n    n = len(state[\"messages\"])\n    return {\"messages\": state[\"messages\"] + [AIMessage(content=f\"Veo {n} mensajes\")]}\n\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"contador\", contador)\nbuilder.add_edge(START, \"contador\")\nbuilder.add_edge(\"contador\", END)\n\ngraph = builder.compile(checkpointer=MemorySaver())\nhilo_1 = {\"configurable\": {\"thread_id\": \"1\"}}\n\nr = graph.invoke({\"messages\": [HumanMessage(content=\"hola\")]}, hilo_1)\nprint(\"turno 1:\", r[\"messages\"][-1].content)\n\nr = graph.invoke({\"messages\": [HumanMessage(content=\"otra vez\")]}, hilo_1)\nprint(\"turno 2:\", r[\"messages\"][-1].content)\n```\n\n¿Qué imprime `turno 2`?",
+   "respuesta": "`turno 2: Veo 1 mensajes` (salida real). Al final el hilo tiene `['otra vez', 'Veo 1 mensajes']`.\n\nEl checkpointer **sí** cargó los 2 mensajes del turno 1, pero tu input `{\"messages\": [\"otra vez\"]}` es un update, y sin reducer **sobrescribe** la key: el node ya solo ve 1 mensaje. La memoria necesita las dos cosas: checkpointer (guarda) y `add_messages` (junta)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El state dura una ejecución. Para recordar entre `invoke`s necesitas un **checkpointer** al compilar y un **`thread_id`** en el `config`.\n- La memoria no está en el modelo (solo ve lo que le mandas) ni en el grafo: está en el **checkpointer**, separada por thread.\n- Otro `thread_id` = conversación nueva. Otro checkpointer = memoria vacía.\n- Tu input se aplica sobre el state guardado con el reducer de cada key: sin `add_messages`, borra el historial.\n- `MemorySaver` vive en RAM; tu Agent Server usa Postgres. Es la misma idea que la memoria de corto plazo de `create_agent` en el curso 01."
+  }
+ ],
+ "fuentes": [
+  "module-1/agent-memory.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Haces dos `invoke` al mismo grafo sin checkpointer. ¿Por qué el segundo no sabe lo que pasó en el primero, si el modelo es el mismo?",
+   "reverso": "Porque el state solo dura una ejecución y el modelo no guarda nada: en cada llamada solo ve los mensajes que el node le manda. Sin checkpointer, nadie guarda el historial."
+  },
+  {
+   "frente": "Mismo grafo con `MemorySaver`, pero el segundo turno va con `thread_id: \"2\"`. ¿Recuerda el primero?",
+   "reverso": "No. El checkpointer guarda cada conversación **por thread**. Otro `thread_id` empieza con el state vacío."
+  },
+  {
+   "frente": "Compilas otra vez el grafo pasándole **el mismo** objeto `MemorySaver`. ¿Encuentra las conversaciones de antes?",
+   "reverso": "Sí. La memoria vive en el checkpointer, no en el grafo compilado. Con un `MemorySaver()` nuevo, en cambio, estaría vacía."
+  },
+  {
+   "frente": "Compilas con checkpointer y llamas `graph.invoke(input)` sin `config`. ¿Qué pasa?",
+   "reverso": "`ValueError`: el checkpointer exige un `thread_id` en `configurable`. Sin él no sabe en qué conversación guardar ni cuál cargar."
+  },
+  {
+   "frente": "Con checkpointer, en el turno 2 solo mandas el mensaje nuevo. ¿Cómo termina el historial completo en el state?",
+   "reverso": "El checkpointer carga el state guardado del thread y tu input se aplica encima como un update: `add_messages` lo **añade** al final."
+  },
+  {
+   "frente": "Usas checkpointer pero `messages` no tiene reducer. ¿Qué pasa en el turno 2?",
+   "reverso": "Tu input **sobrescribe** el historial guardado: el node solo ve el mensaje nuevo. La memoria necesita checkpointer y `add_messages`."
+  },
+  {
+   "frente": "¿Qué le pasa a lo guardado en `MemorySaver` si reinicias el kernel, y qué usa tu Agent Server en su lugar?",
+   "reverso": "Se pierde: `MemorySaver` vive en la RAM del proceso. Tu Agent Server guarda los checkpoints en Postgres, así que sobreviven a reinicios."
+  }
+ ]
+}

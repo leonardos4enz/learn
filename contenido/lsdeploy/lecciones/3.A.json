@@ -1,0 +1,86 @@
+{
+ "mision_id": "3.A",
+ "titulo": "Recorrido por la UI",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "El agente ya está desplegado (o viste cómo se despliega). Ahora te toca **operarlo**: ¿salió bien el build? ¿Cuál es la URL? ¿Llegó la key? ¿Por qué un usuario recibió un 401? ¿Cómo dejas de pagar?\n\nEsta misión es un video corto. El video es el ejemplo resuelto; esta lección te deja el **mapa** de dónde se ve cada cosa y lo pasa a preguntas de examen. La UI de LangSmith cambia seguido (el curso lo advierte): aprende **qué** hay, no la posición exacta de cada botón."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El mapa de una deployment",
+   "contenido": "En smith.langchain.com → **Deployments** (barra izquierda) está la lista; cada fila abre su página:\n\n| Dónde | Qué ves |\n|---|---|\n| Arriba de la página | Estado del build (verde = viva) y la **URL** para el SDK |\n| Botón de Studio | Studio conectado a la deployment **de la nube** |\n| Env vars / secrets | Las variables que llegaron (y las que cambias) |\n| Revisiones | Cada versión, su build y la opción de volver a una anterior |\n| **Logs** | La salida del servidor |\n| **Traces** | Un trace por run: modelo, tools, entradas y salidas |\n| Monitoring | Requests, errores, latencia, tokens y costo |\n\nAssistants y threads son los mismos que creas con el SDK (`assistants.search`, `threads.search`)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Revisiones y qué sobrevive",
+   "contenido": "Una **revisión** es una versión de la deployment: imagen + env vars. Se crea una nueva cuando:\n- corres `langgraph deploy` otra vez (aunque no hayas cambiado nada), o\n- cambias env vars desde la UI.\n\nSi una revisión sale mal, vuelves a la anterior.\n\n| Qué | ¿Sobrevive a una revisión nueva? | ¿Y a borrar la deployment? |\n|---|---|---|\n| Threads y checkpoints | Sí | No |\n| Store | Sí | No |\n| Assistants (records) | Sí | No |\n| Archivos escritos en runtime en el disco del contenedor | No | No |\n\nLa base de datos es **de la deployment**, no de la imagen. Esto es la durabilidad del storage; el módulo 4 lo desarrolla."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Logs contra Traces",
+   "contenido": "Son dos cosas distintas:\n\n- Un **trace** registra un **run del grafo**: cada llamada al modelo, cada tool, sus entradas y salidas.\n- Los **Logs** son la salida del **proceso del servidor**: errores al arrancar o al importar tu código, y lo que imprime tu handler de auth.\n\nLa auth corre **antes** del grafo (el request se autentica antes de crear el run). Por eso sus `print` salen en **Logs**, no en Traces. En `langgraph dev` salen en la terminal del servidor.\n\nOjo: no registres tokens ni el header `Authorization` en los logs; registra la identidad **después** de validarla."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Regiones y apagado",
+   "contenido": "**Región.** La URL de la deployment del curso termina en `.us.langgraph.app`: vive en la región **US**. LangSmith Cloud tiene región **US** (smith.langchain.com) y **EU** (eu.smith.langchain.com); la deployment y sus datos (threads, Store) quedan en la región de tu cuenta. Si te piden residencia de datos en Europa, eso se decide con la región; revisa la página \"Regions\" de la doc.\n\n**Apagado.** Una deployment cobra mientras existe, la uses o no:\n\n```bash\nuv run langgraph deploy list\nuv run langgraph deploy delete <DEPLOYMENT_ID>\n```\n\nBorrar assistants o threads **no** apaga nada: son registros. Borrar la deployment se lleva también su base de datos."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: ¿dónde está el print?",
+   "contenido": "Tu handler `@auth.authenticate` hace `print(f\"usuario: {identity}\")`. En `langgraph dev` lo ves en la terminal. En la deployment de la nube abres el trace del run y no aparece. ¿Dónde lo buscas?\n\n- **A)** En Traces, filtrando por `metadata.owner`.\n- **B)** En la pestaña **Logs** de la deployment.\n- **C)** En la pestaña Threads, dentro del estado del thread.\n- **D)** En ningún lado: en la nube los `print` se descartan.",
+   "respuesta": "**B.** La auth corre antes del grafo, fuera del run, así que no entra al trace. Todo lo que imprime el servidor fuera del grafo va a Logs.\nA: el trace solo cubre el run. C: el estado del thread es lo que escribe el grafo. D: no se descartan, van a Logs."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: cambiar una variable",
+   "contenido": "Cambias `ANTHROPIC_API_KEY` desde la página de la deployment. ¿Qué pasa con los threads que ya tenían los alumnos?\n\n- **A)** Se borran: la deployment se reconstruye desde cero.\n- **B)** Se crea una revisión nueva y los threads siguen: la base de datos es de la deployment, no de la imagen.\n- **C)** Siguen, pero hay que volver a crear los assistants.\n- **D)** La key nueva solo se usa en threads creados después del cambio.",
+   "respuesta": "**B.** Una revisión nueva cambia la imagen o las variables, pero la base de datos (threads, checkpoints, Store, assistants) se conserva. Solo se pierde si borras la deployment.\nC: los assistants también son records en esa base de datos. D: la variable aplica a todos los runs de la revisión nueva, sea cual sea el thread."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: dejar de pagar",
+   "contenido": "Terminaste el curso y no quieres más cargos. ¿Qué basta?\n\n- **A)** Borrar todos los assistants.\n- **B)** Borrar todos los threads.\n- **C)** `langgraph deploy delete <DEPLOYMENT_ID>`.\n- **D)** Detener `langgraph dev` en tu máquina.",
+   "respuesta": "**C.** Lo que cobra es la deployment (contenedores y base de datos administrados). Assistants y threads son registros dentro de ella: borrarlos no apaga el cómputo. `langgraph dev` corre en tu máquina y no cobra."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- En **Deployments** ves estado del build, URL, Studio contra la nube, env vars, revisiones, Logs, Traces y Monitoring.\n- Una **revisión** nueva (deploy o cambio de env vars) conserva la base de datos; borrar la deployment la pierde.\n- **Logs** = salida del servidor (auth, errores al arrancar). **Traces** = runs del grafo.\n- La URL dice la región (`.us.langgraph.app`); LangSmith Cloud tiene US y EU.\n- Para dejar de pagar: `langgraph deploy delete <ID>`. Borrar assistants o threads no basta.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Deployment* (páginas de revisiones, logs y \"Regions\")."
+  }
+ ],
+ "fuentes": [
+  "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75435083-ui-walkthrough",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m1/m1.0-intro.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m1/m1.2-deploy.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m4/m4.1-storage-in-langgraph.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m5/m5.3-private-conversations.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m6/m6.3-bring-your-own-ui.html",
+  "lca-deployment/python/deep_tutor/skills/module-3/information.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Tu auth handler imprime algo y no lo ves en el trace del run. ¿Por qué y dónde está?",
+   "reverso": "La auth corre antes del grafo, fuera del run. Su salida va a la pestaña Logs de la deployment (en local, a la terminal)."
+  },
+  {
+   "frente": "¿Qué crea una revisión nueva de una deployment?",
+   "reverso": "Cada `langgraph deploy` (aunque no cambie nada) y cada cambio de env vars desde la UI. La base de datos se conserva."
+  },
+  {
+   "frente": "¿Qué sobrevive a una revisión nueva y qué no?",
+   "reverso": "Sobreviven threads, checkpoints, Store y assistants (están en la base de datos de la deployment). No sobrevive lo escrito en runtime en el disco del contenedor."
+  },
+  {
+   "frente": "¿Borrar los assistants de una deployment deja de cobrar?",
+   "reverso": "No. Son registros de configuración. Lo que cobra es la deployment: hay que borrarla con `langgraph deploy delete <ID>`."
+  },
+  {
+   "frente": "¿Qué te dice `tutor-<hash>.us.langgraph.app` además de la dirección?",
+   "reverso": "La región: la deployment (y sus datos) vive en US. LangSmith Cloud también tiene región EU."
+  }
+ ]
+}

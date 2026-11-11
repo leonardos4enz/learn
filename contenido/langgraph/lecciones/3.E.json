@@ -1,0 +1,125 @@
+{
+ "mision_id": "3.E",
+ "titulo": "Viajar en el tiempo",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Tu agente dio una respuesta rara. Quieres saber **en qué paso** se torció, volver a correr desde\nahí, o probar \"¿y si en ese paso el dato hubiera sido otro?\", sin empezar todo de cero ni pagar\notra vez las llamadas al LLM que ya estaban bien.\n\nEso es el segundo motivo de human-in-the-loop: **depurar**. LangGraph lo llama *time travel*, y\nse apoya en lo mismo que las pausas: el checkpointer guarda **un checkpoint por paso**, no solo\nel último.\n\nLa duda clave: al volver a correr desde un checkpoint, ¿qué se repite y qué se reutiliza?"
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo",
+   "contenido": "flowchart LR\n  S((START)) --> planear --> calcular --> redactar --> E((END))\n  class calcular clave",
+   "notas": "Sin LLM. `planear` y `redactar` hacen el papel de las llamadas al LLM (las caras); `calcular` es la tool.\nUn contador `LLAMADAS` registra cuántas veces corre cada node: así ves qué se repite.\nEn el notebook es el agente `assistant ⇄ tools` con \"Multiply 2 and 3\"."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Correr y ver la historia",
+   "contenido": "import re\nfrom typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, START, END\n\nLLAMADAS = {\"planear\": 0, \"calcular\": 0, \"redactar\": 0}  # cuántas veces corre cada node\n\nclass State(TypedDict):\n    pedido: str\n    a: int\n    b: int\n    resultado: int\n    respuesta: str\n\ndef planear(state: State):        # aquí iría la llamada \"cara\" al LLM\n    LLAMADAS[\"planear\"] += 1\n    a, b = map(int, re.findall(r\"\\d+\", state[\"pedido\"])[:2])\n    return {\"a\": a, \"b\": b}\n\ndef calcular(state: State):       # la \"tool\"\n    LLAMADAS[\"calcular\"] += 1\n    return {\"resultado\": state[\"a\"] * state[\"b\"]}\n\ndef redactar(state: State):       # otra llamada al LLM\n    LLAMADAS[\"redactar\"] += 1\n    return {\"respuesta\": f\"{state['a']} x {state['b']} = {state['resultado']}\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"planear\", planear)\nbuilder.add_node(\"calcular\", calcular)\nbuilder.add_node(\"redactar\", redactar)\nbuilder.add_edge(START, \"planear\")\nbuilder.add_edge(\"planear\", \"calcular\")\nbuilder.add_edge(\"calcular\", \"redactar\")\nbuilder.add_edge(\"redactar\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\ngraph.invoke({\"pedido\": \"Multiplica 2 y 3\"}, thread)\nprint(\"llamadas:\", LLAMADAS)\n\nhistoria = list(graph.get_state_history(thread))\nprint(\"checkpoints:\", len(historia))\nfor i, s in enumerate(historia):\n    print(i, \"step\", s.metadata[\"step\"], \"next\", s.next, s.values)",
+   "notas": "`get_state_history(thread)` devuelve **todos** los checkpoints del thread, del más nuevo al más viejo.\nCada uno es un `StateSnapshot`: `values`, `next`, `metadata` (con `step`) y `config` (con su `checkpoint_id`).",
+   "resaltar": [
+    6,
+    42
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: un checkpoint por paso",
+   "contenido": "```\nllamadas: {'planear': 1, 'calcular': 1, 'redactar': 1}\ncheckpoints: 5\n0 step 3 next () {'pedido': 'Multiplica 2 y 3', 'a': 2, 'b': 3, 'resultado': 6, 'respuesta': '2 x 3 = 6'}\n1 step 2 next ('redactar',) {'pedido': 'Multiplica 2 y 3', 'a': 2, 'b': 3, 'resultado': 6}\n2 step 1 next ('calcular',) {'pedido': 'Multiplica 2 y 3', 'a': 2, 'b': 3}\n3 step 0 next ('planear',) {'pedido': 'Multiplica 2 y 3'}\n4 step -1 next ('__start__',) {}\n```\n\nLéelo de abajo arriba: vacío, llega el input, termina `planear`, termina `calcular`, termina\n`redactar`. El `[0]` es el actual (lo mismo que `get_state`). En el notebook también salen 5, y\nusa `all_states[-2]`: el checkpoint con solo el `HumanMessage` y `next=('assistant',)`.\n\nUna pausa de las lecciones anteriores era justo uno de estos, con `next` pendiente."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Replay: correr desde un checkpoint viejo",
+   "contenido": "to_replay = historia[2]          # el checkpoint con next=('calcular',)\nprint(\"next:\", to_replay.next, \"| checkpoint_id:\", to_replay.config[\"configurable\"][\"checkpoint_id\"][-8:])\n\nfor event in graph.stream(None, to_replay.config, stream_mode=\"updates\"):\n    print(event)\nprint(\"llamadas:\", LLAMADAS)\nprint(\"checkpoints ahora:\", len(list(graph.get_state_history(thread))))",
+   "notas": "Se corre después del bloque anterior.\n`to_replay.config` trae el `thread_id` **y** el `checkpoint_id`. Pasarlo con input `None` significa\n\"sigue desde **ese** checkpoint\", no desde el último. Es el mismo `None` de reanudar una pausa.",
+   "resaltar": [
+    4
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: qué se repitió",
+   "contenido": "```\nnext: ('calcular',) | checkpoint_id: 1ae9e21c\n{'calcular': {'resultado': 6}}\n{'redactar': {'respuesta': '2 x 3 = 6'}}\nllamadas: {'planear': 1, 'calcular': 2, 'redactar': 2}\ncheckpoints ahora: 8\n```\n\n- `planear` sigue en **1**: lo que está **antes** del checkpoint no se vuelve a correr; se usa lo guardado (`a=2, b=3`).\n- `calcular` y `redactar` pasaron a **2**: lo que está **después** del checkpoint sí se ejecuta de nuevo.\n- La historia creció de 5 a 8: el replay agrega checkpoints, no borra los viejos."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "¿Y el LLM en el notebook?",
+   "contenido": "El texto del notebook dice que el grafo \"just re-plays from this checkpoint\", y suena a que nada se\nvuelve a calcular. Mira su propia salida:\n\n- Corrida original: tool call `call_ikJxMpb777bKMYgmM3d9mYjW`.\n- Replay desde `all_states[-2]` (antes de `assistant`): tool call `call_SABfB57CnDkMu9HJeUE0mvJ9`.\n\nCambió el id: el `assistant` **volvió a llamar al LLM**, porque estaba después del checkpoint. Lo que\nse ahorra es lo de antes. Si quieres reutilizar más, elige un checkpoint más tardío."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Fork: cambiar el pasado y seguir",
+   "contenido": "to_fork = historia[2]            # next=('calcular',), a=2, b=3\n\n# update_state sobre un checkpoint VIEJO: crea uno nuevo que sale de ahí\nfork_config = graph.update_state(to_fork.config, {\"a\": 5})\nprint(\"fork next:\", graph.get_state(fork_config).next, graph.get_state(fork_config).values)\n\nfor event in graph.stream(None, fork_config, stream_mode=\"updates\"):\n    print(event)\nprint(\"llamadas:\", LLAMADAS)\nprint(\"actual:\", graph.get_state(thread).values[\"respuesta\"])\nprint(\"el viejo sigue ahí:\", historia[0].values[\"respuesta\"])",
+   "notas": "Se corre después del primer bloque, en lugar del replay.\n`update_state` sobre el config de un checkpoint viejo crea un checkpoint **nuevo** que sale de\nahí con tu cambio. Pasa por los reducers como en la lección 3.C: `a` no tiene reducer, se sobrescribe.",
+   "resaltar": [
+    4
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real del fork",
+   "contenido": "```\nfork next: ('calcular',) {'pedido': 'Multiplica 2 y 3', 'a': 5, 'b': 3}\n{'calcular': {'resultado': 15}}\n{'redactar': {'respuesta': '5 x 3 = 15'}}\nllamadas: {'planear': 1, 'calcular': 2, 'redactar': 2}\nactual: 5 x 3 = 15\nel viejo sigue ahí: 2 x 3 = 6\n```\n\nEl fork conserva el `next` del checkpoint (`calcular`), así que el grafo sigue desde ahí con `a=5`.\n`planear` no se repitió. El estado actual del thread es el de la rama nueva, pero la rama vieja\nsigue en la historia.\n\nEn el notebook el fork cambia el `HumanMessage` a \"Multiply 5 and 3\" pasándole **el mismo id**,\npara que `add_messages` lo reemplace en vez de agregar otro. Resultado: `15`."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "La historia como un árbol",
+   "contenido": "flowchart LR\n  c0[\"step -1<br/>vacío\"] --> c1[\"step 0<br/>input\"] --> c2[\"step 1<br/>a=2, b=3<br/>next: calcular\"]\n  c2 --> c3[\"step 2<br/>resultado=6\"] --> c4[\"step 3<br/>2 x 3 = 6\"]\n  c2 -. \"update_state a=5\" .-> f2[\"fork<br/>a=5, b=3<br/>next: calcular\"]\n  f2 --> f3[\"resultado=15\"] --> f4[\"5 x 3 = 15\"]\n  class f2 clave",
+   "notas": "Cada caja es un checkpoint. El fork sale de `c2` y forma una rama nueva; la rama original no se toca.\n`get_state(thread)` devuelve la punta más reciente (`5 x 3 = 15`).\nPor eso time travel sirve para probar \"¿y si...?\" sin perder la corrida buena."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Replay desde más atrás",
+   "contenido": "El script del paso 3, pero ahora haces replay desde `historia[3]`, el checkpoint con `next=('planear',)`. ¿Qué imprime el último `print`?\n\n```python\nimport re\nfrom typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, START, END\n\nLLAMADAS = {\"planear\": 0, \"calcular\": 0, \"redactar\": 0}  # cuántas veces corre cada node\n\nclass State(TypedDict):\n    pedido: str\n    a: int\n    b: int\n    resultado: int\n    respuesta: str\n\ndef planear(state: State):\n    LLAMADAS[\"planear\"] += 1\n    a, b = map(int, re.findall(r\"\\d+\", state[\"pedido\"])[:2])\n    return {\"a\": a, \"b\": b}\n\ndef calcular(state: State):\n    LLAMADAS[\"calcular\"] += 1\n    return {\"resultado\": state[\"a\"] * state[\"b\"]}\n\ndef redactar(state: State):\n    LLAMADAS[\"redactar\"] += 1\n    return {\"respuesta\": f\"{state['a']} x {state['b']} = {state['resultado']}\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"planear\", planear)\nbuilder.add_node(\"calcular\", calcular)\nbuilder.add_node(\"redactar\", redactar)\nbuilder.add_edge(START, \"planear\")\nbuilder.add_edge(\"planear\", \"calcular\")\nbuilder.add_edge(\"calcular\", \"redactar\")\nbuilder.add_edge(\"redactar\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\ngraph.invoke({\"pedido\": \"Multiplica 2 y 3\"}, thread)\nprint(\"llamadas:\", LLAMADAS)\n\nhistoria = list(graph.get_state_history(thread))\nto_replay = historia[3]          # el checkpoint con next=('planear',)\nprint(\"next:\", to_replay.next)\n\nfor event in graph.stream(None, to_replay.config, stream_mode=\"updates\"):\n    print(event)\nprint(\"llamadas:\", LLAMADAS)\n```",
+   "respuesta": "`{'planear': 2, 'calcular': 2, 'redactar': 2}` (salida real). Desde `historia[3]` **todo** está\ndespués del checkpoint, así que corren los tres nodes otra vez. Con un LLM real, pagarías de nuevo\ntodas las llamadas."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Se repite planear?",
+   "contenido": "En el replay del paso 5, desde `historia[2]` (`next=('calcular',)`). En un agente real, `planear` es una llamada a GPT-4o de 5 segundos. ¿Se vuelve a llamar al LLM de `planear`?",
+   "respuesta": "**No.** `planear` está **antes** del checkpoint: su resultado (`a=2, b=3`) ya está guardado y se\nreutiliza. Solo corren `calcular` y `redactar`. Lo que sí se repite son los nodes después del\ncheckpoint, aunque tengan LLM.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Fork con mensajes sin id",
+   "contenido": "Un agente sin LLM parecido al del notebook. Haces fork desde `historia[-2]` (solo el mensaje humano, `next=('asistente',)`) con un `HumanMessage` nuevo, **sin** pasar el id del original. ¿Qué imprime la última línea?\n\n```python\nimport re\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, MessagesState, START, END\n\n# \"Asistente\" sin LLM: multiplica los dos números del último mensaje humano\ndef asistente(state: MessagesState):\n    ultimo = [m for m in state[\"messages\"] if isinstance(m, HumanMessage)][-1]\n    a, b = map(int, re.findall(r\"\\d+\", ultimo.content)[:2])\n    return {\"messages\": [AIMessage(content=f\"{a} x {b} = {a * b}\")]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"asistente\", asistente)\nbuilder.add_edge(START, \"asistente\")\nbuilder.add_edge(\"asistente\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\ngraph.invoke({\"messages\": [HumanMessage(content=\"Multiply 2 and 3\")]}, thread)\n\nhistoria = list(graph.get_state_history(thread))\nto_fork = historia[-2]           # next=('asistente',): solo el HumanMessage\nprint(\"to_fork next:\", to_fork.next)\n\n# Fork SIN pasar el id del mensaje original\nfork_config = graph.update_state(to_fork.config, {\"messages\": [HumanMessage(content=\"Multiply 5 and 3\")]})\nmensajes = graph.get_state(fork_config).values[\"messages\"]\nprint([m.content for m in mensajes if isinstance(m, HumanMessage)])\n```",
+   "respuesta": "`['Multiply 2 and 3', 'Multiply 5 and 3']` (salida real): **dos** mensajes humanos. El fork pasa por\n`add_messages`, que agrega cuando el id no existe. Por eso el notebook le pasa el id del original: para\n**reemplazarlo**. Es la regla de la lección 3.C aplicada a un checkpoint viejo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El checkpointer guarda **un checkpoint por paso**. `get_state_history(thread)` los da todos, del más nuevo al más viejo.\n- **Replay**: `graph.stream(None, snapshot.config)`. Lo de **antes** del checkpoint se reutiliza; lo de **después** se vuelve a ejecutar (con LLM incluido).\n- **Fork**: `update_state(snapshot.config, cambio)` crea un checkpoint nuevo desde ese punto (pasando por los reducers) y luego `stream(None, fork_config)`.\n- Nada se borra: la rama vieja sigue en la historia.\n- Las pausas (3.B, 3.D), la edición (3.C) y el time travel son la misma pieza: checkpoints por thread, la memoria del `create_agent` del curso 01."
+  }
+ ],
+ "fuentes": [
+  "module-3/time-travel.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Haces replay desde un checkpoint con `next=('calcular',)`. ¿Qué nodes se vuelven a ejecutar y cuáles no?",
+   "reverso": "Se ejecutan `calcular` y lo que sigue. Lo que está **antes** del checkpoint (`planear`) no corre: se usa su resultado guardado."
+  },
+  {
+   "frente": "¿Por qué en el replay del notebook el tool call tiene otro id?",
+   "reverso": "Porque el checkpoint elegido estaba **antes** de `assistant`: ese node se volvió a ejecutar y el LLM generó un tool call nuevo."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre replay y fork?",
+   "reverso": "Replay: `stream(None, config_viejo)` sigue desde ese checkpoint tal cual. Fork: primero `update_state(config_viejo, cambio)` crea un checkpoint nuevo modificado y se sigue desde él."
+  },
+  {
+   "frente": "Después de un fork, ¿qué pasa con la corrida original?",
+   "reverso": "Sigue en `get_state_history`: el fork crea una rama nueva, no borra nada. `get_state(thread)` devuelve la punta más reciente."
+  },
+  {
+   "frente": "En un fork de `messages`, ¿por qué el notebook pasa el **id** del `HumanMessage` original?",
+   "reverso": "Para que `add_messages` **reemplace** el mensaje. Sin id lo agregaría y quedarían dos mensajes humanos."
+  },
+  {
+   "frente": "Quieres repetir solo la tool sin pagar otra vez la llamada al LLM que la decidió. ¿Desde qué checkpoint haces replay?",
+   "reverso": "Desde el que tiene `next` = la tool (después del LLM). Todo lo anterior se reutiliza; solo corre de la tool en adelante."
+  }
+ ]
+}

@@ -1,0 +1,120 @@
+{
+ "mision_id": "2.B",
+ "titulo": "Quién gana cuando dos escriben",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Un node **no modifica** el state. Devuelve un *update*, y LangGraph decide cómo combinarlo con lo que ya hay. Hasta ahora la regla era sencilla: el update sobrescribe.\n\nEsa regla deja de funcionar cuando dos nodes corren **a la vez** y escriben la misma key. ¿Cuál de los dos valores se queda? En esta lección ves el error que lanza LangGraph y la herramienta que lo resuelve: el **reducer**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El modelo mental",
+   "contenido": "Para cada key, LangGraph hace esto con cada update que llega:\n\n```\nnuevo_valor = reducer(valor_actual, update)\n```\n\n- Sin reducer declarado, el reducer por defecto es \"quédate con el update\": sobrescribe.\n- Con `Annotated[tipo, funcion]` le das tu propia regla: concatenar, sumar, ignorar `None`...\n\nEl node propone; el reducer decide. Si dos nodes del mismo step proponen un valor para una key sin reducer, no hay regla para elegir, y LangGraph se niega a adivinar."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Dos nodes en paralelo",
+   "contenido": "graph LR\n  S([START]) --> n1[node_1]\n  n1 --> n2[node_2]\n  n1 --> n3[node_3]\n  n2 --> E([END])\n  n3 --> E\n  class n2,n3 clave",
+   "notas": "`node_1` tiene dos edges normales de salida, así que `node_2` y `node_3` corren en el **mismo step** (en paralelo). Los dos leen el mismo state y los dos devuelven `foo`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Sin reducer: InvalidUpdateError",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.errors import InvalidUpdateError\n\nclass State(TypedDict):\n    foo: int\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"foo\": state[\"foo\"] + 1}\n\ndef node_2(state):\n    print(\"---Node 2---\")\n    return {\"foo\": state[\"foo\"] + 1}\n\ndef node_3(state):\n    print(\"---Node 3---\")\n    return {\"foo\": state[\"foo\"] + 1}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_2\")\nbuilder.add_edge(\"node_1\", \"node_3\")\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\ntry:\n    graph.invoke({\"foo\": 1})\nexcept InvalidUpdateError as e:\n    print(f\"InvalidUpdateError occurred: {e}\")",
+   "notas": "Los tres nodes devuelven `{\"foo\": state[\"foo\"] + 1}`. Salida real:\n`---Node 1---` / `---Node 2---` / `---Node 3---` / `InvalidUpdateError occurred: At key 'foo': Can receive only one value per step. Use an Annotated key to handle multiple values.`\nLos dos nodes sí corren; el error salta al **aplicar** sus updates.",
+   "resaltar": [
+    25,
+    26
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Con reducer: Annotated[list, add]",
+   "contenido": "from operator import add\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    foo: Annotated[list[int], add]\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"foo\": [state[\"foo\"][-1] + 1]}\n\ndef node_2(state):\n    print(\"---Node 2---\")\n    return {\"foo\": [state[\"foo\"][-1] + 1]}\n\ndef node_3(state):\n    print(\"---Node 3---\")\n    return {\"foo\": [state[\"foo\"][-1] + 1]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_2\")\nbuilder.add_edge(\"node_1\", \"node_3\")\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"foo\": [1]}))\n\ntry:\n    graph.invoke({\"foo\": None})\nexcept TypeError as e:\n    print(f\"TypeError occurred: {e}\")",
+   "notas": "`operator.add` sobre listas concatena. Ahora `foo` es una lista y cada node devuelve una lista de un elemento. Salida real: `{'foo': [1, 2, 3, 3]}` y luego `TypeError occurred: can only concatenate list (not \"NoneType\") to list`.\n¿Por qué `3, 3`? `node_2` y `node_3` leen el mismo state `[1, 2]`, así que los dos calculan `2 + 1`. El `None` truena porque `add` intenta hacer `None + [2]`.",
+   "resaltar": [
+    7,
+    35
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un reducer propio",
+   "contenido": "from typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\ndef reduce_list(left: list | None, right: list | None) -> list:\n    if not left:\n        left = []\n    if not right:\n        right = []\n    return left + right\n\nclass CustomReducerState(TypedDict):\n    foo: Annotated[list[int], reduce_list]\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"foo\": [2]}\n\nbuilder = StateGraph(CustomReducerState)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"foo\": None}))",
+   "notas": "Un reducer es una función normal: recibe `(left, right)` = (valor actual, update) y devuelve el nuevo valor. Esta trata `None` como lista vacía. Salida real: `---Node 1---` / `{'foo': [2]}`. Mismo input `None`, sin error.",
+   "resaltar": [
+    5,
+    13
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "add_messages: el reducer de los chats",
+   "contenido": "`MessagesState` es un `TypedDict` con una sola key:\n\n```python\nmessages: Annotated[list[AnyMessage], add_messages]\n```\n\n`add_messages` es un reducer más listo que `add`: añade los mensajes nuevos, **reemplaza** el que traiga un `id` repetido y **borra** cuando recibe un `RemoveMessage`. Si un mensaje llega sin `id`, le asigna uno (un UUID).\n\nEs lo que `create_agent` del curso 01 usaba por dentro: cada vuelta del agente devolvía un mensaje y el historial crecía solo, sin que tú lo concatenaras."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "add_messages: añadir, reemplazar, borrar",
+   "contenido": "from langgraph.graph.message import add_messages\nfrom langchain_core.messages import AIMessage, HumanMessage, RemoveMessage\n\n# 1. Añadir\ninitial_messages = [AIMessage(content=\"Hello! How can I assist you?\", name=\"Model\", id=\"1\"),\n                    HumanMessage(content=\"I'm looking for information on marine biology.\", name=\"Lance\", id=\"2\")]\nnew_message = AIMessage(content=\"Sure. What specifically are you interested in?\", name=\"Model\", id=\"3\")\nfor m in add_messages(initial_messages, new_message):\n    print(m.id, type(m).__name__, m.content)\nprint()\n\n# 2. Reemplazar por id\nnew_message = HumanMessage(content=\"I'm looking for information on whales, specifically\", name=\"Lance\", id=\"2\")\nfor m in add_messages(initial_messages, new_message):\n    print(m.id, type(m).__name__, m.content)\nprint()\n\n# 3. Borrar con RemoveMessage\nmessages = [AIMessage(\"Hi.\", name=\"Bot\", id=\"1\"),\n            HumanMessage(\"Hi.\", name=\"Lance\", id=\"2\"),\n            AIMessage(\"So you said you were researching ocean mammals?\", name=\"Bot\", id=\"3\"),\n            HumanMessage(\"Yes, I know about whales. But what others should I learn about?\", name=\"Lance\", id=\"4\")]\ndelete_messages = [RemoveMessage(id=m.id) for m in messages[:-2]]\nprint(delete_messages)\nfor m in add_messages(messages, delete_messages):\n    print(m.id, type(m).__name__, m.content)",
+   "notas": "Tres usos del mismo reducer, llamado a mano. Salida real:\n1) Añadir: ids `1, 2, 3`.\n2) Reemplazar: siguen siendo `1, 2`; el id `2` ahora dice \"whales, specifically\".\n3) Borrar: `RemoveMessage(id='1')` y `id='2'` dejan solo `3` y `4`.\nUn node no puede hacer `del state[\"messages\"][0]`: solo puede devolver un update que pida el borrado.",
+   "resaltar": [
+    13,
+    23
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿En qué orden se concatenan?",
+   "contenido": "```python\nimport time\nfrom operator import add\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    foo: Annotated[list[str], add]\n\ndef node_1(state):\n    return {\"foo\": [\"1\"]}\n\ndef node_2(state):\n    time.sleep(0.3)  # node_2 tarda más\n    print(\"termina node_2\")\n    return {\"foo\": [\"2\"]}\n\ndef node_3(state):\n    print(\"termina node_3\")\n    return {\"foo\": [\"3\"]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_2\")\nbuilder.add_edge(\"node_1\", \"node_3\")\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"foo\": []}))\n```\n\n`node_2` tarda 0.3 s más, así que `node_3` termina primero. ¿Qué imprime y cómo queda `foo`?",
+   "respuesta": "Salida real: `termina node_3`, `termina node_2` y `{'foo': ['1', '2', '3']}`. El orden de la lista **no** depende de quién termina primero: LangGraph junta los updates del step y los aplica en un orden fijo (en esta versión, por nombre de node; cambiar el orden de `add_node` no lo altera). Es determinista, pero no diseñes un grafo que dependa de ese orden."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos nodes en paralelo, keys distintas",
+   "contenido": "```python\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    foo: int\n    bar: int\n\ndef node_1(state):\n    return {\"foo\": state[\"foo\"] + 1}\n\ndef node_2(state):\n    return {\"foo\": state[\"foo\"] + 1}\n\ndef node_3(state):\n    return {\"bar\": state[\"foo\"] * 10}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_2\")\nbuilder.add_edge(\"node_1\", \"node_3\")\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"foo\": 1, \"bar\": 0}))\n```\n\nSin ningún reducer. ¿Truena con `InvalidUpdateError`?",
+   "respuesta": "No. Salida real: `{'foo': 3, 'bar': 20}`. El conflicto es **por key**: en el step paralelo `node_2` solo escribe `foo` y `node_3` solo escribe `bar`, así que cada canal recibe un solo valor. `node_3` leyó `foo = 2` (el state después de `node_1`), por eso `bar = 20`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Borrar un mensaje que no existe",
+   "contenido": "```python\nfrom langgraph.graph.message import add_messages\nfrom langchain_core.messages import HumanMessage, RemoveMessage\n\nadd_messages([HumanMessage(\"x\", id=\"1\")], [RemoveMessage(id=\"99\")])\n```\n\n¿Qué pasa?",
+   "respuesta": "Truena: `ValueError: Attempting to delete a message with an ID that doesn't exist ('99')`. `RemoveMessage` no es un mensaje que se guarde: es una instrucción para el reducer, y el reducer exige que el id exista. Por eso, para borrar, primero lees los ids del state actual."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El node devuelve un update; el **reducer** de cada key decide el nuevo valor: `reducer(actual, update)`.\n- Sin reducer se sobrescribe. Dos nodes del mismo step escribiendo la misma key sin reducer → `InvalidUpdateError`.\n- `Annotated[list, add]` concatena; un reducer propio es una función `(left, right) -> nuevo`.\n- `add_messages` añade, reemplaza por `id` y borra con `RemoveMessage`. Es el reducer de `MessagesState` y el que hacía crecer el historial en `create_agent` (curso 01)."
+  }
+ ],
+ "fuentes": [
+  "module-2/state-reducers.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "`node_2` y `node_3` salen de `node_1` y los dos devuelven `foo` (sin reducer). ¿Por qué hay `InvalidUpdateError`, si en cadena no lo habría?",
+   "reverso": "En paralelo corren en el mismo step: llegan dos valores para `foo` y no hay regla para elegir. En cadena son steps distintos y el segundo simplemente sobrescribe."
+  },
+  {
+   "frente": "Con `foo: Annotated[list, add]` y `foo = [1, 2]`, dos nodes paralelos devuelven `[foo[-1] + 1]`. ¿Cómo queda `foo`?",
+   "reverso": "`[1, 2, 3, 3]`. Los dos leen el mismo state del step anterior, así que los dos calculan 3; el reducer concatena ambos updates."
+  },
+  {
+   "frente": "¿Qué recibe y qué devuelve un reducer?",
+   "reverso": "Recibe `(valor_actual, update)` y devuelve el nuevo valor de la key. El node solo propone el update; el reducer decide."
+  },
+  {
+   "frente": "Invocas con `{\"foo\": None}` y `foo` usa `operator.add`. ¿Qué pasa y cómo lo arreglas?",
+   "reverso": "`TypeError`: `add` intenta `None + lista`. Lo arreglas con un reducer propio que trate `None` como `[]`."
+  },
+  {
+   "frente": "Si un node no puede modificar el state, ¿cómo borra mensajes viejos?",
+   "reverso": "Devuelve `{\"messages\": [RemoveMessage(id=...)]}`. `add_messages` interpreta cada `RemoveMessage` como orden de borrar ese id (y truena si el id no existe)."
+  },
+  {
+   "frente": "Dos nodes paralelos concatenan en la misma lista. ¿Gana en orden el que termina primero?",
+   "reverso": "No. LangGraph aplica los updates del step en un orden fijo, no por tiempo. Es determinista, pero no conviene depender de ese orden."
+  }
+ ]
+}

@@ -1,0 +1,234 @@
+{
+ "nombre": "04 Building Reliable Agents with LangSmith",
+ "siguiente": "0.A",
+ "modulos": [
+  {
+   "n": 0,
+   "nombre": "Arranque"
+  },
+  {
+   "n": 1,
+   "nombre": "Observación"
+  },
+  {
+   "n": 2,
+   "nombre": "Evaluación"
+  },
+  {
+   "n": 3,
+   "nombre": "Hacia producción"
+  }
+ ],
+ "misiones": [
+  {
+   "id": "0.A",
+   "modulo": 0,
+   "titulo": "El ciclo de vida de un agente y setup",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Course introduction",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/lessons/72897077-course-introduction",
+     "min": 2
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Intro the agent development lifecycle",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/73116761-intro-the-agent-development-lifecycle"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Getting set up python video",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/lessons/72872819-getting-set-up-python-video",
+     "min": 3
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Getting set up python text",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72899245-getting-set-up-python-text"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Glossary and references",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72994688-glossary-and-references"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.A",
+   "modulo": 1,
+   "titulo": "Observability y tracing",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 1 introduction",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/lessons/72897444-module-1-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 observability",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72503293-lesson-1-observability"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 tracing with langsmith",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72509388-lesson-2-tracing-with-langsmith"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.B",
+   "modulo": 1,
+   "titulo": "Analizar tu agente",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 analyzing your agent",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72643953-lesson-3-analyzing-your-agent"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.A",
+   "modulo": 2,
+   "titulo": "Evaluar agentes y crear datasets",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 2 introduction",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/lessons/72897948-module-2-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 evaluating agents",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72645011-lesson-1-evaluating-agents"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 creating datasets",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72804210-lesson-2-creating-datasets"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.B",
+   "modulo": 2,
+   "titulo": "Experimentos y evals de código",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 running experiments",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/73145413-lesson-3-running-experiments"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 4 eval 1 code based eval",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72662318-lesson-4-eval-1-code-based-eval"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.C",
+   "modulo": 2,
+   "titulo": "LLM-as-judge y evals pairwise",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 5 eval 2 llm as judge",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72670191-lesson-5-eval-2-llm-as-judge"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 6 eval 3 pairwise evaluations",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72804215-lesson-6-eval-3-pairwise-evaluations"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.A",
+   "modulo": 3,
+   "titulo": "Hacia producción e Insights Agent",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 3 introduction",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/lessons/72898220-module-3-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 moving towards production",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72779581-lesson-1-moving-towards-production"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 insights agent",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72804218-lesson-2-insights-agent"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.B",
+   "modulo": 3,
+   "titulo": "Online evals y automations",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 online evals",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72804233-lesson-3-online-evals"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 4 automations",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/multimedia/72804231-lesson-4-automations"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Conclusion",
+     "url": "https://academy.langchain.com/courses/take/building-reliable-agents/lessons/72898741-conclusion",
+     "min": 1
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  }
+ ],
+ "proyecto": null,
+ "hilos": [],
+ "sesiones": [],
+ "hojas": {},
+ "banco": [],
+ "examenes": []
+}

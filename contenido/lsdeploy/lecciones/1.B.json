@@ -1,0 +1,127 @@
+{
+ "mision_id": "1.B",
+ "titulo": "Deploy y usar el tutor",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Ya tienes el grafo (`agent.py`). Para que LangSmith lo convierta en una deployment tiene que saber tres cosas:\n\n1. **Qué código** correr (qué variable es el grafo).\n2. **Qué dependencias** instalar en la imagen.\n3. **Qué variables de entorno** (keys) necesita en runtime.\n\nTodo eso va en un solo archivo, `langgraph.json`. Además hay una trampa con las keys: no todo lo que está en tu `.env` llega a la nube."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El manifiesto: deep_tutor/langgraph.json",
+   "contenido": "{\n  \"dependencies\": [\".\"],\n  \"graphs\": {\n    \"tutor\": \"./agent/agent.py:graph\"\n  },\n  \"http\": {\n    \"app\": \"./ui/app.py:app\"\n  },\n  \"env\": \"../.env\"\n}",
+   "notas": "Campo por campo:\n- `graphs`: id del grafo → `archivo:variable`. `\"tutor\"` es el `graph_id` que usarás al crear assistants.\n- `dependencies`: dónde está el `pyproject.toml` de la imagen (`\".\"` = esta carpeta).\n- `http.app`: una app FastAPI que se monta **junto** a la API del servidor; así se sirve la UI (2.B).\n- `env`: el `.env` que se carga; aquí `../.env`, el de `python/`, compartido por todo el curso.",
+   "resaltar": [
+    4,
+    7,
+    9
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: la CLI valida el manifiesto",
+   "contenido": "import json, pathlib\nfrom langgraph_cli.config import validate_config\np = pathlib.Path(r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/deep_tutor/langgraph.json\")\ncfg = validate_config(json.loads(p.read_text()))\nprint({k: cfg[k] for k in (\"graphs\", \"dependencies\", \"http\", \"env\")})\nprint(\"python_version por defecto:\", cfg.get(\"python_version\"))",
+   "notas": "`validate_config` es lo que usa `langgraph-cli` antes de construir la imagen. Lo corrí con el `.venv` de LangGraph (langgraph-cli 0.4.40). Salida real:\n`{'graphs': {'tutor': './agent/agent.py:graph'}, 'dependencies': ['.'], 'http': {'app': './ui/app.py:app'}, 'env': '../.env'}`\n`python_version por defecto: 3.11`\nLo que no pones toma un valor por defecto (Python 3.11, checkpointer en Postgres, etc.).",
+   "resaltar": [
+    4
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El resto del esquema",
+   "contenido": "`langgraph.json` puede configurar mucho más, casi siempre con buenos valores por defecto:\n\n- **Imagen:** `python_version`, `base_image`, `image_distro`, `dockerfile_lines`.\n- **Checkpointer:** `backend` (Postgres por defecto) y `ttl` para borrar checkpoints viejos.\n- **Store:** `index` (búsqueda semántica con embeddings) y `ttl`.\n- **API server:** `http.cors`, `http.disable_*` (apagar rutas integradas), `auth` (tu handler, módulo 5).\n\nSi lo despliegas self-hosted, lo ves en el `Dockerfile` que genera la CLI (`langgraph dockerfile`): trae `ENV LANGSERVE_GRAPHS='{\"simple_graph\": ..., \"router\": ..., \"agent\": ...}'`. Eso lo generó la CLI a partir del campo `graphs` de tu `langgraph.json`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "`langgraph dev` contra `langgraph deploy`",
+   "contenido": "| | `langgraph dev` | `langgraph deploy` |\n|---|---|---|\n| Dónde corre | Tu máquina, puerto 2024 | La nube de LangSmith |\n| Persistencia | En memoria (carpeta `.langgraph_api/`) | Postgres + Redis administrados |\n| Plan | Developer (gratis) | Plus o superior |\n\nSalida del material oficial de `langgraph dev` dentro de `deep_tutor/` (no la corrí):\n\n```text\n- API: http://localhost:2024\n- Studio UI: https://smith.langchain.com/studio?baseUrl=http://localhost:2024\n- API Docs: http://localhost:2024/docs\ninfo: Registering graph with id 'tutor'\ninfo: Loading HTTP app from ./ui/app.py:app\n```\n\nLas dos líneas finales confirman `graphs` y `http.app`. La pestaña **Deployments** de LangSmith muestra el estado del build, la URL y el botón para abrir Studio contra la nube."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Salida oficial de `langgraph deploy`",
+   "contenido": "Note: 'langgraph deploy' is in beta. Expect frequent updates and improvements.\n\n   Skipping reserved env var: LANGSMITH_API_KEY\n   Skipping reserved env var: LANGSMITH_PROJECT\nDocker is installed but not running.\nStart Docker and try again.\nUsing remote build instead.\n\n1. Looking up deployment 'tutor'\n   Found existing deployment (ID: 68e1d54f-ddb4-4a1d-83ba-3f02eb23f460)\n2. Creating source archive\n   Archive created (2.0 MB)\n3. Requesting upload URL\n4. Uploading source\n   Uploading (2.0 MB)... 100%\n5. Triggering remote build\n   View status: https://smith.langchain.com/...\n   QUEUED... (9s)\n   AWAITING_BUILD... (21s)\n   BUILDING... (2m 17s)\n   AWAITING_DEPLOY... (2m 35s)\n   DEPLOYING... (3m 28s)\n   Deployment successful!\n   URL: https://tutor-<hash>.us.langgraph.app",
+   "notas": "Salida del material oficial (requiere plan Plus; no la corrí, porque crea cobros).\n- Dos variables **reservadas** se saltan: LangSmith las administra solo.\n- Docker estaba apagado: el build fue remoto.\n- `Found existing deployment`: se volvió a desplegar sobre la misma deployment; eso crea una **revisión nueva**, y la base de datos (threads, Store, assistants) se conserva.\n- La URL termina en `.us.langgraph.app`: la deployment vive en la región US.",
+   "resaltar": [
+    3,
+    7,
+    10
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: qué variables suben como secrets",
+   "contenido": "from pathlib import Path\nfrom dotenv import dotenv_values\nfrom langgraph_cli.deploy import _secrets_from_env   # lo que usa `langgraph deploy`\n\n# Un .env de mentira, con keys falsas\nPath(\"demo.env\").write_text(\n    \"LANGSMITH_API_KEY=lsv2_FALSA_123\\n\"\n    \"LANGSMITH_PROJECT=lca-deployment\\n\"\n    \"DEEP_TUTOR_API_KEY=${LANGSMITH_API_KEY}\\n\"\n    \"ANTHROPIC_API_KEY=sk-ant-FALSA\\n\"\n)\nenv_vars = dotenv_values(\"demo.env\")\nprint(\"DEEP_TUTOR_API_KEY =\", env_vars[\"DEEP_TUTOR_API_KEY\"])\nsecrets = _secrets_from_env(env_vars)\nprint(\"Se sube como secret:\", [s[\"name\"] for s in secrets])",
+   "notas": "`_secrets_from_env` es la función interna que usa `langgraph deploy` para convertir tu `.env` en *secrets* de la deployment (langgraph-cli 0.4.40). La corrí con un `.env` de mentira y keys falsas. Salida real:\n`DEEP_TUTOR_API_KEY = lsv2_FALSA_123` (el `${...}` se expande al leer el archivo)\n`Skipping reserved env var: LANGSMITH_API_KEY` · `Skipping reserved env var: LANGSMITH_PROJECT`\n`Se sube como secret: ['DEEP_TUTOR_API_KEY', 'ANTHROPIC_API_KEY']`",
+   "resaltar": [
+    9,
+    14
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué existe DEEP_TUTOR_API_KEY",
+   "contenido": "La UI del tutor corre **dentro** de la deployment y, con el SDK, llama a la API de esa misma deployment (crear threads, escribir en el Store). Esa llamada necesita una LangSmith API key.\n\nPero `LANGSMITH_API_KEY` es reservada: la CLI no la sube y en runtime nada la reemplaza. La solución: subir el mismo valor con un nombre **no reservado**, `DEEP_TUTOR_API_KEY`, y que el código lea ese.\n\nReglas de secretos que salen en el examen:\n- Las keys van en el `.env` o en la UI de la deployment, **nunca en el repo**.\n- Cambiar una env var desde la UI crea una **revisión nueva** sin reconstruir tu código.\n- El SDK manda la key en el header `x-api-key`: el mismo header que valida una custom auth por `x-api-key` en un Agent Server self-hosted."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Usar el tutor",
+   "contenido": "La UI se sirve desde la misma deployment (por `http.app`): abres la URL y ya está. En local, `http://localhost:2024`.\n\n1. **Register:** nombre, apellido, email y metas. Tu perfil se guarda en el **Store** con un namespace derivado del email (`jane@example.com` → `jane@example_com`; puntos por guiones bajos).\n2. Se crean **un assistant y un thread por módulo** (seis de cada uno), y sus ids se guardan en el `localStorage` del navegador.\n3. **Log in** con el email recupera tus sesiones.\n4. En el primer mensaje, el agente lee `/skills/module-1/SKILL.md`; para datos, `information.md`.\n\nEn 2.B ves el código que hace todo esto."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: rotar una key",
+   "contenido": "Rotaste tu `ANTHROPIC_API_KEY` y la deployment en la nube tiene que usar la nueva. ¿Cuál es la forma más directa sin perder datos?\n\n- **A)** Borrar la deployment y crearla otra vez con el `.env` nuevo.\n- **B)** Cambiar la variable en la página de la deployment en LangSmith, lo que crea una revisión nueva.\n- **C)** Hacer commit del `.env` nuevo al repo para que el build lo tome.\n- **D)** Editar el `.env` local y reiniciar `langgraph dev`.",
+   "respuesta": "**B.** Las env vars de la deployment se cambian desde la UI y eso crea una nueva revisión; la base de datos (threads, Store, assistants) se conserva. También sirve `langgraph deploy` con el `.env` nuevo, pero reconstruye la imagen.\nA borra la base de datos con todo. C es justo lo que nunca se hace: keys en el repo. D solo cambia tu servidor local."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué variables suben?",
+   "contenido": "Mismo mecanismo del paso 7, con otro `.env`:\n\n```python\nfrom pathlib import Path\nfrom dotenv import dotenv_values\nfrom langgraph_cli.deploy import _secrets_from_env\n\nPath(\"demo2.env\").write_text(\n    \"ANTHROPIC_API_KEY=sk-ant-FALSA\\n\"\n    \"POSTGRES_URI=postgres://yo:clave@mi-db:5432/app\\n\"\n    \"LANGCHAIN_PROJECT=otro-proyecto\\n\"\n    \"MODO_DEBUG=1\\n\"\n    \"TAVILY_API_KEY=\\n\"\n)\nsecrets = _secrets_from_env(dotenv_values(\"demo2.env\"))\nprint(\"Se sube como secret:\", [s[\"name\"] for s in secrets])\n```\n\n¿Qué lista imprime?",
+   "respuesta": "Salida real:\n`Skipping reserved env var: POSTGRES_URI` · `Skipping reserved env var: LANGCHAIN_PROJECT`\n`Se sube como secret: ['ANTHROPIC_API_KEY', 'MODO_DEBUG']`\n`POSTGRES_URI` y `LANGCHAIN_PROJECT` son reservadas (la base de datos y el proyecto de tracing los administra LangSmith). `TAVILY_API_KEY` está vacía, y las vacías no se suben. Tus variables propias (`MODO_DEBUG`) sí viajan."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Funciona en local, falla en la nube",
+   "contenido": "En la UI desplegada creas el cliente con `get_client(url=..., api_key=os.environ.get(\"LANGSMITH_API_KEY\", \"\"))`. Con `langgraph dev` todo funciona. En la nube, las llamadas de la UI al agente fallan por falta de autenticación. ¿Por qué?",
+   "respuesta": "`LANGSMITH_API_KEY` es reservada: `langgraph deploy` la salta (`Skipping reserved env var`) y en runtime la variable no existe, así que el cliente manda una key vacía. En local sí estaba porque `langgraph dev` carga todo el `.env`.\nEl arreglo del curso: leer `DEEP_TUTOR_API_KEY`, que lleva el mismo valor con un nombre no reservado."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `langgraph.json` es el manifiesto: `graphs` (código), `dependencies` (paquetes), `env` (variables) y `http.app` (rutas propias).\n- `langgraph dev` corre lo mismo en local y en memoria (gratis); `langgraph deploy` construye la imagen y la sube (Plus).\n- Las variables reservadas (`LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `POSTGRES_URI`...) no viajan; las vacías tampoco. Por eso existe el alias `DEEP_TUTOR_API_KEY`.\n- Cambiar una env var en la UI crea una revisión nueva; la base de datos se conserva.\n- Es el mismo `langgraph-api` que se puede correr self-hosted, solo que aquí lo administra LangSmith.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *CLI* (sección \"Configuration file\") y \"Deploy to cloud\"."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m1/m1.2-deploy.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m1/m1.3-use-the-tutor.html",
+  "lca-deployment/thinkific/src/m1/m1.2-deploy.md",
+  "lca-deployment/thinkific/src/m1/m1.3-use-the-tutor.md",
+  "lca-deployment/python/deep_tutor/langgraph.json",
+  "lca-deployment/python/deep_tutor/pyproject.toml",
+  "lca-deployment/python/.env.example"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué cuatro cosas declara el `langgraph.json` del tutor?",
+   "reverso": "`graphs` (qué código), `dependencies` (qué paquetes instalar), `env` (qué variables) y `http.app` (las rutas propias de la UI)."
+  },
+  {
+   "frente": "¿Por qué `LANGSMITH_API_KEY` de tu `.env` no llega a la deployment?",
+   "reverso": "Es una variable reservada: LangSmith la administra y la CLI la salta (`Skipping reserved env var`). Si tu código la necesita, súbela con otro nombre."
+  },
+  {
+   "frente": "Cambias una env var en la UI de la deployment. ¿Se pierden los threads?",
+   "reverso": "No. Se crea una revisión nueva; la base de datos (threads, Store, assistants) sobrevive a las revisiones. Solo se pierde si borras la deployment."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre `langgraph dev` y `langgraph deploy`?",
+   "reverso": "`dev`: el Agent Server en tu máquina, en memoria, gratis. `deploy`: construye la imagen y la sube a LangSmith, con Postgres y Redis; requiere Plus."
+  },
+  {
+   "frente": "¿En qué header manda el SDK la LangSmith API key?",
+   "reverso": "En `x-api-key`. Es el mismo header que validaría una custom auth por `x-api-key` en un Agent Server self-hosted."
+  }
+ ]
+}

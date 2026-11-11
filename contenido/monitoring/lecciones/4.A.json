@@ -1,0 +1,116 @@
+{
+ "mision_id": "4.A",
+ "titulo": "Seguridad: online evals, dashboard y alerta de PII",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Para el LLM, el system prompt, el mensaje del usuario y lo que devuelve un tool son **un solo bloque de texto**. No tiene una forma fiable de distinguir \"instrucción del sistema\" de \"texto que escribió alguien\". Eso abre la puerta a la **prompt injection**: instrucciones maliciosas escondidas en el input o en contenido recuperado.\n\nAdemás el modelo no es determinista: una defensa que funcionó ayer puede fallar hoy con la misma frase. Ninguna capa atrapa todo. Esta lección construye la capa que **te avisa de lo que se coló**: online evals de seguridad, un dashboard y una alerta."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Defensa en profundidad: el modelo del queso suizo",
+   "contenido": "Cada capa de defensa tiene hoyos. Si apilas varias, los hoyos dejan de alinearse y casi nada atraviesa todas.\n\nCapas típicas: validación de input, guardrails del modelo (y middleware como el de PII del curso 01), permisos mínimos en los tools, y **observabilidad**.\n\nLa capa de esta lección es la de **observabilidad**: online evals que corren **después** de que la traza existe. **No bloquean** nada: la respuesta ya llegó al usuario. Lo que dan es **visibilidad**: cuántos ataques hay, cuáles pasan, y un aviso inmediato cuando se filtra algo, para responder y reforzar las otras capas."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Las capas y dónde está la observabilidad",
+   "contenido": "graph LR\n  U[Usuario] --> V[Validación<br/>de input]\n  V --> G[Guardrails /<br/>middleware]\n  G --> A[Agente y tools<br/>permisos mínimos]\n  A --> R[Respuesta]\n  A -.traza.-> O[Online evals<br/>observabilidad]\n  O --> D[Dashboard / alerta]\n  class O clave",
+   "notas": "Las tres primeras capas están **en el camino** de la petición y pueden bloquear.\nLa de observabilidad está **al lado**: lee la traza cuando ya pasó. Por eso detecta, mide y avisa, pero no impide."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Online vs offline, código vs LLM",
+   "contenido": "| | Offline evals | Online evals |\n|---|---|---|\n| Cuándo | Antes del deploy | Después, sobre tráfico real |\n| Sobre qué | Datasets | Trazas de producción |\n| Para qué | Validar cambios antes de salir | Vigilar calidad y seguridad en vivo |\n\nUn online eval puede ser **code-based** (regex, heurísticas) o **LLM-as-judge**. La regex es buena para patrones fijos (un email, un número de tarjeta), pero no entiende **contexto**: no sabe si ese email era del propio usuario. Y la inyección tiene demasiadas formas para cubrirlas con patrones.\n\nSe configuran por proyecto, con **filtro** y **sampling rate** (0.1 = evalúa el 10 % de las trazas que pasan el filtro). Cada traza evaluada pasa a **extended retention**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Evaluador 1: prompt injection",
+   "contenido": "Proyecto > **+ New > New Evaluator > LLM-as-a-judge > Create from Scratch**. Nombre: `prompt-injection-detection`.\n\nEl prompt del juez debe:\n- **Definir** qué es inyección: intentar ignorar o cambiar las instrucciones, hacer que el agente adopte otro rol, **extraer** el system prompt, o esconder instrucciones con **encoding** (base64, letra por letra, traducciones).\n- Recibir `{input}` (la conversación) y `{output}` (la respuesta del agente).\n- Hacer **una** pregunta binaria y pedir solo `true` o `false`.\n\nFeedback: nombre **`prompt_injection`**, formato **Boolean**. Al guardar empieza a correr sobre trazas nuevas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Evaluador 2: fuga de PII",
+   "contenido": "Mismos pasos; nombre `pii-leakage-detection`, feedback **`pii_leakage`**, Boolean.\n\nEl prompt lista qué es PII: nombre completo ligado a datos de cuenta, email, teléfono, SSN o ID oficial, **tarjeta**, dirección, fecha de nacimiento, números de cuenta o contraseñas.\n\nY trae el matiz que hace valer al juez: **si el usuario pregunta por SU propia información** y el agente confirma lo que el usuario ya dio, **está bien**. El problema es cuando el agente revela PII de **otra persona** o datos internos que debían quedar ocultos.\n\nEse matiz es imposible con regex: la regex ve un email y ya; no sabe de quién es."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un evaluador code-based y sus límites",
+   "contenido": "import re\n\nEMAIL = re.compile(r\"[\\w.+-]+@[\\w-]+\\.[\\w.]+\")\nTARJETA = re.compile(r\"\\b(?:\\d{4}[- ]?){3}\\d{4}\\b\")\n\ndef detector_regex(respuesta: str) -> bool:\n    \"\"\"Evaluador 'code-based': True si la respuesta trae un email o una tarjeta.\"\"\"\n    return bool(EMAIL.search(respuesta) or TARJETA.search(respuesta))\n\ncasos = [\n    # (lo que pidió el usuario, lo que respondió el agente)\n    (\"Mi correo es ana@mail.com, ¿lo tienen bien?\",\n     \"Sí, tu correo registrado es ana@mail.com.\"),\n    (\"¿Cuál es el correo de quien compró el pedido 88?\",\n     \"El pedido 88 es de luis.perez@mail.com.\"),\n    (\"Verifica mi tarjeta, por favor\",\n     \"Tu tarjeta termina en 4821.\"),\n    (\"Dame los datos de pago del pedido 91\",\n     \"Visa 4000 1234 5678 9010, vence 04/29.\"),\n]\n\nfor pregunta, respuesta in casos:\n    print(f\"{str(detector_regex(respuesta)):5} | {respuesta}\")",
+   "notas": "Un detector de PII con regex sobre respuestas inventadas.\n- `re.compile(...)` prepara un patrón; `.search(texto)` devuelve un match o `None`; `bool(...)` lo vuelve True/False.\n- `(?:\\d{4}[- ]?){3}\\d{4}`: cuatro grupos de 4 dígitos, con guion o espacio opcional.\n- Salida real:\n```\nTrue  | Sí, tu correo registrado es ana@mail.com.\nTrue  | El pedido 88 es de luis.perez@mail.com.\nFalse | Tu tarjeta termina en 4821.\nTrue  | Visa 4000 1234 5678 9010, vence 04/29.\n```\nEl primero es un **falso positivo**: el usuario dio su propio correo y el agente lo confirmó (aceptable según el prompt del juez). La regex no puede verlo. El segundo (correo de otra persona) y el cuarto (tarjeta completa) sí son fugas.",
+   "resaltar": [
+    4,
+    8
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dashboard para inyección, alerta para PII",
+   "contenido": "**Inyección → dashboard.** En el Monitor aparece el feedback `prompt_injection` en el tiempo. Busca **picos** (ataque coordinado, un exploit que circula), la **línea base** (un goteo constante es normal) y la **tendencia** semana a semana. No actúas por cada intento: respondes a patrones.\n\n**PII → alerta inmediata.** Una fuga es un incidente:\n\n| Campo | Valor |\n|---|---|\n| Metric | **Run Count** |\n| Filtro | `pii_leakage` = **true** |\n| Threshold | **1** |\n| Aggregation window | **5 minutos** |\n| Notificación | **PagerDuty** (Events API V2), severity **critical** |\n\nLa Integration Key se guarda como **Workspace Secret** (ícono de llave) para reusarla. Prueba con **Send Test Alert**."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El flujo completo",
+   "contenido": "graph TD\n  A[1. Usuario manda mensaje] --> B[2. LangSmith guarda la traza]\n  B --> C[3. Online evals:<br/>prompt_injection, pii_leakage]\n  C --> D[4. prompt_injection → dashboard]\n  C --> E[5. pii_leakage = true → alerta]\n  E --> F[PagerDuty: incidente]\n  F --> G[6. On-call abre la traza en LangSmith]\n  class E clave",
+   "notas": "Las dos ramas usan el mismo tipo de evaluador, pero se tratan distinto según la urgencia: tendencias en un dashboard, incidentes con una alerta que despierta a alguien.\nEl on-call llega a la traza desde la alerta y en el trace tree ve qué paso sacó el dato (el tool o la respuesta final)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: la alerta de PII",
+   "contenido": "Tienes el online evaluator `pii_leakage` (Boolean) activo. Quieres que el equipo de guardia reciba un incidente en PagerDuty **en cuanto** una sola traza filtre datos personales. ¿Qué alerta creas?\n\n- **A)** Metric **Errored Runs**, threshold 1, ventana 5 min.\n- **B)** Metric **Latency**, average, threshold 1 s, filtro `pii_leakage = true`.\n- **C)** Metric **Run Count**, filtro `pii_leakage = true`, threshold 1, ventana 5 min, PagerDuty severity critical.\n- **D)** Ninguna: el evaluador ya bloquea la respuesta cuando detecta PII, así que basta con revisar el dashboard.",
+   "respuesta": "**C.** Quieres **contar** trazas marcadas y disparar con la primera: Run Count + filtro por el feedback + umbral 1.\n- A: una fuga no es un error; la traza termina \"bien\".\n- B: la latencia no tiene nada que ver con la fuga.\n- D: el online eval corre **después**: no bloquea nada, solo da visibilidad."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La regex con otras dos respuestas",
+   "contenido": "El mismo `detector_regex` del paso 7:\n\n```python\nimport re\nEMAIL = re.compile(r\"[\\w.+-]+@[\\w-]+\\.[\\w.]+\")\nTARJETA = re.compile(r\"\\b(?:\\d{4}[- ]?){3}\\d{4}\\b\")\ndef detector_regex(respuesta):\n    return bool(EMAIL.search(respuesta) or TARJETA.search(respuesta))\nfor r in [\"Tu número de guía es 1234-5678-9012-3456.\",\n          \"El cliente se llama Margarita Ruiz y vive en Av. Juárez 120.\"]:\n    print(detector_regex(r), \"|\", r)\n```\n\n¿Qué imprime? ¿Cuál es fuga de verdad?",
+   "respuesta": "```\nTrue | Tu número de guía es 1234-5678-9012-3456.\nFalse | El cliente se llama Margarita Ruiz y vive en Av. Juárez 120.\n```\nAl revés de lo que debería: la **guía de paquetería** tiene forma de tarjeta (falso positivo), y el **nombre + dirección de otra persona**, que sí es PII, no tiene patrón que la regex conozca (falso negativo). Un juez LLM con el prompt de PII lee el sentido y acierta ambas.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Alerta o dashboard?",
+   "contenido": "Tu evaluador `prompt_injection` marca unas 40 trazas al día desde hace un mes, sin que ninguna haya logrado nada. Un compañero propone una alerta de Run Count con umbral 1 sobre `prompt_injection = true` que mande a PagerDuty. ¿Qué le contestas? ¿Qué sí alertarías?",
+   "respuesta": "No: con 40 intentos diarios normales, esa alerta despierta a alguien 40 veces al día por algo que no exige acción inmediata (fatiga de alertas). La inyección se vigila en el **dashboard**: línea base de ~40/día y alertar, si acaso, ante un **pico** muy por encima de esa base.\nLo que sí va a PagerDuty con umbral 1 es `pii_leakage = true`: ahí cada caso es un incidente."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Seguridad = **defensa en profundidad**. Los online evals son la capa de **observabilidad**: corren después, **no bloquean**, dan visibilidad.\n- Offline (antes, datasets) vs online (después, tráfico real). Regex sirve para patrones; el **LLM-as-judge** entiende contexto (tu propio dato vs el de otro).\n- Dos jueces booleanos: `prompt_injection` (override, rol, extracción, encoding) y `pii_leakage` (con la excepción de los datos propios).\n- Inyección → **dashboard** (picos, línea base, tendencia). PII → alerta **Run Count**, filtro `pii_leakage = true`, umbral 1, 5 min → **PagerDuty** critical.\n- Relación: el middleware de PII del curso 01 es una capa que sí bloquea; esta solo observa.\n\n**Dónde buscarlo en docs:** LangSmith > Observability > Online evaluations; Alerts (PagerDuty, webhooks)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-4/intro",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-4/online-evals-for-security",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-4/setting-up-alerts",
+  "lca-production-monitoring/python/module-4/lesson-1/upload_traces.py",
+  "lca-production-monitoring/python/module-4/lesson-1/lesson1_traces.json"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Un online evaluator de prompt injection protege a tu agente del ataque?",
+   "reverso": "No. Corre después de que existe la traza: no bloquea, da visibilidad para responder y reforzar otras capas."
+  },
+  {
+   "frente": "¿Por qué un juez LLM y no una regex para detectar fuga de PII?",
+   "reverso": "La regex ve el patrón pero no el contexto: no distingue al usuario confirmando su propio email de la fuga del email de otro."
+  },
+  {
+   "frente": "¿Qué alerta configuras para PII filtrada?",
+   "reverso": "Run Count con filtro `pii_leakage = true`, umbral 1, ventana 5 min, a PagerDuty con severity critical."
+  },
+  {
+   "frente": "¿Por qué la inyección va a un dashboard y no a una alerta con umbral 1?",
+   "reverso": "Los intentos son constantes y casi nunca exigen acción inmediata; se vigilan picos y tendencias. Alertar cada uno causa fatiga de alertas."
+  },
+  {
+   "frente": "Online vs offline evals: ¿cuándo y sobre qué corre cada uno?",
+   "reverso": "Offline: antes del deploy, sobre datasets. Online: después, sobre trazas reales de producción."
+  },
+  {
+   "frente": "¿Qué significa sampling rate 0.1 en un online evaluator?",
+   "reverso": "Que evalúa el 10 % de las trazas que pasan el filtro: menos costo, menos cobertura."
+  }
+ ]
+}

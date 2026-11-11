@@ -1,0 +1,137 @@
+{
+ "mision_id": "4.A",
+ "titulo": "Varias ramas a la vez",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora tus grafos son una fila: un node detrás de otro. Pero muchas tareas no dependen entre sí. Buscar en la web y buscar en Wikipedia son independientes: si las corres en fila, esperas la **suma** de los dos tiempos.\n\nCon **fan-out** un node abre varias ramas, y con **fan-in** las ramas se juntan en otro node. Para usarlo bien necesitas dos respuestas:\n\n1. ¿Qué pasa cuando dos ramas escriben la misma key al mismo tiempo?\n2. ¿Cuándo ve una rama lo que escribió la otra?"
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Punto de partida: una fila sin reducer",
+   "contenido": "from typing import Any\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    # Sin reducer: cada update sobrescribe la key\n    state: list[str]\n\nclass ReturnNodeValue:\n    def __init__(self, node_secret: str):\n        self._value = node_secret\n\n    def __call__(self, state: State) -> Any:\n        print(f\"Adding {self._value} to {state['state']}\")\n        return {\"state\": [self._value]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"a\", ReturnNodeValue(\"I'm A\"))\nbuilder.add_node(\"b\", ReturnNodeValue(\"I'm B\"))\nbuilder.add_node(\"c\", ReturnNodeValue(\"I'm C\"))\nbuilder.add_node(\"d\", ReturnNodeValue(\"I'm D\"))\n\nbuilder.add_edge(START, \"a\")\nbuilder.add_edge(\"a\", \"b\")\nbuilder.add_edge(\"b\", \"c\")\nbuilder.add_edge(\"c\", \"d\")\nbuilder.add_edge(\"d\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"state\": []}))",
+   "notas": "`ReturnNodeValue` es una clase con `__call__`: cada instancia es un node que devuelve su texto.\nLa key `state` no tiene reducer, así que cada update **sobrescribe**.\nSalida real:\n```\nAdding I'm A to []\nAdding I'm B to [\"I'm A\"]\nAdding I'm C to [\"I'm B\"]\nAdding I'm D to [\"I'm C\"]\n{'state': [\"I'm D\"]}\n```",
+   "resaltar": [
+    7,
+    15
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Fan-out y fan-in",
+   "contenido": "graph TD\n  S([START]) --> a\n  a --> b\n  a --> c\n  b --> d\n  c --> d\n  d --> E([END])\n  class a clave\n  class d clave",
+   "notas": "Fan-out: de `a` salen dos edges (`a → b`, `a → c`). Fan-in: `b` y `c` llegan los dos a `d`.\n`b` y `c` corren a la vez. La pregunta es qué pasa cuando los dos escriben la key `state`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Sin reducer, el fan-out truena",
+   "contenido": "from typing import Any\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.errors import InvalidUpdateError\n\nclass State(TypedDict):\n    state: list[str]\n\nclass ReturnNodeValue:\n    def __init__(self, node_secret: str):\n        self._value = node_secret\n\n    def __call__(self, state: State) -> Any:\n        print(f\"Adding {self._value} to {state['state']}\")\n        return {\"state\": [self._value]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"a\", ReturnNodeValue(\"I'm A\"))\nbuilder.add_node(\"b\", ReturnNodeValue(\"I'm B\"))\nbuilder.add_node(\"c\", ReturnNodeValue(\"I'm C\"))\nbuilder.add_node(\"d\", ReturnNodeValue(\"I'm D\"))\n\n# Fan-out: a -> b y a -> c. Fan-in: b -> d y c -> d\nbuilder.add_edge(START, \"a\")\nbuilder.add_edge(\"a\", \"b\")\nbuilder.add_edge(\"a\", \"c\")\nbuilder.add_edge(\"b\", \"d\")\nbuilder.add_edge(\"c\", \"d\")\nbuilder.add_edge(\"d\", END)\ngraph = builder.compile()\n\ntry:\n    graph.invoke({\"state\": []})\nexcept InvalidUpdateError as e:\n    print(f\"An error occurred: {e}\")",
+   "notas": "Es el mismo State sin reducer, ahora con fan-out.\nSalida real:\n```\nAdding I'm A to []\nAdding I'm B to [\"I'm A\"]\nAdding I'm C to [\"I'm A\"]\nAn error occurred: At key 'state': Can receive only one value per step.\nUse an Annotated key to handle multiple values.\n```\n`b` y `c` mandaron un valor cada uno para `state` en el mismo paso. Sin reducer, LangGraph no sabe con cuál quedarse.",
+   "resaltar": [
+    25,
+    26
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Con reducer: los updates se suman",
+   "contenido": "import operator\nfrom typing import Any, Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    # operator.add concatena listas: los updates se suman\n    state: Annotated[list, operator.add]\n\nclass ReturnNodeValue:\n    def __init__(self, node_secret: str):\n        self._value = node_secret\n\n    def __call__(self, state: State) -> Any:\n        print(f\"Adding {self._value} to {state['state']}\")\n        return {\"state\": [self._value]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"a\", ReturnNodeValue(\"I'm A\"))\nbuilder.add_node(\"b\", ReturnNodeValue(\"I'm B\"))\nbuilder.add_node(\"c\", ReturnNodeValue(\"I'm C\"))\nbuilder.add_node(\"d\", ReturnNodeValue(\"I'm D\"))\n\nbuilder.add_edge(START, \"a\")\nbuilder.add_edge(\"a\", \"b\")\nbuilder.add_edge(\"a\", \"c\")\nbuilder.add_edge(\"b\", \"d\")\nbuilder.add_edge(\"c\", \"d\")\nbuilder.add_edge(\"d\", END)\ngraph = builder.compile()\n\nfor mode, chunk in graph.stream({\"state\": []}, stream_mode=[\"debug\", \"values\"]):\n    if mode == \"debug\" and chunk[\"type\"] == \"task_result\":\n        print(f\"  superstep {chunk['step']}: terminó {chunk['payload']['name']}\")\n    if mode == \"values\":\n        final = chunk\nprint(final)",
+   "notas": "`operator.add` concatena listas: es el mismo truco que `add_messages` en `messages`.\n`stream_mode=\"debug\"` te dice en qué **superstep** terminó cada node.\nSalida real:\n```\nAdding I'm A to []\n  superstep 1: terminó a\nAdding I'm B to [\"I'm A\"]\n  superstep 2: terminó b\nAdding I'm C to [\"I'm A\"]\n  superstep 2: terminó c\nAdding I'm D to [\"I'm A\", \"I'm B\", \"I'm C\"]\n  superstep 3: terminó d\n{'state': [\"I'm A\", \"I'm B\", \"I'm C\", \"I'm D\"]}\n```",
+   "resaltar": [
+    8,
+    34
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué es un superstep",
+   "contenido": "LangGraph ejecuta el grafo por **supersteps**. En cada uno:\n\n1. Corren **todos** los nodes activos. Cada uno lee el state como quedó al final del superstep anterior.\n2. Cuando **todos** terminaron, LangGraph aplica todos los updates juntos, con el reducer de cada key.\n3. Con el state nuevo, decide qué nodes se activan en el siguiente superstep.\n\nPor eso `b` y `c` leyeron `[\"I'm A\"]`: ninguno ve lo que escribe el otro. Y por eso sin reducer truena: llegan dos valores para la misma key en el mismo superstep.\n\nEl superstep es todo o nada: si un node falla, ninguna update de ese superstep se aplica."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Una rama más larga que la otra",
+   "contenido": "graph TD\n  S([START]) --> a\n  a --> b\n  a --> c\n  b --> b2\n  b2 --> d\n  c --> d\n  d --> E([END])\n  class b2 clave",
+   "notas": "La rama de la izquierda tiene dos nodes (`b → b2`); la de la derecha, uno (`c`).\nLas flechas hacia `d` se declaran juntas: `add_edge([\"b2\", \"c\"], \"d\")`. Así `d` espera a las dos."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La rama rápida no se adelanta",
+   "contenido": "import operator\nimport time\nfrom typing import Any, Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    state: Annotated[list, operator.add]\n\nclass ReturnNodeValue:\n    def __init__(self, node_secret: str, segundos: float = 0):\n        self._value = node_secret\n        self._segundos = segundos\n\n    def __call__(self, state: State) -> Any:\n        time.sleep(self._segundos)  # simula trabajo lento (una llamada a un LLM, por ejemplo)\n        print(f\"Adding {self._value} to {state['state']}\")\n        return {\"state\": [self._value]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"a\", ReturnNodeValue(\"I'm A\"))\nbuilder.add_node(\"b\", ReturnNodeValue(\"I'm B\", segundos=1))  # b es lento\nbuilder.add_node(\"b2\", ReturnNodeValue(\"I'm B2\"))\nbuilder.add_node(\"c\", ReturnNodeValue(\"I'm C\"))              # c es rápido\nbuilder.add_node(\"d\", ReturnNodeValue(\"I'm D\"))\n\nbuilder.add_edge(START, \"a\")\nbuilder.add_edge(\"a\", \"b\")\nbuilder.add_edge(\"a\", \"c\")\nbuilder.add_edge(\"b\", \"b2\")\nbuilder.add_edge([\"b2\", \"c\"], \"d\")  # d espera a b2 Y a c\nbuilder.add_edge(\"d\", END)\ngraph = builder.compile()\n\nfor mode, chunk in graph.stream({\"state\": []}, stream_mode=[\"debug\", \"values\"]):\n    if mode == \"debug\" and chunk[\"type\"] == \"task_result\":\n        print(f\"  superstep {chunk['step']}: terminó {chunk['payload']['name']}\")\n    if mode == \"values\":\n        final = chunk\nprint(final)",
+   "notas": "`b` tarda 1 segundo y `c` es instantáneo.\nSalida real:\n```\nAdding I'm A to []\n  superstep 1: terminó a\nAdding I'm C to [\"I'm A\"]\n  superstep 2: terminó c\nAdding I'm B to [\"I'm A\"]\n  superstep 2: terminó b\nAdding I'm B2 to [\"I'm A\", \"I'm B\", \"I'm C\"]\n  superstep 3: terminó b2\nAdding I'm D to [\"I'm A\", \"I'm B\", \"I'm C\", \"I'm B2\"]\n  superstep 4: terminó d\n```\n`c` terminó primero, pero `b2` ya ve `I'm C`: los dos updates del superstep 2 se aplicaron juntos.",
+   "resaltar": [
+    22,
+    31
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El orden de los updates",
+   "contenido": "Mira la salida anterior: `c` terminó **antes** que `b`, pero la lista quedó `[\"I'm A\", \"I'm B\", \"I'm C\", ...]`.\n\nDentro de un superstep, el orden en que el reducer recibe los updates **no** depende de quién termina primero. Es un orden fijo que LangGraph saca de la forma del grafo, y tú no lo controlas.\n\nSi necesitas un orden concreto tienes dos salidas:\n\n- Un **reducer propio**. El notebook usa `sorting_reducer`, que hace `sorted(left + right)`.\n- Escribir en una key temporal y poner después un node **sink** que ordena y combina, y luego limpia esa key."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Caso real: dos búsquedas en paralelo",
+   "contenido": "import operator\nimport time\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    question: str\n    answer: str\n    context: Annotated[list, operator.add]\n\ndef search_web(state: State):\n    \"\"\"Simula una búsqueda web (en el notebook: TavilySearch).\"\"\"\n    time.sleep(1)\n    doc = f'<Document href=\"https://example.com/nvidia\">Resultado web sobre: {state[\"question\"]}</Document>'\n    return {\"context\": [doc]}\n\ndef search_wikipedia(state: State):\n    \"\"\"Simula Wikipedia (en el notebook: WikipediaLoader).\"\"\"\n    time.sleep(1)\n    doc = f'<Document source=\"wikipedia/Nvidia\">Artículo de Wikipedia sobre: {state[\"question\"]}</Document>'\n    return {\"context\": [doc]}\n\ndef generate_answer(state: State):\n    \"\"\"En el notebook aquí va el LLM. Aquí solo contamos los documentos.\"\"\"\n    return {\"answer\": f\"Respondo con {len(state['context'])} documentos.\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"search_web\", search_web)\nbuilder.add_node(\"search_wikipedia\", search_wikipedia)\nbuilder.add_node(\"generate_answer\", generate_answer)\n\nbuilder.add_edge(START, \"search_wikipedia\")\nbuilder.add_edge(START, \"search_web\")\nbuilder.add_edge(\"search_wikipedia\", \"generate_answer\")\nbuilder.add_edge(\"search_web\", \"generate_answer\")\nbuilder.add_edge(\"generate_answer\", END)\ngraph = builder.compile()\n\ninicio = time.perf_counter()\nresult = graph.invoke({\"question\": \"How were Nvidia's Q2 2025 earnings\"})\nprint(f\"Tardó {time.perf_counter() - inicio:.1f} s\")\nprint(result[\"answer\"])\nfor doc in result[\"context\"]:\n    print(doc)",
+   "notas": "Las búsquedas están **simuladas** con `time.sleep(1)`. En el notebook, `search_web` usa `TavilySearch(max_results=3)` (pide `TAVILY_API_KEY`), `search_wikipedia` usa `WikipediaLoader(load_max_docs=2)` y `generate_answer` llama a `gpt-4o`.\nSalida real:\n```\nTardó 1.0 s\nRespondo con 2 documentos.\n<Document href=\"https://example.com/nvidia\">Resultado web sobre: ...</Document>\n<Document source=\"wikipedia/Nvidia\">Artículo de Wikipedia sobre: ...</Document>\n```\nDos búsquedas de 1 s tardaron 1 s, no 2: el total es lo que tarda la rama más lenta.",
+   "resaltar": [
+    10,
+    33,
+    34
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: ¿b2 se adelanta?",
+   "contenido": "Tomas el grafo `b → b2` y `c` del paso 8 y cambias los tiempos: ahora `b` es instantáneo y `c` tarda **3 segundos**. Código completo:\n\n```python\nimport operator\nimport time\nfrom typing import Any, Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    state: Annotated[list, operator.add]\n\nclass ReturnNodeValue:\n    def __init__(self, node_secret: str, segundos: float = 0):\n        self._value = node_secret\n        self._segundos = segundos\n\n    def __call__(self, state: State) -> Any:\n        time.sleep(self._segundos)  # simula trabajo lento (una llamada a un LLM, por ejemplo)\n        print(f\"Adding {self._value} to {state['state']}\")\n        return {\"state\": [self._value]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"a\", ReturnNodeValue(\"I'm A\"))\nbuilder.add_node(\"b\", ReturnNodeValue(\"I'm B\"))              # b es rápido\nbuilder.add_node(\"b2\", ReturnNodeValue(\"I'm B2\"))\nbuilder.add_node(\"c\", ReturnNodeValue(\"I'm C\", segundos=3))  # c es lento\nbuilder.add_node(\"d\", ReturnNodeValue(\"I'm D\"))\n\nbuilder.add_edge(START, \"a\")\nbuilder.add_edge(\"a\", \"b\")\nbuilder.add_edge(\"a\", \"c\")\nbuilder.add_edge(\"b\", \"b2\")\nbuilder.add_edge([\"b2\", \"c\"], \"d\")  # d espera a b2 Y a c\nbuilder.add_edge(\"d\", END)\ngraph = builder.compile()\n\nfor mode, chunk in graph.stream({\"state\": []}, stream_mode=[\"debug\", \"values\"]):\n    if mode == \"debug\" and chunk[\"type\"] == \"task_result\":\n        print(f\"  superstep {chunk['step']}: terminó {chunk['payload']['name']}\")\n    if mode == \"values\":\n        final = chunk\nprint(final)\n```\n\n¿`b2` empieza mientras `c` sigue trabajando? ¿Qué lista ve `b2` en su `print`?",
+   "respuesta": "No se adelanta. `b2` está en el superstep 3, y el superstep 2 no termina hasta que terminan **`b` y `c`**. `b2` espera los 3 segundos de `c` y ve `[\"I'm A\", \"I'm B\", \"I'm C\"]`. Salida real: ahora `Adding I'm B` sale antes que `Adding I'm C` (b acaba primero), pero `b2` y `d` ven las mismas listas que en el paso 8 y el final es `{'state': [\"I'm A\", \"I'm B\", \"I'm C\", \"I'm B2\", \"I'm D\"]}`. Una rama no avanza a su siguiente node mientras otra rama del mismo superstep siga corriendo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: edges sueltos hacia d",
+   "contenido": "Tomas el grafo `b → b2` y `c` del paso 8, pero en vez de `add_edge([\"b2\", \"c\"], \"d\")` escribes dos edges sueltos (`b2 → d` y `c → d`). Código completo:\n\n```python\nimport operator\nimport time\nfrom typing import Any, Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    state: Annotated[list, operator.add]\n\nclass ReturnNodeValue:\n    def __init__(self, node_secret: str, segundos: float = 0):\n        self._value = node_secret\n        self._segundos = segundos\n\n    def __call__(self, state: State) -> Any:\n        time.sleep(self._segundos)  # simula trabajo lento (una llamada a un LLM, por ejemplo)\n        print(f\"Adding {self._value} to {state['state']}\")\n        return {\"state\": [self._value]}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"a\", ReturnNodeValue(\"I'm A\"))\nbuilder.add_node(\"b\", ReturnNodeValue(\"I'm B\", segundos=1))  # b es lento\nbuilder.add_node(\"b2\", ReturnNodeValue(\"I'm B2\"))\nbuilder.add_node(\"c\", ReturnNodeValue(\"I'm C\"))              # c es rápido\nbuilder.add_node(\"d\", ReturnNodeValue(\"I'm D\"))\n\nbuilder.add_edge(START, \"a\")\nbuilder.add_edge(\"a\", \"b\")\nbuilder.add_edge(\"a\", \"c\")\nbuilder.add_edge(\"b\", \"b2\")\nbuilder.add_edge(\"b2\", \"d\")\nbuilder.add_edge(\"c\", \"d\")\nbuilder.add_edge(\"d\", END)\ngraph = builder.compile()\n\nfor mode, chunk in graph.stream({\"state\": []}, stream_mode=[\"debug\", \"values\"]):\n    if mode == \"debug\" and chunk[\"type\"] == \"task_result\":\n        print(f\"  superstep {chunk['step']}: terminó {chunk['payload']['name']}\")\n    if mode == \"values\":\n        final = chunk\nprint(final)\n```\n\n¿Cuántas veces corre `d`? ¿Cómo queda `state`?",
+   "respuesta": "`d` corre **dos veces**. Un edge suelto activa a `d` en cuanto termina su node de origen: `c` termina en el superstep 2, así que `d` corre en el 3 junto con `b2`; después `b2` lo activa otra vez en el 4. Salida real: `{'state': [\"I'm A\", \"I'm B\", \"I'm C\", \"I'm B2\", \"I'm D\", \"I'm D\"]}`. La lista en `add_edge([...], \"d\")` es lo que hace que `d` espere a todos."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: keys distintas, sin reducer",
+   "contenido": "Dos nodes en paralelo, sin ningún reducer, pero cada uno escribe **su propia** key. Código completo:\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    web: str\n    wikipedia: str\n\ndef search_web(state):\n    return {\"web\": \"doc web\"}\n\ndef search_wikipedia(state):\n    return {\"wikipedia\": \"doc wiki\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"search_web\", search_web)\nbuilder.add_node(\"search_wikipedia\", search_wikipedia)\nbuilder.add_edge(START, \"search_web\")\nbuilder.add_edge(START, \"search_wikipedia\")\nbuilder.add_edge(\"search_web\", END)\nbuilder.add_edge(\"search_wikipedia\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({}))\n```\n\nLos dos salen de `START`. ¿Truena con `InvalidUpdateError`?",
+   "respuesta": "No truena. Salida real: `{'web': 'doc web', 'wikipedia': 'doc wiki'}`. El error solo aparece cuando **dos updates caen en la misma key** en el mismo superstep. El reducer hace falta por key, no por grafo: si cada rama escribe una key distinta, no hay nada que combinar."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Fan-out**: varios edges salen de un node y esas ramas corren a la vez. **Fan-in**: llegan a un mismo node.\n- El grafo avanza por **supersteps**: todos los nodes del superstep leen el mismo state, y sus updates se aplican **juntos** al final.\n- Si dos ramas escriben la misma key en el mismo superstep, esa key necesita un **reducer** (`operator.add`, igual que `add_messages`).\n- `add_edge([\"x\", \"y\"], \"z\")` hace que `z` espere a todos; edges sueltos lo activan varias veces.\n- El orden de los updates lo fija la forma del grafo, no la velocidad. Si te importa, usa un reducer propio o un node sink."
+  }
+ ],
+ "fuentes": [
+  "module-4/parallelization.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Dos nodes en paralelo escriben la misma key sin reducer. ¿Qué pasa y por qué?",
+   "reverso": "`InvalidUpdateError`: llegan dos valores para esa key en el mismo superstep y LangGraph no sabe cuál quedarse. Se arregla con `Annotated[list, operator.add]`."
+  },
+  {
+   "frente": "`b` y `c` corren en el mismo superstep. ¿`b` puede leer lo que escribió `c`?",
+   "reverso": "No. Los dos leen el state del final del superstep anterior. Los updates se aplican juntos cuando todos terminan."
+  },
+  {
+   "frente": "Rama `b → b2` y rama `c`, y `c` es lenta. ¿Cuándo empieza `b2`?",
+   "reverso": "Cuando termina **todo** el superstep 2 (`b` y `c`). Ninguna rama avanza mientras otra del mismo superstep siga corriendo."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre `add_edge([\"b2\", \"c\"], \"d\")` y dos edges sueltos `b2 → d`, `c → d`?",
+   "reverso": "Con la lista, `d` espera a los dos y corre una vez. Con edges sueltos, cada node que termina activa a `d`: puede correr dos veces."
+  },
+  {
+   "frente": "Con `operator.add`, ¿el orden de la lista depende de qué rama termina primero?",
+   "reverso": "No. Lo fija LangGraph según la forma del grafo. Si necesitas un orden, usa un reducer propio (p. ej. que ordene) o un node sink."
+  },
+  {
+   "frente": "¿Por qué dos búsquedas de 1 s en ramas paralelas tardan ~1 s y no 2?",
+   "reverso": "Porque los nodes del mismo superstep corren a la vez. El superstep dura lo que tarda la rama más lenta."
+  }
+ ]
+}

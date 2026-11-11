@@ -1,0 +1,99 @@
+{
+ "mision_id": "1.1",
+ "titulo": "El grafo más simple",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Una función de Python corre de arriba abajo. Un agente necesita otra cosa: pasos separados que se pasan información y un punto donde **decidir** qué paso sigue.\n\nLangGraph modela eso como un grafo. Antes de meter un LLM, conviene ver el grafo pelado: tres funciones de Python, un dato compartido y una decisión al azar. Todo lo que viene después (chain, router, agente) es este mismo esqueleto con piezas más listas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las tres piezas",
+   "contenido": "- **State**: el dato compartido. Aquí es un `TypedDict` con una sola key, `graph_state`.\n- **Nodes**: funciones normales. Reciben el state y devuelven un **update**: un dict con las keys que quieren cambiar.\n- **Edges**: dicen qué node sigue. Un edge normal siempre va al mismo lugar; un **conditional edge** es una función que devuelve el nombre del siguiente node.\n\n`START` y `END` son nodes especiales: dónde entra el input y dónde termina el grafo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El grafo completo",
+   "contenido": "import random\nfrom typing import Literal\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\n\nclass State(TypedDict):\n    graph_state: str\n\n\ndef node_1(state):\n    print(\"---Node 1---\")\n    return {\"graph_state\": state[\"graph_state\"] + \" I am\"}\n\n\ndef node_2(state):\n    print(\"---Node 2---\")\n    return {\"graph_state\": state[\"graph_state\"] + \" happy!\"}\n\n\ndef node_3(state):\n    print(\"---Node 3---\")\n    return {\"graph_state\": state[\"graph_state\"] + \" sad!\"}\n\n\ndef decide_mood(state) -> Literal[\"node_2\", \"node_3\"]:\n    if random.random() < 0.5:\n        return \"node_2\"\n    return \"node_3\"\n\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_conditional_edges(\"node_1\", decide_mood)\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"graph_state\": \"Hi, this is Lance.\"}))\nprint(graph.get_graph().draw_mermaid())",
+   "notas": "Cada node devuelve un dict `{\"graph_state\": ...}`: eso es el update, no el state entero.\n`decide_mood` no toca el state: solo devuelve `\"node_2\"` o `\"node_3\"`.\n`compile()` revisa la estructura (que los nodes existan, que haya camino desde START).\nSalida real de una corrida: `---Node 1---`, `---Node 3---` y `{'graph_state': 'Hi, this is Lance. I am sad!'}`. Al ser 50/50, otra corrida puede dar `happy!`.",
+   "resaltar": [
+    13,
+    37,
+    42
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El dibujo del grafo",
+   "contenido": "graph TD\n  START([START]) --> node_1\n  node_1 -.-> node_2\n  node_1 -.-> node_3\n  node_2 --> END([END])\n  node_3 --> END\n  class node_1 clave",
+   "notas": "Línea punteada = conditional edge: solo se toma una de las dos.\nLangGraph sabe que las opciones son `node_2` y `node_3` por el `Literal[...]` del tipo de retorno de `decide_mood`. Sin esa pista el grafo corre igual, pero el dibujo sale incompleto: en la versión 1.2.19 no aparecen las flechas a `node_2` y `node_3`.\nEs lo que genera `graph.get_graph().draw_mermaid()`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Sin reducer, el update sobrescribe",
+   "contenido": "Cuando un node devuelve `{\"graph_state\": x}`, LangGraph **reemplaza** el valor anterior de esa key por `x`. Esa es la regla por defecto cuando la key no tiene reducer.\n\nPor eso los nodes del ejemplo hacen `state[\"graph_state\"] + \" I am\"`: leen el valor viejo, lo extienden y devuelven el texto entero. Si solo devolvieran `\" I am\"`, perderías `\"Hi, this is Lance.\"`.\n\nEn `chain` vas a ver cómo un reducer cambia esta regla."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Ver cada update con stream",
+   "contenido": "from typing import Literal\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\n\nclass State(TypedDict):\n    graph_state: str\n\n\ndef node_1(state):\n    return {\"graph_state\": state[\"graph_state\"] + \" I am\"}\n\n\ndef node_2(state):\n    return {\"graph_state\": state[\"graph_state\"] + \" happy!\"}\n\n\ndef node_3(state):\n    return {\"graph_state\": state[\"graph_state\"] + \" sad!\"}\n\n\ndef decide_mood(state) -> Literal[\"node_2\", \"node_3\"]:\n    if \"Lance\" in state[\"graph_state\"]:\n        return \"node_2\"\n    return \"node_3\"\n\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_node(\"node_3\", node_3)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_conditional_edges(\"node_1\", decide_mood)\nbuilder.add_edge(\"node_2\", END)\nbuilder.add_edge(\"node_3\", END)\ngraph = builder.compile()\n\nfor update in graph.stream({\"graph_state\": \"Hi, this is Lance.\"}, stream_mode=\"updates\"):\n    print(update)\nprint(graph.invoke({\"graph_state\": \"Hi, this is Leo.\"}))",
+   "notas": "Aquí la decisión ya no es al azar: depende del state, como en un grafo real.\n`stream(..., stream_mode=\"updates\")` te enseña lo que devolvió cada node, uno por uno.\nSalida real:\n`{'node_1': {'graph_state': 'Hi, this is Lance. I am'}}`\n`{'node_2': {'graph_state': 'Hi, this is Lance. I am happy!'}}`\n`{'graph_state': 'Hi, this is Leo. I am sad!'}` (el `invoke` con \"Leo\" va a `node_3`).",
+   "resaltar": [
+    23,
+    38
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "invoke contra stream",
+   "contenido": "- `graph.invoke(input)` corre todo el grafo y te devuelve el **state final completo**.\n- `graph.stream(input, stream_mode=\"updates\")` te va dando el update de **cada node** mientras corre.\n\nLos dos ejecutan lo mismo. La diferencia es qué ves. Cuando un grafo hace algo raro, `stream` con `updates` es la forma más rápida de ver qué node devolvió qué."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: un node que olvida lo anterior",
+   "contenido": "Cambias `node_1` para que devuelva solo `\" I am\"`, y el grafo queda `START → node_1 → node_2 → END`, donde `node_2` devuelve `{}`:\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\n\nclass State(TypedDict):\n    graph_state: str\n\n\ndef node_1(state):\n    return {\"graph_state\": \" I am\"}\n\n\ndef node_2(state):\n    return {}\n\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_2\")\nbuilder.add_edge(\"node_2\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"graph_state\": \"Hi, this is Lance.\"}))\n```\n\n¿Qué imprime `invoke`?",
+   "respuesta": "`{'graph_state': ' I am'}` (salida real).\n`node_1` devuelve solo `\" I am\"` y, sin reducer, eso **sobrescribe** la key: se pierde \"Hi, this is Lance.\".\n`node_2` devuelve `{}`: un update vacío no cambia nada, así que el valor se queda como lo dejó `node_1`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: modificar el state a mano",
+   "contenido": "Ahora el grafo es `START → node_1 → END`, y `node_1` modifica el dict que recibe en vez de devolver un update:\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\n\nclass State(TypedDict):\n    graph_state: str\n\n\ndef node_1(state):\n    state[\"graph_state\"] = state[\"graph_state\"] + \" I am\"\n    return {}\n\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"graph_state\": \"Hi, this is Lance.\"}))\n```\n\n¿Qué imprime `invoke`?",
+   "respuesta": "`{'graph_state': 'Hi, this is Lance.'}` (salida real): el cambio se pierde.\nLangGraph no mira lo que haces con el dict que recibes; solo aplica lo que el node **devuelve**. Aquí devuelve `{}`, así que no hay update.\nRegla: un node no modifica el state, devuelve un update."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: con qué state decide el edge",
+   "contenido": "En el grafo con `stream` del paso 6, `decide_mood` busca `\"Lance\"` en `graph_state`. El input es `\"Hi, this is Lance.\"`.\n\nCuando `decide_mood` corre, ¿qué texto ve: `\"Hi, this is Lance.\"` o `\"Hi, this is Lance. I am\"`? ¿Cambia la ruta?",
+   "respuesta": "Ve `\"Hi, this is Lance. I am\"`: el conditional edge corre **después** de aplicar el update de `node_1`.\nLa ruta no cambia (sigue conteniendo \"Lance\", va a `node_2`), pero importa: si `node_1` borrara el nombre, el edge ya no lo vería.",
+   "ref": 6
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un grafo son tres piezas: **state** (el dato compartido), **nodes** (funciones que devuelven un update) y **edges** (qué sigue).\n- Un node **no modifica** el state: devuelve un dict y LangGraph lo aplica. Si no devuelve una key, esa key no cambia.\n- Sin reducer, el update **sobrescribe** la key.\n- Un conditional edge es una función que lee el state (ya actualizado) y devuelve el nombre del siguiente node.\n- `stream(stream_mode=\"updates\")` te muestra qué devolvió cada node: tu herramienta para depurar."
+  }
+ ],
+ "fuentes": [
+  "module-1/simple-graph.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Un node hace `state[\"x\"] = 5` y devuelve `{}`. Antes `x` valía 1. ¿Cuánto vale `x` al final y por qué?",
+   "reverso": "Sigue en `1`. LangGraph solo aplica lo que el node **devuelve**; cambiar el dict que recibió no cuenta como update."
+  },
+  {
+   "frente": "Un node devuelve `{}`. ¿Qué le pasa al state?",
+   "reverso": "Nada. Un update vacío no cambia ninguna key; las keys que el node no menciona se quedan como estaban."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre lo que te da `invoke` y lo que te da `stream(stream_mode=\"updates\")`?",
+   "reverso": "`invoke` te da el **state final completo**. `stream` con `updates` te da, node por node, solo lo que **devolvió cada uno**. Ejecutan lo mismo."
+  },
+  {
+   "frente": "¿Para qué sirve el `Literal[\"node_2\", \"node_3\"]` en el tipo de retorno de `decide_mood`?",
+   "reverso": "Le dice a LangGraph a qué nodes puede ir el conditional edge. El grafo corre igual sin él, pero el dibujo sale sin esas flechas porque LangGraph no conoce las rutas posibles."
+  }
+ ]
+}

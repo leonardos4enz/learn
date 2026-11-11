@@ -1,0 +1,110 @@
+{
+ "mision_id": "3.A",
+ "titulo": "Latencia, errores y sentimiento del usuario",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hay tres maneras distintas de que un agente le falle a un usuario:\n\n1. **Truena:** un tool lanza una excepción, la API del modelo rechaza la llamada.\n2. **Se pone lento:** un tool hace timeout, el proveedor está degradado, el prompt creció.\n3. **Contesta rápido y sin errores, pero mal:** no entendió, dio una respuesta correcta pero inútil, dio tres vueltas.\n\nLos dos primeros se miden con **alertas** sobre métricas de LangSmith. El tercero no deja rastro en errores ni latencia: necesitas una señal de **sentimiento del usuario**, explícita (botones) o inferida (un LLM-as-judge que lee la conversación)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las tres señales, lado a lado",
+   "contenido": "| Señal | Cómo se mide | Qué hace LangSmith |\n|---|---|---|\n| Errores | Métrica **Errored Runs** | Alerta → webhook (el curso: **Linear**, crea un issue) |\n| Latencia | Métrica **Latency**, promedio | Alerta → webhook (el curso: **Datadog** Events) |\n| Sentimiento explícito | Botón thumbs up/down en tu app | `client.create_feedback(...)` desde tu código |\n| Sentimiento inferido | Online eval LLM-as-judge **por thread** | Corre solo en LangSmith y deja feedback |\n\nLas alertas viven en el proyecto: ícono **Alerts** (arriba a la derecha) > **+ New Alert**. Además hay dashboards prebuilt de errores (error rate en el tiempo, por tool, por run type) y de latencia (de la traza, de las llamadas LLM, por tool, por run type)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Alerta de errores → Linear",
+   "contenido": "| Campo | Valor del curso | Por qué |\n|---|---|---|\n| Metric | **Errored Runs** | Fallas directas |\n| Threshold | **1** | Avisar al primer error; súbelo si tu línea base tiene errores transitorios |\n| Aggregation window | **5 minutos** | Cada cuánto se evalúa |\n| Filtro (opcional) | Nombres de run o tags | Solo ciertos tools o chains |\n\nNotificación: **webhook** a `https://api.linear.app/graphql` con una mutation `issueCreate`. El body usa variables de la alerta como `{{alert_rule_name}}` y `{{triggered_metric_value}}`. Con **Send Test Alert** compruebas que aparece el issue.\n\nAl recibirla: filtra runs por error en la ventana de la alerta y abre la traza; el trace tree marca qué paso falló, con inputs y outputs."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Alerta de latencia → Datadog",
+   "contenido": "| Campo | Valor del curso |\n|---|---|\n| Metric | **Latency** |\n| Threshold | Según el tiempo de respuesta esperado de tu app |\n| Aggregation method | **Average** |\n| Aggregation window | **5 minutos** |\n| Filtro (opcional) | Solo **root runs**, para que los spans hijos no disparen la alerta |\n\nWebhook a `https://api.datadoghq.com/api/v1/events` (EU: `api.datadoghq.eu`), con header `DD-API-KEY` guardado como **Workspace Secret**. Body con `{{triggered_metric_value}}` y `{{triggered_threshold}}`.\n\n¿Por qué Datadog **y** LangSmith? Se complementan: Datadog ve la infraestructura (CPU, red, servicios externos); LangSmith ve **dentro** de las llamadas (prompt inflado, loop de reintentos, proveedor lento). El on-call ve el evento junto a su contexto de infraestructura."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Feedback explícito: `handle_feedback`",
+   "contenido": "class FakeClient:\n    \"\"\"Hace de langsmith.Client: en vez de llamar a la API, imprime el feedback.\"\"\"\n    def create_feedback(self, **kwargs):\n        print(\"create_feedback(\", kwargs, \")\")\n\nclient = FakeClient()          # en tu app: from langsmith import Client; client = Client()\n\ndef handle_feedback(trace_id: str, reaction: str | None):\n    \"\"\"Call this from your UI when a user clicks thumbs up or down.\"\"\"\n    if not reaction:\n        return\n\n    client.create_feedback(\n        key=\"user_sentiment\",\n        score=1 if reaction == \"liked\" else 0,\n        trace_id=trace_id,\n    )\n\nhandle_feedback(\"trace-001\", \"liked\")\nhandle_feedback(\"trace-002\", \"disliked\")\nhandle_feedback(\"trace-003\", None)      # el usuario no tocó el botón",
+   "notas": "`handle_feedback` es el de la página oficial; solo cambié `Client()` por un `FakeClient` que imprime en vez de llamar a la API.\n- `score` binario: **1** si \"liked\", **0** en otro caso. Nada de escala 1–5: un botón binario no exige pensar y la gente lo usa más.\n- `trace_id=` (en vez de `run_id=`) hace que el SDK de Python mande el feedback **en background**: tu app no espera.\n- Salida real:\n```\ncreate_feedback( {'key': 'user_sentiment', 'score': 1, 'trace_id': 'trace-001'} )\ncreate_feedback( {'key': 'user_sentiment', 'score': 0, 'trace_id': 'trace-002'} )\n```\nLa tercera llamada (`None`) no imprime nada: el `if not reaction: return` la corta.",
+   "resaltar": [
+    10,
+    15,
+    16
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Online evals LLM-as-judge: las reglas",
+   "contenido": "El feedback explícito es **escaso**: la mayoría nunca toca el botón, y los que lo tocan no representan a todos. Un **online evaluator** califica trazas de producción solo, con un LLM como juez.\n\nLas tres reglas (las viste en Building Reliable Agents):\n1. **Alcance estrecho:** una pregunta por juez (\"¿el usuario quedó satisfecho?\", no \"¿es buena la respuesta?\").\n2. **Binario o categórico**, no 1–5: señales claras para actuar.\n3. **Alinear con humanos:** compara sus veredictos con etiquetas humanas de vez en cuando.\n\nSe configuran **por proyecto**: cuando llega una traza que pasa tu filtro (y el muestreo), LangSmith corre el juez y le pega un **feedback**. Ojo de costo: una traza evaluada pasa a **extended data retention**, que se cobra más."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por traza o por thread",
+   "contenido": "| | Single-turn | Thread-based |\n|---|---|---|\n| Entrada | Una traza | El thread completo (todas sus trazas) |\n| Se dispara | Cuando llega una traza | Cuando el thread queda **idle** (sin mensajes nuevos) |\n| Bueno para | Seguridad, formato | Temas, **satisfacción** |\n\nPara sentimiento va **por thread**: lo que importa es cómo terminó la conversación, no un mensaje suelto. El *idle time* es una configuración **del proyecto** (en el lab lo pones en 1 minuto para no esperar).\n\nConfiguración del curso: + New > New Evaluator > *Evaluate a multi-turn thread*; nombre `user-sentiment`; muestreo **30–50 %**; un modelo barato con contexto grande (Gemini 2.5 Flash o GPT-4.1 nano); formato de mensajes *Human and AI pairs*; feedback `user_sentiment`, **Boolean**."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Del thread al feedback de sentimiento",
+   "contenido": "graph LR\n  T1[Traza turno 1] --> TH[Thread<br/>mismo thread_id]\n  T2[Traza turno 2] --> TH\n  T3[Traza turno 3] --> TH\n  TH -->|queda idle| J[Juez LLM<br/>user-sentiment]\n  J --> F[Feedback<br/>user_sentiment = true/false]\n  class J clave",
+   "notas": "Los turnos se juntan por el `thread_id` de la metadata, el mismo concepto que el `thread_id` del checkpointer de LangGraph.\nEl prompt del curso pide: gratitud o \"ya funciona\" = positivo; \"sigue sin funcionar\", confusión o un seco \"como sea\" = negativo; **neutral cuenta como positivo**; y pesa más el **último** mensaje humano. Binario, para que coincida con el thumbs up/down."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: ¿qué evaluador para satisfacción?",
+   "contenido": "Tu agente de soporte tiene conversaciones de 5 a 10 turnos. Quieres medir automáticamente si los usuarios terminan satisfechos, sin esperar a que toquen el botón. ¿Qué configuras?\n\n- **A)** Un online evaluator single-turn, al 100 % de las trazas, con escala de 1 a 5.\n- **B)** Un online evaluator por thread, que corra cuando la conversación queda idle, con resultado booleano y muestreo de 30–50 %.\n- **C)** Una alerta de Latency con umbral de 10 s, porque usuarios lentos = usuarios insatisfechos.\n- **D)** Un offline eval sobre un dataset de conversaciones de la semana pasada.",
+   "respuesta": "**B.** La satisfacción es de la conversación completa (thread), se juzga cuando terminó (idle), binaria para alinear con thumbs up/down, y con muestreo para no gastar en todo.\n- A: juzga mensajes sueltos y usa escala 1–5, que da señales ambiguas; además 100 % sale caro.\n- C: la latencia no mide si la respuesta sirvió.\n- D: offline es antes del deploy y sobre datasets; quieres tráfico real (online)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Variación de `handle_feedback`",
+   "contenido": "Mismo `handle_feedback` del paso 5, con otras reacciones:\n\n```python\nclass FakeClient:\n    def create_feedback(self, **kwargs):\n        print(\"create_feedback(\", kwargs, \")\")\n\nclient = FakeClient()\n\ndef handle_feedback(trace_id: str, reaction: str | None):\n    if not reaction:\n        return\n    client.create_feedback(key=\"user_sentiment\",\n                           score=1 if reaction == \"liked\" else 0,\n                           trace_id=trace_id)\n\nhandle_feedback(\"t-10\", \"Liked\")\nhandle_feedback(\"t-11\", \"\")\nhandle_feedback(\"t-12\", \"love\")\n```\n\n¿Qué imprime? ¿Hay algún bug escondido?",
+   "respuesta": "```\ncreate_feedback( {'key': 'user_sentiment', 'score': 0, 'trace_id': 't-10'} )\ncreate_feedback( {'key': 'user_sentiment', 'score': 0, 'trace_id': 't-12'} )\n```\n- `\"Liked\"` ≠ `\"liked\"` (mayúscula): cuenta como **negativo**. Bug real si tu UI manda otro formato.\n- `\"\"` es falsy: `not \"\"` es `True`, así que no se manda nada.\n- `\"love\"` no es `\"liked\"`: también 0. Todo lo que no sea exactamente `\"liked\"` se vuelve negativo, y eso ensucia tu métrica de sentimiento.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Rápido, sin errores… y con quejas",
+   "contenido": "Tu dashboard muestra 0 % de errores y latencia media de 1.2 s toda la semana. Aun así, soporte humano dice que llegan quejas de que \"el bot no entiende\". De las señales del paso 2, ¿cuál te habría avisado y cuál NO podía hacerlo? ¿Qué agregarías?",
+   "respuesta": "Errored Runs y Latency **no podían**: el agente no truena ni es lento, contesta mal. Te habría avisado una señal de **sentimiento**: el thumbs up/down (si la gente lo usa) y, sobre todo, el **online eval por thread** `user_sentiment`, que califica una muestra de conversaciones aunque nadie toque el botón.\nDespués: manda los threads con `user_sentiment = false` a una annotation queue y programa un Insights filtrado a sentimiento negativo para ver de qué temas vienen.",
+   "ref": 2
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Errores:** alerta Errored Runs, umbral 1, ventana 5 min → webhook (Linear). **Latencia:** alerta Latency, promedio, 5 min, filtro a root runs → webhook (Datadog). Prueba con **Send Test Alert**.\n- **Feedback explícito:** `create_feedback(key=..., score=1|0, trace_id=...)`; binario; `trace_id=` lo manda en background.\n- **Sentimiento inferido:** online eval LLM-as-judge **por thread** (corre al quedar idle), booleano, muestreo 30–50 %. Neutral = positivo; pesa el último mensaje.\n- Un online eval sube la traza a **extended retention** (más caro).\n- Relación: el thread de LangSmith es tu `thread_id` del checkpointer; las reglas del juez vienen de Building Reliable Agents.\n\n**Dónde buscarlo en docs:** LangSmith > Observability > Alerts; Online evaluations (thread evaluators); Feedback."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-3/intro",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-3/errors-and-latency",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-3/user-sentiment"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Tu agente contesta rápido y sin errores, pero los usuarios se quejan. ¿Qué señal lo detecta?",
+   "reverso": "Sentimiento: el feedback thumbs up/down y un online eval LLM-as-judge por thread. Errores y latencia no lo ven."
+  },
+  {
+   "frente": "¿Por qué el evaluador de sentimiento es por thread y no por traza?",
+   "reverso": "La satisfacción depende de toda la conversación y de cómo terminó. El de thread corre cuando la conversación queda idle."
+  },
+  {
+   "frente": "¿Por qué feedback binario (1/0) y no escala 1–5?",
+   "reverso": "Más gente lo contesta porque no exige pensar, da señales claras y se alinea con el juez booleano."
+  },
+  {
+   "frente": "En Python, ¿qué cambia si pasas `trace_id=` en vez de `run_id=` a `create_feedback`?",
+   "reverso": "El SDK manda el feedback en background, así tu app no se bloquea esperando la API."
+  },
+  {
+   "frente": "¿Qué costo extra tiene activar un online evaluator?",
+   "reverso": "Cada traza evaluada pasa a extended data retention, que se cobra más, además del costo del LLM juez."
+  },
+  {
+   "frente": "En una alerta de latencia, ¿para qué filtrar a root runs?",
+   "reverso": "Para medir la latencia que siente el usuario (la traza completa) y que los spans hijos no disparen la alerta."
+  }
+ ]
+}

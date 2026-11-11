@@ -5,7 +5,7 @@ Variables de entorno (en EasyPanel → Entorno):
   ADMIN_PASSWORD       (opcional) contraseña para entrar a la web sin link de Telegram.
   TELEGRAM_BOT_TOKEN   (opcional) token del bot de BotFather. Sin él, no hay bot.
   TELEGRAM_CHAT_ID     (opcional) tu chat id. Si falta, el bot te lo dice al escribirle /start.
-  PUBLIC_URL           URL pública de la app, para los links (p. ej. https://learn-tutor.ppnoc4.easypanel.host).
+  PUBLIC_URL           URL pública de la app, para los links (p. ej. https://tutor.midominio.com).
   AVISO_HORA           hora del aviso diario (por defecto 08:00).   RECORDATORIO_HORA  segundo aviso (por defecto 19:00).
   TZ_NAME              zona horaria (por defecto America/Mexico_City).
   DATA_DIR             carpeta de la base SQLite y de las imágenes de las lecciones (en producción, el volumen /data).
@@ -133,6 +133,12 @@ async def salud(req: Request):
 @_privado
 async def app_index(req: Request):
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+
+
+@_privado
+async def app_exportar(req: Request):
+    """Documento imprimible (→ PDF) con las lecciones de un nodo del árbol: /app/exportar?nodo=<id>."""
+    return FileResponse(STATIC / "exportar.html", headers={"Cache-Control": "no-store"})
 
 
 @_privado
@@ -522,6 +528,15 @@ def verificar_leccion(curso: str, mision_id: str, resultado: str, nota: str = ""
 
 
 @mcp.tool()
+def leer_imagen(curso: str, archivo: str) -> dict:
+    """Devuelve una imagen subida (/imagenes/<curso>/<archivo>) en base64. La usa `tools/tutor_mcp.py exportar`."""
+    p = store.ruta_imagen(curso, archivo)
+    if not p:
+        raise ValueError(f"No existe la imagen {curso}/{archivo}.")
+    return {"archivo": archivo, "base64_data": base64.b64encode(p.read_bytes()).decode()}
+
+
+@mcp.tool()
 def subir_imagen(curso: str, nombre: str, base64_data: str) -> dict:
     """Sube una imagen (PNG, JPG, GIF o WEBP; máx. ~1.5 MB) para usarla en un paso 'imagen' de una lección.
     base64_data: el archivo en base64 (sin el prefijo 'data:'). Devuelve la URL privada (/imagenes/<curso>/<archivo>).
@@ -815,6 +830,7 @@ routes = [
     Route("/login", login, methods=["GET", "POST"]),
     Route("/salir", salir),
     Route("/app/", app_index),
+    Route("/app/exportar", app_exportar),
     Route("/app", raiz),
     Route("/api/cursos", api_cursos),
     Route("/api/estado", api_estado),

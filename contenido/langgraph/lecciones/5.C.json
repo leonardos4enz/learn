@@ -1,0 +1,125 @@
+{
+ "mision_id": "5.C",
+ "titulo": "Colección de recuerdos",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "El perfil de 5.B tiene campos fijos. ¿Dónde guardas \"ayer comió en Tartine\" o \"piensa volver a Japón en invierno\"? No hay campo para eso, y meter todo en `interests` lo vuelve una lista enorme que el LLM reescribe en cada patch.\n\nLa otra forma es una **colección**: muchas memorias pequeñas, cada una en su propio Item del Store, con su propia key."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Una memoria por Item",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nimport uuid\nfrom pydantic import BaseModel, Field\nfrom langchain_core.messages import HumanMessage\nfrom langchain_openai import ChatOpenAI\nfrom langgraph.store.memory import InMemoryStore\n\nclass Memory(BaseModel):\n    content: str = Field(description=\"The main content of the memory. For example: User expressed interest in learning about French.\")\n\nclass MemoryCollection(BaseModel):\n    memories: list[Memory] = Field(description=\"A list of memories about the user.\")\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\nmemory_collection = model.with_structured_output(MemoryCollection).invoke(\n    [HumanMessage(\"My name is Lance. I like to bike.\")])\nprint(memory_collection.memories)\n\n# Cada memoria es un Item aparte, con su propia key\nin_memory_store = InMemoryStore()\nnamespace_for_memory = (\"1\", \"memories\")\nfor memory in memory_collection.memories:\n    in_memory_store.put(namespace_for_memory, str(uuid.uuid4()), memory.model_dump())\n\nfor m in in_memory_store.search(namespace_for_memory):\n    print(m.key[:8], m.value)\n",
+   "notas": "- `Memory` tiene un solo campo, `content`: un hecho en texto.\n- Cada memoria se guarda con una key nueva (`uuid4`), no con una key fija como el perfil.\nSalida real:\n```\n[Memory(content=\"User's name is Lance.\"), Memory(content='User likes to bike.')]\nb05a5c5a {'content': \"User's name is Lance.\"}\n5b16f47f {'content': 'User likes to bike.'}\n```",
+   "resaltar": [
+    9,
+    24
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Perfil o colección",
+   "contenido": "| | Perfil | Colección |\n|---|---|---|\n| Forma | 1 documento, campos fijos | N documentos chicos |\n| Key | fija (`user_memory`) | una por memoria (uuid) |\n| Leer | `store.get` | `store.search` |\n| Bueno para | datos que se **reemplazan**: nombre, ciudad, idioma | hechos que se **acumulan**: eventos, notas, preferencias sueltas |\n| Riesgo | el documento crece y el patch se complica | duplicados y memorias que se contradicen |\n\nNo es uno o el otro: el agente de 5.D usa los dos a la vez."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Trustcall sobre una colección",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nfrom pydantic import BaseModel, Field\nfrom trustcall import create_extractor\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage, AIMessage\n\nclass Memory(BaseModel):\n    content: str = Field(description=\"The main content of the memory. For example: User expressed interest in learning about French.\")\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\ntrustcall_extractor = create_extractor(model, tools=[Memory], tool_choice=\"Memory\", enable_inserts=True)\n\nconversation = [HumanMessage(content=\"Hi, I'm Lance.\"),\n                AIMessage(content=\"Nice to meet you, Lance.\"),\n                HumanMessage(content=\"This morning I had a nice bike ride in San Francisco.\")]\nresult = trustcall_extractor.invoke({\"messages\": [SystemMessage(content=\"Extract memories from the following conversation:\")] + conversation})\nfor m in result[\"responses\"]:\n    print(\"resp:\", m)\nprint(\"meta:\", result[\"response_metadata\"])\n\nexisting_memories = [(str(i), \"Memory\", m.model_dump()) for i, m in enumerate(result[\"responses\"])]\nprint(\"existing:\", existing_memories)\n\nupdated_conversation = [AIMessage(content=\"That's great, did you do after?\"),\n                        HumanMessage(content=\"I went to Tartine and ate a croissant.\"),\n                        AIMessage(content=\"What else is on your mind?\"),\n                        HumanMessage(content=\"I was thinking about my Japan, and going back this winter!\")]\nresult = trustcall_extractor.invoke({\"messages\": updated_conversation, \"existing\": existing_memories})\nfor m in result[\"responses\"]:\n    print(\"resp:\", m)\nfor m in result[\"response_metadata\"]:\n    print(\"meta:\", m)\n",
+   "notas": "- `enable_inserts=True`: además de parchar documentos, Trustcall puede **crear** nuevos.\n- `existing` ahora es una lista de tuplas `(id, nombre_del_schema, value)`, una por memoria.\n- El modelo hace varios tool calls en paralelo: uno por memoria que toca.",
+   "resaltar": [
+    12,
+    22
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real",
+   "contenido": "```\nresp: content='User had a nice bike ride in San Francisco this morning.'\nmeta: [{'id': 'call_1Vyl...'}]\n...\nresp: content='User had a nice bike ride ... User went to Tartine and ate a croissant.'\nresp: content='User went to Tartine and ate a croissant.'\nresp: content='User is thinking about going back to Japan this winter.'\nmeta: {'id': 'call_Daxn...', 'json_doc_id': '0'}\nmeta: {'id': 'call_2EFi...'}\nmeta: {'id': 'call_egVQ...'}\n```\n- Con `json_doc_id: '0'`: **actualizó** la memoria 0. Sin él: memoria **nueva**.\n- Lo de Tartine quedó dos veces: en la 0 y en una nueva. El notebook original (gpt-4o) hizo lo mismo. Las colecciones tienden a duplicar."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Guardar lo que devuelve Trustcall",
+   "contenido": "import uuid\nfrom langgraph.store.memory import InMemoryStore\n\nstore = InMemoryStore()\nnamespace = (\"memories\", \"1\")\nstore.put(namespace, \"a1\", {\"content\": \"User's name is Lance.\"})\nstore.put(namespace, \"b2\", {\"content\": \"User likes biking.\"})\n\n# Lo que Trustcall devuelve (simulado): una actualización y una inserción\nresponses = [{\"content\": \"User likes biking around San Francisco.\"},\n             {\"content\": \"User enjoys going to bakeries.\"}]\nresponse_metadata = [{\"id\": \"call_1\", \"json_doc_id\": \"b2\"},   # actualiza la memoria b2\n                     {\"id\": \"call_2\"}]                        # sin json_doc_id: es nueva\n\nfor r, rmeta in zip(responses, response_metadata):\n    store.put(namespace, rmeta.get(\"json_doc_id\", str(uuid.uuid4())), r)\n\nfor item in store.search(namespace):\n    print(item.key[:8], item.value)\n",
+   "notas": "Python puro; las respuestas están simuladas.\n- Si hay `json_doc_id`, el `put` usa esa key y **sobrescribe** esa memoria.\n- Si no, crea una key nueva.\nSalida real:\n```\na1 {'content': \"User's name is Lance.\"}\nb2 {'content': 'User likes biking around San Francisco.'}\n857929bf {'content': 'User enjoys going to bakeries.'}\n```",
+   "resaltar": [
+    16
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El chatbot con colección",
+   "contenido": "graph LR\n  START([START]) --> call_model\n  call_model --> write_memory\n  write_memory --> END([END])\n  class write_memory clave",
+   "notas": "El mismo grafo de 5.A y 5.B. Cambia lo que hace cada node:\n- `call_model` hace `store.search` y arma una lista con viñetas.\n- `write_memory` pasa **todas** las memorias como `existing` y guarda con la línea `json_doc_id` o uuid."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Chatbot con colección",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nimport uuid\nfrom pydantic import BaseModel, Field\nfrom trustcall import create_extractor\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage, merge_message_runs\nfrom langchain_core.runnables.config import RunnableConfig\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.store.base import BaseStore\nfrom langgraph.store.memory import InMemoryStore\n\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n\nclass Memory(BaseModel):\n    content: str = Field(description=\"The main content of the memory. For example: User expressed interest in learning about French.\")\n\ntrustcall_extractor = create_extractor(model, tools=[Memory], tool_choice=\"Memory\", enable_inserts=True)\n\nMODEL_SYSTEM_MESSAGE = \"\"\"You are a helpful chatbot. You are designed to be a companion to a user. \n\nYou have a long term memory which keeps track of information you learn about the user over time.\n\nCurrent Memory (may include updated memories from this conversation): \n\n{memory}\"\"\"\n\nTRUSTCALL_INSTRUCTION = \"\"\"Reflect on following interaction. \n\nUse the provided tools to retain any necessary memories about the user. \n\nUse parallel tool calling to handle updates and insertions simultaneously:\"\"\"\n\ndef call_model(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    user_id = config[\"configurable\"][\"user_id\"]\n    memories = store.search((\"memories\", user_id))\n    info = \"\\n\".join(f\"- {mem.value['content']}\" for mem in memories)\n    system_msg = MODEL_SYSTEM_MESSAGE.format(memory=info)\n    response = model.invoke([SystemMessage(content=system_msg)] + state[\"messages\"])\n    return {\"messages\": response}\n\ndef write_memory(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    user_id = config[\"configurable\"][\"user_id\"]\n    namespace = (\"memories\", user_id)\n    existing_items = store.search(namespace)\n    tool_name = \"Memory\"\n    existing_memories = ([(item.key, tool_name, item.value) for item in existing_items]\n                         if existing_items else None)\n    updated_messages = list(merge_message_runs(messages=[SystemMessage(content=TRUSTCALL_INSTRUCTION)] + state[\"messages\"]))\n    result = trustcall_extractor.invoke({\"messages\": updated_messages, \"existing\": existing_memories})\n    for r, rmeta in zip(result[\"responses\"], result[\"response_metadata\"]):\n        store.put(namespace,\n                  rmeta.get(\"json_doc_id\", str(uuid.uuid4())),\n                  r.model_dump(mode=\"json\"))\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"call_model\", call_model)\nbuilder.add_node(\"write_memory\", write_memory)\nbuilder.add_edge(START, \"call_model\")\nbuilder.add_edge(\"call_model\", \"write_memory\")\nbuilder.add_edge(\"write_memory\", END)\nacross_thread_memory = InMemoryStore()\ngraph = builder.compile(checkpointer=MemorySaver(), store=across_thread_memory)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\", \"user_id\": \"1\"}}\nfor text in [\"Hi, my name is Lance\", \"I like to bike around San Francisco\", \"I also enjoy going to bakeries\"]:\n    graph.invoke({\"messages\": [HumanMessage(text)]}, config)\n    print(f\"> {text}\")\n    for m in across_thread_memory.search((\"memories\", \"1\")):\n        print(\"   \", m.key[:8], m.value)\n",
+   "notas": "- La key de cada Item en el Store es el `id` que recibe Trustcall; por eso `json_doc_id` apunta directo a la key a sobrescribir.\n- `merge_message_runs` junta mensajes seguidos del mismo tipo (aquí, el system message con el historial).\nCódigo del notebook con gpt-4o-mini. Salida en el paso siguiente.",
+   "resaltar": [
+    48,
+    54
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dos corridas, mismo código",
+   "contenido": "**Corrida 1:**\n```\n> Hi, my name is Lance\n    6e7707ca {'content': \"User's name is Lance.\"}\n> I like to bike around San Francisco\n    6e7707ca {'content': 'User enjoys biking around San Francisco.'}\n    b3233918 {'content': 'User enjoys biking around San Francisco.'}\n> I also enjoy going to bakeries\n    6e7707ca {'content': 'User enjoys biking around San Francisco and going to bakeries.'}\n    ...\n```\n**Corrida 2:** el nombre se conservó, y salió un aviso `Could not apply patch: member 'interests' not found`: el modelo intentó parchar un campo que `Memory` no tiene.\n\n`temperature=0` no hace al LLM determinista."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin json_doc_id",
+   "contenido": "Es el código del paso 6 (\"Guardar lo que devuelve Trustcall\") con una línea cambiada: el primer metadata ya no trae `\"json_doc_id\": \"b2\"`. ¿Cuántas memorias imprime y cuál se repite?\n\n```python\nimport uuid\nfrom langgraph.store.memory import InMemoryStore\n\nstore = InMemoryStore()\nnamespace = (\"memories\", \"1\")\nstore.put(namespace, \"a1\", {\"content\": \"User's name is Lance.\"})\nstore.put(namespace, \"b2\", {\"content\": \"User likes biking.\"})\n\n# Lo que Trustcall devuelve (simulado): una actualización y una inserción\nresponses = [{\"content\": \"User likes biking around San Francisco.\"},\n             {\"content\": \"User enjoys going to bakeries.\"}]\nresponse_metadata = [{\"id\": \"call_1\"},                       # ya no dice json_doc_id\n                     {\"id\": \"call_2\"}]                        # sin json_doc_id: es nueva\n\nfor r, rmeta in zip(responses, response_metadata):\n    store.put(namespace, rmeta.get(\"json_doc_id\", str(uuid.uuid4())), r)\n\nfor item in store.search(namespace):\n    print(item.key[:8], item.value)\n```",
+   "respuesta": "Cuatro (salida real; los uuid cambian en cada corrida):\n```\na1 {'content': \"User's name is Lance.\"}\nb2 {'content': 'User likes biking.'}\n9fbb5e24 {'content': 'User likes biking around San Francisco.'}\n0bde6baa {'content': 'User enjoys going to bakeries.'}\n```\nSin `json_doc_id`, el `.get` devuelve un uuid nuevo, así que la actualización se guarda como memoria **nueva** y `b2` queda: la bici aparece dos veces. El metadata es lo único que conecta la respuesta con la memoria existente."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Dónde quedó el nombre?",
+   "contenido": "En la corrida 1 del chatbot con colección del paso 8 (salida en el paso 9), después del segundo turno ya no existe la memoria \"User's name is Lance.\". Nadie llamó `delete`. ¿Qué pasó?",
+   "respuesta": "El modelo decidió **actualizar** la memoria `6e7707ca` (la del nombre) con el contenido de la bici, en vez de insertar una nueva. Trustcall devolvió `json_doc_id='6e7707ca'` y el `put` sobrescribió esa key. El JSON era válido; la decisión fue mala. Con una colección, el LLM decide qué tocar y puede pisar lo que no debía.",
+   "ref": 8
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Más de diez memorias",
+   "contenido": "Un usuario ya tiene 15 memorias en `(\"memories\", \"1\")`. `call_model` del chatbot del paso 8 usa `store.search(namespace)` sin más argumentos. Este código hace lo mismo. ¿Cuántas ve el LLM?\n\n```python\nfrom langgraph.store.memory import InMemoryStore\n\nstore = InMemoryStore()\nnamespace = (\"memories\", \"1\")\nfor i in range(15):\n    store.put(namespace, f\"m{i}\", {\"content\": f\"Memoria número {i}\"})\n\n# Lo mismo que hace call_model del chatbot del paso 8\nmemories = store.search(namespace)\ninfo = \"\\n\".join(f\"- {mem.value['content']}\" for mem in memories)\nprint(\"ve el LLM:\", len(memories))\nprint(\"con limit=100:\", len(store.search(namespace, limit=100)))\n```",
+   "respuesta": "Diez. Salida real:\n```\nve el LLM: 10\ncon limit=100: 15\n```\n`search` tiene `limit=10` por defecto. Tampoco `write_memory` le pasa las otras 5 a Trustcall, así que no las puede actualizar y es más fácil que duplique. En una colección que crece, decide cuántas memorias traer (o busca por similitud, que el Store también permite)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Colección** = muchas memorias chicas, una key por memoria, se leen con `search`. **Perfil** = un documento con key fija, se lee con `get`.\n- Usa perfil para datos que se reemplazan y colección para hechos que se acumulan.\n- Trustcall con `enable_inserts=True` actualiza (con `json_doc_id`) o inserta (sin él); tu código traduce eso a `put`.\n- Riesgos de la colección: duplicados, memorias pisadas por el LLM y el `limit=10` de `search`.\n- En Deep Agents (M3.3) la memoria larga son archivos: un archivo fijo se parece al perfil, una carpeta de notas a la colección."
+  }
+ ],
+ "fuentes": [
+  "module-5/memoryschema_collection.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Cuándo conviene una colección de memorias en vez de un perfil?",
+   "reverso": "Cuando los datos se acumulan y no caben en campos fijos (eventos, notas, preferencias sueltas). El perfil es para datos que se reemplazan, como nombre o ciudad."
+  },
+  {
+   "frente": "En la respuesta de Trustcall con `enable_inserts=True`, ¿cómo sabes si una memoria es nueva o una actualización?",
+   "reverso": "Por `response_metadata`: si trae `json_doc_id`, actualiza ese documento; si no, es nueva y le das una key nueva (uuid)."
+  },
+  {
+   "frente": "¿Por qué una colección tiende a llenarse de duplicados?",
+   "reverso": "Porque el LLM decide si actualizar o insertar, y a menudo inserta algo que ya estaba en otra memoria. Nada en el Store lo impide."
+  },
+  {
+   "frente": "Tienes 15 memorias y haces `store.search(ns)` sin `limit`. ¿Cuántas recibes y por qué importa?",
+   "reverso": "10: es el límite por defecto. El LLM no ve las otras 5 y Trustcall no puede actualizarlas."
+  },
+  {
+   "frente": "En el chatbot con colección, ¿por qué la key del Item se usa como id en `existing`?",
+   "reverso": "Para que el `json_doc_id` que devuelve Trustcall sea justo la key a sobrescribir con `put`."
+  },
+  {
+   "frente": "Una memoria de la colección desapareció sin ningún `delete`. ¿Qué la pudo borrar?",
+   "reverso": "Un update de Trustcall: el modelo eligió parchar esa memoria con otro contenido y el `put` con su `json_doc_id` la sobrescribió."
+  }
+ ]
+}

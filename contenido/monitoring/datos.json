@@ -1,0 +1,293 @@
+{
+ "nombre": "05 Monitoring Production Agents",
+ "siguiente": "0.A",
+ "modulos": [
+  {
+   "n": 0,
+   "nombre": "Arranque"
+  },
+  {
+   "n": 1,
+   "nombre": "Costo"
+  },
+  {
+   "n": 2,
+   "nombre": "Product analytics"
+  },
+  {
+   "n": 3,
+   "nombre": "Calidad"
+  },
+  {
+   "n": 4,
+   "nombre": "Seguridad"
+  },
+  {
+   "n": 5,
+   "nombre": "Capstone"
+  }
+ ],
+ "misiones": [
+  {
+   "id": "0.A",
+   "modulo": 0,
+   "titulo": "Bienvenida y setup",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Welcome",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/lessons/73974125-welcome",
+     "min": 2
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Getting set up python text",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73760347-getting-set-up-python-text"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.A",
+   "modulo": 1,
+   "titulo": "Tokens y costos: desglosar, rastrear y ver",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 1 introduction video",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/lessons/73973942-module-1-introduction-video",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 1 introduction text",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73768856-module-1-introduction-text"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Token and cost breakdowns",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461446-token-and-cost-breakdowns"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Tracking costs",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461549-tracking-costs"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Viewing costs",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461557-viewing-costs"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.B",
+   "modulo": 1,
+   "titulo": "Lab y quiz de costos",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lab",
+     "titulo": "Module 1 lab",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73558529-module-1-lab"
+    },
+    {
+     "tipo": "quiz",
+     "titulo": "Module 1 quiz",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/quizzes/73627036-module-1-quiz"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.A",
+   "modulo": 2,
+   "titulo": "Tendencias con Insights",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 2 introduction video",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/lessons/73974287-module-2-introduction-video",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 2 introduction text",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73768861-module-2-introduction-text"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Analyze trends with insights",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461825-analyze-trends-with-insights"
+    },
+    {
+     "tipo": "lab",
+     "titulo": "Module 2 lab",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461836-module-2-lab"
+    },
+    {
+     "tipo": "quiz",
+     "titulo": "Module 2 quiz",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/quizzes/73618608-module-2-quiz"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.A",
+   "modulo": 3,
+   "titulo": "Latencia, errores y sentimiento del usuario",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 3 introduction video",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/lessons/73974788-module-3-introduction-video",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 3 introduction text",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73768866-module-3-introduction-text"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Monitoring latency and errors",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461856-monitoring-latency-and-errors"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Monitoring user sentiment",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461853-monitoring-user-sentiment"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.B",
+   "modulo": 3,
+   "titulo": "A/B testing, lab y quiz",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "A b testing",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461866-a-b-testing"
+    },
+    {
+     "tipo": "lab",
+     "titulo": "Module 3 lab",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73558535-module-3-lab"
+    },
+    {
+     "tipo": "quiz",
+     "titulo": "Module 3 quiz",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/quizzes/73629587-module-3-quiz"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.A",
+   "modulo": 4,
+   "titulo": "Seguridad y alertas",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 4 introduction video",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/lessons/73974893-module-4-introduction-video",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 4 introduction text",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73768867-module-4-introduction-text"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Monitoring security",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461570-monitoring-security"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Setting up alerts",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73461577-setting-up-alerts"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.B",
+   "modulo": 4,
+   "titulo": "Lab y quiz de seguridad",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lab",
+     "titulo": "Module 4 lab",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73558536-module-4-lab"
+    },
+    {
+     "tipo": "quiz",
+     "titulo": "Module 4 quiz",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/quizzes/73465755-module-4-quiz"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.A",
+   "modulo": 5,
+   "titulo": "Capstone",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Capstone project",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/multimedia/73754643-capstone-project"
+    },
+    {
+     "tipo": "quiz",
+     "titulo": "Capstone quiz",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/quizzes/73754565-capstone-quiz"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Conclusion",
+     "url": "https://academy.langchain.com/courses/take/production-monitoring/lessons/73975062-conclusion",
+     "min": 1
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  }
+ ],
+ "proyecto": null,
+ "hilos": [],
+ "sesiones": [],
+ "hojas": {},
+ "banco": [],
+ "examenes": []
+}

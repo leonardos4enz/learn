@@ -1,0 +1,135 @@
+{
+ "mision_id": "P.0",
+ "titulo": "Cómo es el examen",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Haber visto los cursos no basta para aprobar la LCAE. El examen mide tres cosas a la vez:\n\n1. **Recordar** conceptos sin apuntes.\n2. **Encontrar** rápido lo que no recuerdas en docs y en LangSmith.\n3. **Administrar** 120 minutos sin pausas.\n\nSi no conoces el formato ni las reglas, pierdes puntos que sí sabías: te pasas de tiempo en una pregunta, usas algo prohibido o llegas a la sección de Monitor sin las trazas cargadas.\n\nEsta lección es el mapa: cómo es el examen, cómo usar el examen de práctica y qué no tocar del repo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Formato y puntaje",
+   "contenido": "| | |\n|---|---|\n| Preguntas | 40, opción múltiple |\n| Para aprobar | 28/40 (70 %) |\n| Duración | 120 min (~135 min sentado, con la verificación) |\n| Dominios | Build, Test, Deploy, Monitor: **10 preguntas cada uno** (25 %) |\n| Modalidad | En línea, solo, con supervisor (proctor) en vivo |\n| Idioma | Inglés |\n| Precio y validez | 99 USD, válida 24 meses |\n\nEl examen sigue el *Agent Development Lifecycle*: construir, probar, desplegar, monitorear. Cada dominio pesa igual, así que un dominio flojo te cuesta lo mismo que cualquier otro.\n\n*Consultado el 2026-11-11 en la página de la certificación y la exam guide.*"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Semi-open-book: qué sí y qué no",
+   "contenido": "| Permitido | Prohibido |\n|---|---|\n| docs.langchain.com | Google o cualquier buscador web |\n| smith.langchain.com | IA (ChatGPT, Claude Code, etc.) |\n| academy.langchain.com | **El AI helper de docs.langchain.com** |\n| | Agentes de navegador o automatización |\n| | Segundas pantallas (monitor o teléfono) |\n| | Notas o papel, pausas, comunicarte con alguien |\n\nLa trampa típica: \"docs está permitido, entonces su chat también\". No: el sitio sí, su asistente de IA no.\n\nLa guía dice que el examen **no está pensado para ver el material por primera vez**. Las docs sirven para confirmar un detalle, no para aprender un tema.\n\n*Reglas consultadas el 2026-11-11 (exam guide, págs. 1 y 3).*"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El org de LangSmith del examen",
+   "contenido": "Para el examen real te crean una **organización de LangSmith dedicada**. Te llega una invitación por correo unas 2 horas antes. Varias preguntas se contestan **navegando** ese org: abrir un proyecto, leer trazas, filtrar, ver costos o feedback.\n\nO sea, una parte del examen es práctica de UI, no de memoria. Si nunca filtraste trazas en LangSmith, esas preguntas te comen el tiempo.\n\nEn el examen de práctica no hay org dedicado: usas **tu propio workspace**. Por eso la sección de Monitor pide subir antes unas trazas a un proyecto llamado `customer-support` (lo ves en el paso del setup)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Mapa: sección, curso y misión",
+   "contenido": "| Sección en Academy | Dominio | Curso previo | Misión en la app |\n|---|---|---|---|\n| 1 | Build | 01 LangChain + 03 Deep Agents | P.1 |\n| 2 | Test | 04 Building Reliable Agents | P.2 |\n| 3 | **Deploy** | 06 LangSmith Deployment | **P.4** |\n| 4 | **Monitor** | 05 Monitoring Production Agents | **P.3** |\n\nOjo con la numeración cruzada: en Academy la sección 3 es Deploy y la 4 es Monitor. En la app, **P.3 es Monitor (sección 4)** y **P.4 es Deploy (sección 3)**.\n\nPor qué: las misiones siguen el orden de los cursos de tu ruta (05 Monitoring va antes que 06 Deployment). Cada sección es un quiz aparte en Academy, así que se pueden hacer en cualquier orden. El link de cada misión ya apunta al quiz correcto."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "La ruta completa",
+   "contenido": "graph LR\n  c01[01 LangChain] --> P1[P.1 Build<br/>sección 1]\n  c03[03 Deep Agents] --> P1\n  c04[04 Reliable Agents] --> P2[P.2 Test<br/>sección 2]\n  c05[05 Monitoring] --> P3[P.3 Monitor<br/>sección 4]\n  c06[06 LS Deployment] --> P4[P.4 Deploy<br/>sección 3]\n  P1 --> X1[X.1 Examen real]\n  P2 --> X1\n  P3 --> X1\n  P4 --> X1\n  class P3 clave\n  class P4 clave",
+   "notas": "Cada sección de práctica va justo después del curso que la cubre, no todas al final.\nLos dos nodes marcados son los de la numeración cruzada: P.3 es la sección 4 y P.4 es la sección 3.\nX.1 (agendar el examen real) solo se abre cuando las cuatro secciones pasan de 70 %."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Protocolo: durante la sección",
+   "contenido": "Haz cada sección **en las condiciones del examen real**:\n\n- Solo docs.langchain.com, smith.langchain.com y academy.langchain.com. Sin IA, sin tutor, sin apuntes, sin tus hojas.\n- Con reloj: 10 preguntas en ~30 min (3 min por pregunta).\n- Sin pausas.\n\nPor cada pregunta anota en un papel **aparte del quiz** (en la práctica sí se vale):\n\n1. La opción que elegiste.\n2. Si estabas **seguro** o **dudoso**.\n3. En una línea, por qué la elegiste.\n\nPor qué: practicar con ayuda se siente bien, pero no mide lo que recuerdas (Bastani 2025). Y el \"por qué la elegí\" es lo que deja ver el malentendido exacto, incluso cuando aciertas por suerte."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Protocolo: después, con el tutor",
+   "contenido": "Al terminar la sección, abre `/tutor lcae` y llévale tus notas. Con cada pregunta fallada **o dudosa**:\n\n1. **Clasifica el error:** no lo sabía / lo confundí con otra cosa / leí mal la pregunta / no lo encontré a tiempo en docs.\n2. **El tutor explica el concepto**, no solo la letra correcta.\n3. **Se crea una tarjeta** de ese concepto (entra al repaso FSRS).\n4. El tutor anota el puntaje de la sección en la app.\n\nRegla: si una sección queda **abajo de 7/10**, repasas ese curso antes de pensar en el examen real.\n\nNo repitas la misma sección enseguida: ya recordarías las preguntas y el puntaje mediría memoria del quiz, no del tema."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Aviso: archivos que no debes abrir",
+   "contenido": "El repo `07 LCAE Practice Exam/lcae-practice-exam` trae las trazas para la sección de Monitor. Dos archivos **revelan las respuestas** de esa sección:\n\n- `scripts/gen_traces.py` (el generador; describe los escenarios sembrados)\n- `traces.json` (las trazas en crudo)\n\n**No los abras antes de hacer P.3**, ni le pidas a Claude ni al tutor que los lea para \"prepararte\". Tampoco hace falta: el script de subida los usa solo.\n\nPor qué importa: la sección 4 mide si sabes **encontrar** algo en LangSmith. Si ya leíste qué hay sembrado, contestas de memoria y el puntaje deja de decirte si estás listo.\n\nLos que sí puedes leer: `README.md` y `upload_traces.py`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Subir las trazas (cuando llegues a P.3)",
+   "contenido": "# 1. Entra a la carpeta del repo de trazas\ncd \"C:/ruta/a/tus/cursos\\07 LCAE Practice Exam\\lcae-practice-exam\"\n\n# 2. Crea tu .env desde la plantilla y ábrelo para pegar tu LANGSMITH_API_KEY\nCopy-Item .env.example .env\ncode .env\n\n# 3. Instala las dependencias (langsmith, python-dotenv) en un .venv propio\nuv sync\n\n# 4. Sube las trazas al proyecto customer-support de tu workspace\nuv run python upload_traces.py",
+   "notas": "Comandos de PowerShell, en ese orden y desde la carpeta del repo. Pega la key **tú** en el `.env` (de smith.langchain.com → Settings → API Keys); nunca en el chat.\nVerificado sin key: el script se detiene antes de tocar la red e imprime `ERROR: LANGSMITH_API_KEY is not set. Copy .env.example to .env and add your key.`\nCon key (según el código, no corrido aquí porque sube datos a tu workspace): imprime `Uploading N traces to project 'customer-support' ...`, el avance cada 5 trazas, `Done.` y la URL del proyecto. Tarda como un minuto.",
+   "resaltar": [
+    12
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Una sola vez, y antes de empezar",
+   "contenido": "Dos reglas para la subida:\n\n- **Córrela antes de abrir la sección 4**, no a la mitad. Las preguntas suponen que el proyecto `customer-support` ya existe con todas sus trazas.\n- **Córrela una sola vez.** Cada corrida crea runs nuevos (ids nuevos) en el mismo proyecto. Si la corres dos veces, las trazas quedan duplicadas y cualquier conteo o costo que leas sale el doble. Si te pasó, borra el proyecto `customer-support` en LangSmith y súbelo de nuevo.\n\n`uv sync` crea un `.venv` dentro de esa carpeta. Es independiente del `.venv` de LangGraph: no lo mezcles con el kernel de los notebooks."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La pregunta que te come 8 minutos",
+   "contenido": "Tienes 120 minutos para 40 preguntas. Vas en la pregunta 12 y llevas 8 minutos en ella, sin decidirte entre dos opciones.\n\n¿Cuánto tiempo promedio tienes por pregunta, cuántas preguntas \"te costó\" esta y qué haces ahora?",
+   "respuesta": "120 / 40 = **3 minutos** por pregunta. Ocho minutos equivalen a casi tres preguntas. Lo sensato: elige la opción que te parezca más probable, deja una nota mental de volver si la plataforma lo permite y avanza. Ponte un tope (unos 4 minutos) antes de empezar. Una pregunta difícil vale lo mismo que una fácil, y 28 aciertos se juntan sobre todo con las que sí sabes."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: no recuerdas un parámetro",
+   "contenido": "Estás en el examen real y no recuerdas el nombre exacto de un parámetro. ¿Qué **sí** puedes hacer?\n\n- **A)** Preguntarle al asistente de IA de docs.langchain.com.\n- **B)** Buscar en Google y abrir solo resultados de docs.langchain.com.\n- **C)** Abrir docs.langchain.com y llegar a la página navegando su menú.\n- **D)** Abrir smith.langchain.com en tu teléfono para no perder la pestaña del examen.",
+   "respuesta": "**C.** docs.langchain.com está en la lista permitida y navegarlo es justo para lo que sirve.\n- A: el AI helper de docs está prohibido aunque el sitio esté permitido.\n- B: está prohibido cualquier buscador web, aunque el destino sea un sitio permitido.\n- D: el teléfono solo puede ser la cámara del entorno; segundas pantallas, prohibidas.\nLa guía no habla del buscador interno de docs; si dudas, pregúntale al proctor antes de empezar."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "27 de 40 con Build perfecto",
+   "contenido": "En el examen real sacas 10/10 en Build y 17/30 en Test, Deploy y Monitor juntos: 27/40.\n\n¿Apruebas? ¿Qué te dice eso de cómo prepararte?",
+   "respuesta": "**No.** Se aprueba con 28/40 (70 %); 27 se queda a uno. La guía no publica un mínimo por dominio, pero cada dominio pone 10 preguntas: uno perfecto no compensa tres flojos. Por eso el criterio de la ruta es **cada sección ≥ 7/10**: 4 × 7 = 28. Prepararte parejo rinde más que brillar en el dominio que ya te gusta."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Por qué subir las trazas antes?",
+   "contenido": "Llegas a la sección 4 (Monitor, misión P.3) y te das cuenta de que no corriste `upload_traces.py` (los comandos del paso 10). Piensas: \"lo corro ahora y empiezo; si algo sale raro, lo corro otra vez\".\n\n¿Qué problemas tiene ese plan?",
+   "respuesta": "Dos. Primero, las preguntas suponen que el proyecto `customer-support` ya está completo: si contestas mientras sube, puedes ver datos a medias, y en condiciones de examen ese tiempo cuenta. Segundo, correrlo otra vez **duplica** las trazas (cada corrida crea runs con ids nuevos en el mismo proyecto), así que conteos y costos salen mal. Súbelo una vez, antes, y verifica que el proyecto aparezca en LangSmith.",
+   "ref": 10
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- 40 preguntas, 10 por dominio, 28 para aprobar, 120 minutos: unos 3 minutos por pregunta.\n- Semi-open-book: solo docs, smith y academy de LangChain. Sin buscador, sin IA (tampoco la de docs), sin notas ni pausas.\n- Varias preguntas se contestan navegando un org de LangSmith real: practica la UI, no solo la teoría.\n- Academy: sección 3 = Deploy, sección 4 = Monitor. App: P.3 = Monitor, P.4 = Deploy.\n- Cada sección, después de su curso, sin ayuda; luego análisis de errores con el tutor. Abajo de 7/10, repasas el curso.\n- No abras `scripts/gen_traces.py` ni `traces.json` antes de P.3. Sube las trazas una vez, antes de la sección 4.\n\n**Dónde buscarlo:** la exam guide (PDF) en la página de la certificación de Academy, botón *Download the exam guide*."
+  }
+ ],
+ "fuentes": [
+  "https://academy.langchain.com/pages/certifications-lcae",
+  "https://pub-dffa5f25c09c49488e245c43fcd4d0b5.r2.dev/exam_guide.pdf",
+  "https://langchain-ai.github.io/lca-lessons/lcae-practice-exam/m0-get-started/m0.1-welcome.html",
+  "https://github.com/langchain-samples/lcae-practice-exam",
+  "07 LCAE Practice Exam/lcae-practice-exam/README.md",
+  "07 LCAE Practice Exam/lcae-practice-exam/upload_traces.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Sacas 10/10 en un dominio de la LCAE. ¿Por qué eso no te da margen tranquilo?",
+   "reverso": "Se aprueba con 28/40 y cada dominio pone solo 10 preguntas. Uno perfecto no compensa tres flojos; por eso la meta es ≥ 7/10 en cada sección."
+  },
+  {
+   "frente": "docs.langchain.com está permitido en el examen. ¿Puedes usar su asistente de IA?",
+   "reverso": "No. La guía prohíbe explícitamente el AI helper de docs. El sitio sí, su chat no."
+  },
+  {
+   "frente": "¿Por qué hacer la práctica sin IA, sin tutor y sin apuntes si el examen real permite docs?",
+   "reverso": "Porque así son las condiciones reales: docs y LangSmith sí, todo lo demás no. Practicar con más ayuda infla el puntaje y no mide lo que recuerdas."
+  },
+  {
+   "frente": "¿Por qué no abrir `scripts/gen_traces.py` ni `traces.json` antes de la sección de Monitor?",
+   "reverso": "Describen lo que está sembrado en las trazas, o sea, las respuestas. La sección mide si sabes encontrarlo en LangSmith; leído antes, el puntaje no dice nada."
+  },
+  {
+   "frente": "En Academy, ¿qué número tienen las secciones de Deploy y Monitor, y qué misión son en la app?",
+   "reverso": "Sección 3 = Deploy (misión P.4); sección 4 = Monitor (misión P.3). La app sigue el orden de los cursos: Monitoring va antes que Deployment."
+  },
+  {
+   "frente": "¿Qué pasa si corres `upload_traces.py` dos veces?",
+   "reverso": "Crea runs con ids nuevos en el mismo proyecto: las trazas quedan duplicadas y conteos y costos salen al doble. Se corre una vez; si pasó, borra el proyecto y súbelo de nuevo."
+  },
+  {
+   "frente": "Una pregunta del examen ya te tomó 4 minutos. ¿Qué haces y por qué?",
+   "reverso": "Eliges la opción más probable y sigues. Tienes ~3 min por pregunta y todas valen lo mismo; los 28 aciertos salen sobre todo de las que sí sabes."
+  }
+ ]
+}

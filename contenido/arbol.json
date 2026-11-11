@@ -1,0 +1,56 @@
+[
+ {
+  "id": "ia",
+  "nombre": "IA",
+  "hijos": [
+   {
+    "id": "lca",
+    "nombre": "LangChain Academy",
+    "hijos": [
+     {
+      "id": "langchain",
+      "nombre": "01 Introduction to LangChain",
+      "curso": true,
+      "estado": "en pausa"
+     },
+     {
+      "id": "langgraph",
+      "nombre": "02 Introduction to LangGraph",
+      "curso": true,
+      "estado": "en pausa"
+     },
+     {
+      "id": "deepagents",
+      "nombre": "03 Introduction to Deep Agents",
+      "curso": true,
+      "estado": "en pausa"
+     },
+     {
+      "id": "reliable",
+      "nombre": "04 Building Reliable Agents with LangSmith",
+      "curso": true,
+      "estado": "en pausa"
+     },
+     {
+      "id": "monitoring",
+      "nombre": "05 Monitoring Production Agents",
+      "curso": true,
+      "estado": "en pausa"
+     },
+     {
+      "id": "lsdeploy",
+      "nombre": "06 Introduction to LangSmith Deployment",
+      "curso": true,
+      "estado": "en pausa"
+     },
+     {
+      "id": "lcae",
+      "nombre": "07 LCAE · Certificación",
+      "curso": true,
+      "estado": "en pausa"
+     }
+    ]
+   }
+  ]
+ }
+]

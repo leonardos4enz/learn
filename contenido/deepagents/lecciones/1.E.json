@@ -1,0 +1,123 @@
+{
+ "mision_id": "1.E",
+ "titulo": "Pon a prueba el Módulo 1",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "Qué vas a hacer",
+   "contenido": "La práctica del Módulo 1 junta todo en un agente: un quiz de personalidad en la terminal, un **juez** con persona propia que puntúa tus respuestas, te asigna un producto de LangChain, dibuja tu tarjeta y redacta un post que **pausa** para que lo apruebes.\n\nEl archivo es `python/m1/Practice/judge_card_practice.py` (6 TODOs) y la referencia es `judge_card_practice_filled.py`. Aquí no lo escribes desde cero: lo **lees, predices y rompes**. Cada TODO es una lección del módulo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El mapa: cada TODO es una lección",
+   "contenido": "| TODO | Lección | Qué se hace |\n|---|---|---|\n| 1 | 1.B system prompt | La persona del juez (`\"your_persona\"`). `TOOL_SEQUENCE` ya agrega los pasos. |\n| 2 | 1.C tools | Terminar `score_and_match`: de puntajes a producto. |\n| 3 | 1.D threads | Agregar un segundo juez a `JUDGES_TO_RUN`: corre en su propio hilo. |\n| 4 | 1.D HITL | `INTERRUPT_ON = {\"post_card\": True}`. |\n| 5 (opcional) | 1.B modelos | `MODEL = strong_model`. |\n| 6 (reto) | 1.C MCP | Un dato real del producto desde el MCP de docs. |\n\nLo mecánico (quiz, dibujo de la tarjeta, el loop de aprobación) está en `judge_card_helpers.py`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Donde se junta todo: run_judge (de judge_card_helpers.py)",
+   "contenido": "def run_judge(\n    judge_name: str,\n    *,\n    system_prompt: str,\n    user_prompt: str,\n    tools: list,\n    model,\n    interrupt_on: dict | None = None,\n    thread_prefix: str = \"m1-practice\",\n) -> None:\n    \"\"\"Build the agent for one judge persona, run the quiz, and walk through\n    any human-in-the-loop approval prompts until it's done.\"\"\"\n    agent = create_deep_agent(\n        model=model,\n        tools=tools,\n        system_prompt=system_prompt,\n        interrupt_on=interrupt_on,\n        checkpointer=MemorySaver(),\n    )\n    config = {\"configurable\": {\"thread_id\": f\"{thread_prefix}-{judge_name}\"}}\n\n    result = _invoke_checked(\n        agent, {\"messages\": [{\"role\": \"user\", \"content\": user_prompt}]}, config\n    )\n\n    while result.interrupts:\n        pending = result.interrupts[0].value\n        decisions = []\n        for req in pending[\"action_requests\"]:\n            print(f\"\\n[{judge_name}] approval required for {req['name']}:\")\n            if req[\"name\"] == \"post_card\":\n                render_mock_post(req[\"args\"].get(\"caption\", \"\"), posted=False)\n            else:\n                for key, value in req[\"args\"].items():\n                    if isinstance(value, str):\n                        wrapped = textwrap.wrap(value, width=44) or [\"\"]\n                        indent = \" \" * (len(key) + 4)\n                        print(f\"  {key}: {wrapped[0]}\")\n                        for line in wrapped[1:]:\n                            print(f\"{indent}{line}\")\n                    else:\n                        print(f\"  {key}: {value}\")\n            while True:\n                choice = input(\"Approve, edit, or reject? (approve/edit/reject): \").strip().lower()\n                if choice in (\"approve\", \"accept\", \"yes\", \"y\"):\n                    decisions.append({\"type\": \"approve\"})\n                    break\n                elif choice in (\"edit\", \"e\"):\n                    edited_args = dict(req[\"args\"])\n                    edited_args[\"caption\"] = input(\"New caption: \")\n                    decisions.append({\"type\": \"edit\", \"edited_action\": {\"name\": req[\"name\"], \"args\": edited_args}})\n                    break\n                elif choice in (\"reject\", \"r\", \"no\", \"n\"):\n                    decisions.append({\"type\": \"reject\", \"message\": \"User rejected this card before it posted.\"})\n                    break\n                else:\n                    print(\"  Please type approve, edit, or reject.\")\n        result = _invoke_checked(agent, Command(resume={\"decisions\": decisions}), config)",
+   "notas": "Es la función completa del helper (no se corre sola: usa otras funciones del archivo). Mira tres líneas:\n`create_deep_agent(...)` recibe persona (`system_prompt`), tools e `interrupt_on`, con **un `MemorySaver()` nuevo por juez**.\n`thread_id = f\"{thread_prefix}-{judge_name}\"`: un hilo por juez.\n`while result.interrupts:` es el loop approve/edit/reject de 1.D, con `Command(resume={\"decisions\": ...})`.",
+   "resaltar": [
+    18,
+    20,
+    26
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "TODOs 3, 4 y 5 en el _filled",
+   "contenido": "# TODO 3 filled in: run all four personas (three shipped + your_persona)\nJUDGES_TO_RUN = [\"your_persona\", \"ancient_mummy\", \"salty_pirate\", \"savage_critic\"]\n\n# TODO 4 filled in\nINTERRUPT_ON = {\"post_card\": True}\n\n# TODO 5 (optional) left as the default model\nMODEL = model",
+   "notas": "Tres líneas de configuración, tal cual en `judge_card_practice_filled.py`.\n`JUDGES_TO_RUN` con 4 jueces = 4 llamadas a `run_judge`, cada una con su agente, su `MemorySaver` y su `thread_id`.\n`INTERRUPT_ON` solo nombra `post_card`: las demás tools corren sin pausa.",
+   "resaltar": [
+    2,
+    5
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "TODO 2: score_and_match, en Python puro",
+   "contenido": "TRAIT_AXES = [(\"Chaotic\", \"Organized\"), (\"Cautious\", \"Bold\"), (\"Solo\", \"Collaborative\")]\nPRODUCT_MATCHES = {\n    \"chaotic\": \"Fleet\",\n    \"organized\": \"Evaluation\",\n    \"cautious\": \"Observability\",\n    \"bold\": \"Engine\",\n    \"solo\": \"Sandboxes\",\n    \"collaborative\": \"Deployment\",\n}\n\n\ndef score_and_match(answers):\n    scores = [50, 50, 50]\n    for delta in answers:\n        for i in range(3):\n            scores[i] += delta[i]\n    scores = [max(0, min(100, score)) for score in scores]\n    axis_index = max(range(3), key=lambda i: abs(scores[i] - 50))\n    left, right = TRAIT_AXES[axis_index]\n    direction = right if scores[axis_index] >= 50 else left\n    product = PRODUCT_MATCHES[direction.lower()]\n    return {\"trait_scores\": scores, \"product\": product}\n\n\nprint(score_and_match([(2, 0, -2), (0, 1, 0), (2, -1, -2)]))\nprint(score_and_match([(-2, 0, 2), (-2, 1, 0), (0, 0, 1)]))\nprint(score_and_match([(0, -3, 0), (1, 0, 2), (0, -1, 0)]))",
+   "notas": "Es la lógica de `score_and_match` del _filled sin `@tool`, con `TRAIT_AXES` y `PRODUCT_MATCHES` copiados del helper, para correrla sin agente.\nSalida real:\n`{'trait_scores': [54, 50, 46], 'product': 'Evaluation'}`\n`{'trait_scores': [46, 51, 53], 'product': 'Fleet'}`\n`{'trait_scores': [51, 46, 52], 'product': 'Observability'}`\nCada puntaje empieza en 50 y suma los deltas; `max(0, min(100, score))` lo deja entre 0 y 100. Gana el eje **más lejos de 50**.",
+   "resaltar": [
+    18,
+    20
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Python: max con key",
+   "contenido": "scores = [46, 51, 53]\n\ndistancias = [abs(s - 50) for s in scores]\nprint(\"distancias:\", distancias)\n\naxis_index = max(range(3), key=lambda i: abs(scores[i] - 50))\nprint(\"axis_index:\", axis_index)",
+   "notas": "Salida real:\n`distancias: [4, 1, 3]`\n`axis_index: 0`\n`max(range(3), key=...)` recorre los **índices** 0, 1, 2 y se queda con el que da el valor más grande de `key`; devuelve el **índice**, no la distancia.\n`lambda i: abs(scores[i] - 50)` es una función de una línea: para el índice 0 da `abs(46 - 50) = 4`.\nSi hay empate, `max` se queda con el **primero** que encontró.",
+   "resaltar": [
+    6
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un juez de mentira: ¿dónde pausa?",
+   "contenido": "from deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.tools import tool\nfrom langgraph.checkpoint.memory import MemorySaver\n\nfrom guion import ModeloGuion\n\n\n@tool\ndef score_and_match(answers: list[tuple[int, int, int]]) -> dict:\n    \"\"\"Tally the quiz answers and pick a matching LangChain product.\"\"\"\n    return {\"trait_scores\": [54, 51, 46], \"product\": \"Evaluation\"}\n\n\n@tool\ndef post_card(caption: str) -> str:\n    \"\"\"Publish the finished result card as a mock post on X.\"\"\"\n    return f\"Posted with caption: {caption!r}\"\n\n\ndef run(interrupt_on):\n    model = ModeloGuion(guion=[\n        AIMessage(\"\", tool_calls=[{\"name\": \"score_and_match\", \"id\": \"c1\", \"args\": {\"answers\": [[2, 0, -2], [0, 1, 0], [2, 0, -2]]}}]),\n        AIMessage(\"\", tool_calls=[{\"name\": \"post_card\", \"id\": \"c2\", \"args\": {\"caption\": \"Soy Evaluation\"}}]),\n        AIMessage(\"Listo.\"),\n    ])\n    agent = create_deep_agent(model=model, tools=[score_and_match, post_card],\n                              system_prompt=\"You are Pixel...\", interrupt_on=interrupt_on,\n                              checkpointer=MemorySaver())\n    config = {\"configurable\": {\"thread_id\": \"m1-practice-your_persona\"}}\n    result = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"quiz\"}]}, config=config, version=\"v2\")\n    tools_que_corrieron = [m.name for m in agent.get_state(config).values[\"messages\"] if m.type == \"tool\"]\n    print(f\"interrupt_on={interrupt_on}: pausas={len(result.interrupts)}\",\n          \"| en:\", [r[\"name\"] for i in result.interrupts for r in i.value[\"action_requests\"]],\n          \"| tools que ya corrieron:\", tools_que_corrieron)\n\n\nrun(None)\nrun({\"post_card\": True})",
+   "notas": "Mini versión del juez con el modelo de guion de 1.A: pide `score_and_match`, luego `post_card`, y termina. Lo corro sin y con `interrupt_on`.\nSalida real:\n`interrupt_on=None: pausas=0 | en: [] | tools que ya corrieron: ['score_and_match', 'post_card']`\n`interrupt_on={'post_card': True}: pausas=1 | en: ['post_card'] | tools que ya corrieron: ['score_and_match']`\nCon `None` el post sale sin preguntar. Con TODO 4, `score_and_match` corre y la pausa cae justo antes de `post_card`.",
+   "resaltar": [
+    21,
+    39
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Empate en score_and_match",
+   "contenido": "Con la función del paso 5, las respuestas `[(2, 0, -2), (0, 1, 0), (2, -1, -2)]` dan `trait_scores = [54, 50, 46]`. Las distancias a 50 son 4, 0 y 4: hay empate entre el eje 0 (Chaotic/Organized) y el 2 (Solo/Collaborative). ¿Qué producto sale y por qué?",
+   "respuesta": "Salida real: `'product': 'Evaluation'`.\n`max(range(3), key=...)` devuelve el **primer** índice con la distancia máxima: el 0. Como `scores[0] = 54 >= 50`, la dirección es `\"Organized\"` y `PRODUCT_MATCHES[\"organized\"]` es `\"Evaluation\"`. Si el empate se resolviera por el último, saldría `\"Sandboxes\"` (Solo).",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: rompes run_judge",
+   "contenido": "En `run_judge` (paso 3) borras `checkpointer=MemorySaver()` y dejas `INTERRUPT_ON = {\"post_card\": True}`. Corres el quiz. ¿Qué pasa?\n\nA) El post sale sin pausa: sin checkpointer se ignora `interrupt_on`.\nB) Pausa antes de `post_card`, y al aprobar falla con `RuntimeError`: no hay checkpointer para reanudar.\nC) Funciona igual, porque cada juez tiene su `thread_id`.\nD) Falla al crear el agente, antes de la primera pregunta del quiz.",
+   "respuesta": "**B.** Lo comprobaste en 1.D: sin checkpointer la pausa ocurre, pero `Command(resume=...)` da `RuntimeError: Cannot use Command(resume=...) without checkpointer`.\nA no: la pausa sí ocurre. C no: el `thread_id` es solo la dirección. D no: `create_deep_agent` acepta `interrupt_on` sin checkpointer; el error aparece al reanudar.",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: dos jueces",
+   "contenido": "Con `JUDGES_TO_RUN = [\"your_persona\", \"ancient_mummy\"]` (paso 4), Pixel juzga primero y publica su post. Luego corre la momia. ¿Qué ve la momia del trabajo de Pixel?\n\nA) Todo el historial de Pixel, porque comparten el mismo modelo.\nB) Nada: cada juez tiene su propio agente, `MemorySaver` y `thread_id`; solo recibe las mismas respuestas del quiz.\nC) Solo el post final de Pixel, porque `post_card` lo guarda en el checkpointer.\nD) El historial de Pixel, porque `thread_prefix` es el mismo para los dos.",
+   "respuesta": "**B.** `run_judge` crea un agente nuevo con `MemorySaver()` nuevo y `thread_id = f\"{thread_prefix}-{judge_name}\"`: hilos distintos y además almacenes distintos.\nA no: el modelo no guarda memoria. C no: `post_card` solo devuelve un string. D no: el prefijo es igual pero el id completo cambia con `judge_name`.",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "TODO 6: cuando el servidor no responde",
+   "contenido": "Este es el TODO 6 del _filled:\n\n```python\nPLACEHOLDER_FACT = \"No docs fact available. Base the verdict on the trait scores instead.\"\n\n\nasync def _fetch_product_fact_async(product: str) -> str:\n    try:\n        client = MultiServerMCPClient({\n            \"docs-langchain\": {\"transport\": \"http\", \"url\": \"https://docs.langchain.com/mcp\"},\n        })\n        tools = await client.get_tools()\n        tools = [t for t in tools if t.name == \"search_docs_by_lang_chain\"]\n        fact_agent = create_deep_agent(model=model, tools=tools)\n        result = await fact_agent.ainvoke({\"messages\": [{\"role\": \"user\", \"content\": (\n            f\"Use the LangChain docs MCP tool to describe the LangChain product \"\n            f\"'{product}' in ONE short factual sentence (under 25 words). No \"\n            f\"preamble, just the sentence. Refer to it only as '{product}': if \"\n            \"the docs use an older or alternate name for it (e.g. 'Agent \"\n            f\"Builder' for Fleet), write '{product}' instead, not that name.\"\n        )}]})\n        return result[\"messages\"][-1].text.strip()\n    except Exception as exc:\n        print(f\"[product fact] falling back to placeholder ({exc})\")\n        return PLACEHOLDER_FACT\n\n\n# TODO 6 filled in (stretch goal)\n@tool\ndef fetch_product_fact(product: str) -> str:\n    \"\"\"Look up one grounded, factual sentence about the LangChain product\n    you were matched with. Call this right after score_and_match, passing\n    in the product name it returned.\"\"\"\n    return asyncio.run(_fetch_product_fact_async(product))\n```\n\nSin internet, `client.get_tools()` lanza una excepción. ¿Qué recibe el agente juez como resultado de `fetch_product_fact` y cómo sabes que falló?",
+   "respuesta": "Recibe `PLACEHOLDER_FACT` (\"No docs fact available. Base the verdict on the trait scores instead.\"): el `except` atrapa el error, imprime `[product fact] falling back to placeholder (...)` y devuelve el texto de respaldo. El agente sigue y juzga solo con los puntajes.\nEs el mismo texto que si el TODO 6 no estuviera hecho, así que el `print` es lo único que te dice que falló. Mismo patrón que `read_sql` en 1.C: la tool devuelve texto en vez de tumbar la corrida."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen y cómo correrlo",
+   "contenido": "- Un solo `create_deep_agent` junta todo el módulo: persona (`system_prompt`), tools propias y de MCP, checkpointer + `thread_id` y HITL.\n- `interrupt_on` solo pausa las tools que nombras; para reanudar hacen falta checkpointer y el mismo `thread_id`.\n- Un juez = un agente, un `MemorySaver`, un hilo: no comparten nada salvo el input.\n- Las tools devuelven errores como texto (`read_sql`, `fetch_product_fact`) para que el agente siga.\n\nPara correr el _filled: desde `python`, `uv run python m1/Practice/judge_card_practice_filled.py`. Pide `ANTHROPIC_API_KEY` y una terminal interactiva (el quiz usa `questionary`). No lo corrí aquí: las salidas de esta lección son del modelo de guion."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.9-practice.html",
+  "lca-deepagents/python/m1/Practice/judge_card_practice.py",
+  "lca-deepagents/python/m1/Practice/judge_card_practice_filled.py",
+  "lca-deepagents/python/m1/Practice/judge_card_helpers.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "En la práctica del juez, ¿qué necesita `run_judge` para que `post_card` pause y luego se pueda reanudar?",
+   "reverso": "`interrupt_on={\"post_card\": True}`, un checkpointer (`MemorySaver()`) y reanudar con el mismo `thread_id` usando `Command(resume={\"decisions\": [...]})`."
+  },
+  {
+   "frente": "¿Por qué dos jueces de `JUDGES_TO_RUN` no se ven entre sí?",
+   "reverso": "Cada uno corre en su propio agente con su `MemorySaver` y su `thread_id` (`prefijo-juez`). Solo comparten las respuestas del quiz."
+  },
+  {
+   "frente": "¿Qué devuelve `max(range(3), key=lambda i: abs(scores[i] - 50))` y qué pasa si hay empate?",
+   "reverso": "El índice del puntaje más lejos de 50 (no la distancia). Con empate, el primero que encuentra."
+  },
+  {
+   "frente": "¿Por qué `fetch_product_fact` devuelve `PLACEHOLDER_FACT` en vez de dejar subir la excepción?",
+   "reverso": "Para que el agente siga trabajando con los puntajes. El `print` del error es lo único que distingue \"falló\" de \"TODO sin hacer\"."
+  }
+ ]
+}

@@ -1,0 +1,110 @@
+{
+ "mision_id": "X.1",
+ "titulo": "Registrarte y presentar el examen",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Puedes saberte todo y aun así perder el examen por logística:\n\n- Llegar 11 minutos tarde cuenta como **no-show** y pagas de nuevo.\n- El invite de LangSmith falla por una sesión con SSO abierta.\n- Tienes una hoja de apuntes en la mesa y te cancelan la sesión.\n\nEsta lección es tu checklist para que el día del examen solo dependa de lo que sabes. Y responde la pregunta de antes: **¿cuándo estás listo para agendar?**\n\n*Todas las reglas y precios de esta lección: consultados el 2026-11-11 en la exam guide y el FAQ de la página de la certificación. Revísalos de nuevo antes de pagar, pueden cambiar.*"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Criterio de \"listo\"",
+   "contenido": "Agendas solo cuando se cumplen las dos:\n\n1. **Las 4 secciones de práctica en ≥ 7/10**, hechas sin ayuda y en su primer intento (P.1 a P.4).\n2. **Un repaso general** de las tarjetas más falladas de toda la ruta, y de los cursos con secciones bajas.\n\nPor qué por sección y no el total: 4 × 7 = 28, justo el mínimo para aprobar. Si una sección queda en 5/10, las demás tienen que salir casi perfectas.\n\nPor qué el primer intento: si repites una sección, ya recuerdas las preguntas. Ese segundo puntaje mide memoria del quiz, no el tema. Para revisar después de repasar, mejor tus tarjetas y una sesión con el tutor."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Pagar, agendar y reagendar",
+   "contenido": "| | |\n|---|---|\n| Precio | 99 USD (no hay códigos de descuento públicos) |\n| ¿Pagar y agendar después? | Sí, sin fecha límite |\n| Reagendar o cancelar | Con los botones *Cancel* / *Change your slot* del correo de confirmación |\n| Límite | **No** se reagenda ni se cancela con reembolso **dentro de las 48 h** antes del inicio |\n| Validez del certificado | 24 meses |\n\nLa regla de las 48 h es la que más importa: si algo cambia en tu semana, decídelo con más de dos días de anticipación.\n\nAgenda en un horario en el que nadie entre al cuarto y tu internet sea estable: una sesión cortada por tu conexión no se reembolsa."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Los dos invites",
+   "contenido": "Te llegan **dos** invitaciones:\n\n1. **El examen supervisado** (plataforma Talview), con la invitación de calendario de tu horario.\n2. **El org de LangSmith dedicado**, por correo, **unas 2 horas antes** del inicio. Varias preguntas se contestan ahí.\n\nSi a 2 horas del inicio te falta alguna: abre un ticket en `certification.talview.com/support/home`.\n\nError típico al aceptar el de LangSmith: *\"the invite is no longer available\"*. Casi siempre es porque sigues con sesión en **otro org de LangSmith que usa SSO**. Cierra sesión de ese org y acepta el invite entrando con **email o Google**, no con SSO.\n\nAcéptalo apenas llegue, no a 5 minutos del inicio: así te sobra tiempo si algo falla."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El cuarto, la ID y los dispositivos",
+   "contenido": "- **Mesa y silla.** Cama o sillón, no.\n- **Escaneo de 360°** del cuarto con la cámara del equipo principal (con monitor, necesitas webcam desmontable).\n- **ID** con nombre y apellido iguales a tu registro: pasaporte, licencia, credencial de trabajo o identificación nacional.\n- **Dispositivos a menos de 2 m:** solo la laptop (o monitor) del examen y **un teléfono como cámara del entorno**. Nada de reloj, audífonos ni segundo monitor.\n- **Sin notas ni papel** en ningún momento.\n- **Sin pausas.** Si de verdad tienes que levantarte, avisa al proctor: el reloj no se detiene y el incidente se revisa.\n- El proctor ve tu webcam, la cámara del teléfono y tu pantalla. Sigue sus instrucciones por chat o llamada.\n\nAntes del día, revisa los requisitos técnicos de Talview (enlace en la guía y el FAQ)."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "La línea de tiempo del día",
+   "contenido": "graph LR\n  A[-48 h<br/>último momento para<br/>reagendar] --> B[-2 h<br/>llega el invite<br/>del org LangSmith]\n  B --> C[-15 min<br/>entrar: ID, escaneo,<br/>verificación]\n  C --> D[0<br/>empieza el examen<br/>120 min]\n  D --> E[+72 h<br/>resultados por correo]\n  C -.-> N[+10 min tarde<br/>= no-show]\n  class N clave",
+   "notas": "Los 15 minutos antes son para la ID, el escaneo y revisar el sistema con el proctor: no son opcionales.\nEl node marcado es el que cuesta dinero: entrar más de 10 minutos después de la hora cuenta como no-show y se reagenda pagando completo.\nDespués de -48 h ya no puedes mover la fecha."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Estrategia de tiempo dentro del examen",
+   "contenido": "- **3 minutos por pregunta** en promedio (120 / 40). Ponte un tope de ~4 minutos: elige la opción más probable y sigue.\n- Las preguntas que se contestan **navegando LangSmith** tardan más que las de concepto. Ten la sesión del org del examen abierta desde antes de empezar.\n- Ten docs.langchain.com abierto en otra pestaña del mismo navegador (una pantalla, varias pestañas está bien; segunda pantalla, no).\n- Las docs son para **confirmar** un detalle (el nombre de un parámetro, una opción), no para aprender un tema: no hay tiempo.\n- No dejes ninguna en blanco: una en blanco no suma."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Después: resultados, certificado y resit",
+   "contenido": "- **Resultados:** a más tardar 72 h después del examen, por correo.\n- **Si apruebas:** el certificado llega por correo desde **Accredible**. Vale 24 meses.\n- **Si no:** tu pago incluye **un resit gratis**. Pide tu código con un ticket en `certification.talview.com/support/home` y agéndalo en el mismo portal.\n- Puedes presentar las veces que quieras; después del resit gratis, cada intento se paga completo.\n- **No** te dan un resit gratis extra por cancelar a última hora ni por llegar tarde. Por **problemas técnicos** del lado del examen, sí puede haber uno: abre ticket.\n\nEntre intentos: los resits salen **del mismo pool de conceptos**. Repasa los focus areas de las secciones donde te fue mal (las de la guía, pág. 2) y con el tutor, como en P.1–P.4."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Checklist",
+   "contenido": "**Una semana antes**\n- [ ] Revisar requisitos de Talview en tu laptop.\n- [ ] Tener la ID con el mismo nombre del registro.\n- [ ] Decidir el cuarto: mesa, silla, nadie entra.\n\n**El día anterior (después de las 48 h ya no se mueve)**\n- [ ] Despejar la mesa: sin papeles, sin audífonos, sin reloj.\n- [ ] Cargar el teléfono y tener cómo apoyarlo como cámara.\n\n**2 horas antes**\n- [ ] Llegaron los dos invites (si no: ticket a Talview).\n- [ ] Cerrar sesión de cualquier org de LangSmith con SSO y aceptar el invite del org del examen.\n\n**15 minutos antes**\n- [ ] Entrar a la sesión: ID, escaneo de 360°, verificación.\n- [ ] Pestañas: el examen, el org de LangSmith y docs.langchain.com."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Te enfermas a 30 horas del examen",
+   "contenido": "Faltan 30 horas para tu examen y amaneces enfermo. Quieres moverlo a la semana siguiente.\n\n¿Puedes reagendar gratis desde el correo de confirmación? ¿Qué pasa si simplemente no te conectas?",
+   "respuesta": "**No.** Reagendar y cancelar con reembolso solo se puede hasta 48 h antes; a 30 h ya pasó el límite. Si no te conectas (o entras más de 10 min tarde), cuenta como **no-show** y reagendas pagando completo; tampoco te da un resit gratis extra. Lo único que queda es abrir un ticket con Talview y explicar, sin garantía. Por eso la regla de decidir con más de 48 h."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: el invite que no funciona",
+   "contenido": "Dos horas antes del examen llega el invite al org de LangSmith. Al aceptarlo aparece *\"the invite is no longer available\"*. Esa mañana usaste LangSmith del trabajo, que entra con SSO. ¿Qué haces?\n\n- **A)** Esperar a que el proctor te dé acceso al empezar el examen.\n- **B)** Cerrar sesión del org con SSO y aceptar el invite entrando con email o Google.\n- **C)** Aceptarlo entrando con el SSO del trabajo, que es tu cuenta principal.\n- **D)** Contestar sin el org: esas preguntas se pueden responder con docs.",
+   "respuesta": "**B.** Ese error casi siempre significa que sigues con sesión en un org con SSO; la guía dice cerrar sesión de ese org y aceptar con email o Google.\n- A: el proctor supervisa, no administra tu acceso a LangSmith; perderías tiempo del examen.\n- C: entrar con SSO es justo lo que causa el error.\n- D: varias preguntas se contestan navegando ese org; sin él las pierdes.\nSi aun así falla, ticket a Talview antes del inicio."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La hoja que no vas a mirar",
+   "contenido": "Te preparaste una hoja con los focus areas de Deploy. Piensas dejarla boca abajo en la mesa, \"solo por si acaso\", sin mirarla.\n\n¿Se vale? ¿Y tener el teléfono en la mesa, apagado, además del que usas como cámara?",
+   "respuesta": "**No a las dos.** La guía dice que no se permiten notas ni papel **en ningún momento**, no solo \"no mirarlas\"; el proctor ve el cuarto en el escaneo de 360° y puede cancelar la sesión, y la reagendas pagando completo. Y a menos de 2 m solo puede haber un teléfono, el que funciona como cámara del entorno. Repasa la hoja antes y sácala del cuarto."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Agenda cuando las 4 secciones de práctica pasen de 7/10 sin ayuda y hayas repasado las tarjetas más falladas.\n- 48 h: después ya no reagendas ni cancelas con reembolso. Más de 10 min tarde = no-show y pagas de nuevo.\n- Dos invites; el de LangSmith llega ~2 h antes. Error de invite: cierra el org con SSO y entra con email o Google. Si falta un invite: ticket a Talview.\n- Mesa, silla, ID, escaneo de 360°, un teléfono como cámara, sin notas ni pausas.\n- Resultados en 72 h; certificado por Accredible; un resit gratis pidiendo el código por ticket.\n\n**Dónde buscarlo:** exam guide (págs. 1, 3 y 4) y el FAQ de la página de la certificación en academy.langchain.com."
+  }
+ ],
+ "fuentes": [
+  "https://academy.langchain.com/pages/certifications-lcae",
+  "https://pub-dffa5f25c09c49488e245c43fcd4d0b5.r2.dev/exam_guide.pdf"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Hasta cuándo puedes reagendar o cancelar el examen LCAE con reembolso?",
+   "reverso": "Hasta 48 h antes del inicio, con los botones del correo de confirmación. Después ya no."
+  },
+  {
+   "frente": "¿Qué pasa si entras 12 minutos tarde a tu examen?",
+   "reverso": "Más de 10 min tarde cuenta como no-show: reagendas pagando completo y no te da un resit gratis extra. Por eso se entra 15 min antes."
+  },
+  {
+   "frente": "Al aceptar el invite de LangSmith sale \"the invite is no longer available\". ¿Causa probable y arreglo?",
+   "reverso": "Sigues con sesión en otro org con SSO. Cierra sesión de ese org y acepta el invite con email o Google."
+  },
+  {
+   "frente": "Faltan 2 horas y no te llegó el invite del org de LangSmith. ¿Qué haces?",
+   "reverso": "Abrir un ticket en el soporte de Talview. Ese invite llega ~2 h antes y varias preguntas dependen de ese org."
+  },
+  {
+   "frente": "¿Por qué el criterio para agendar es cada sección ≥ 7/10 y no solo el total?",
+   "reverso": "4 × 7 = 28, el mínimo para aprobar. Una sección floja obliga a que las otras salgan casi perfectas, y cada dominio pesa 25 %."
+  },
+  {
+   "frente": "No aprobaste. ¿Cómo usas el resit gratis?",
+   "reverso": "Pides el código con un ticket a Talview y lo agendas en el mismo portal. Antes, repasa los focus areas de las secciones flojas: los resits salen del mismo pool de conceptos."
+  },
+  {
+   "frente": "¿Se vale tener una hoja de apuntes boca abajo, sin mirarla, durante el examen?",
+   "reverso": "No. No se permiten notas ni papel en ningún momento; el proctor revisa el cuarto y puede cancelar la sesión."
+  }
+ ]
+}

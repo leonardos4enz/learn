@@ -1,0 +1,145 @@
+{
+ "mision_id": "5.B",
+ "titulo": "Authorization: conversaciones privadas",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 5.A, Bob se autenticó bien y aun así vio el thread de Alice: `Bob can see 2 thread(s)`. Autenticar dice **quién** es Bob; nada dice **qué** puede ver.\n\nEn un tutor con cientos de alumnos eso es inaceptable: cada conversación es privada.\n\nEn esta lección agregas *authorization* con `@auth.on`: cada recurso se **marca** con su dueño al crearse y cada lectura se **filtra** por dueño. Al final, Alice y Bob tienen conversaciones privadas y ves por qué Bob recibe un 404 (no un 403) al pedir el thread de Alice."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cómo funciona @auth.on",
+   "contenido": "Cada operación sobre un recurso (`threads.create`, `threads.read`, `threads.search`, `runs.create`, `store.put`…) pasa por `@auth.on`, en este orden:\n\n1. Llega el request.\n2. `@auth.authenticate`: ¿quién es?\n3. `@auth.on`: ¿qué puede hacer con este recurso?\n4. Se ejecuta la operación en la base de datos.\n\nEl handler recibe:\n- **`ctx`**: `ctx.user` (lo que devolvió authenticate; `ctx.user.identity` siempre está), `ctx.resource` (`\"threads\"`, `\"assistants\"`, `\"store\"`…) y `ctx.action` (`\"create\"`, `\"read\"`, `\"search\"`, `\"update\"`, `\"delete\"`…).\n- **`value`**: el payload del request. Lo único pensado para escribirse es `value[\"metadata\"]`.\n\nDevuelve un **filtro** (dict). En una **escritura**, lo que trabaja es marcar `metadata`. En una **lectura**, lo que trabaja es el filtro: se aplica contra la columna `metadata`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lab 3a: un handler para todo",
+   "contenido": "from langgraph_sdk import Auth\n\n# Stand-in for a real user database. Do not use hardcoded tokens in production.\nVALID_TOKENS = {\n    \"alice-token\": {\"id\": \"user1\", \"name\": \"Alice\"},\n    \"bob-token\":   {\"id\": \"user2\", \"name\": \"Bob\"},\n}\n\nauth = Auth()\n\n\n@auth.authenticate\nasync def get_current_user(authorization: str | None) -> Auth.types.MinimalUserDict:\n    if not authorization:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Missing token\")\n    scheme, _, token = authorization.partition(\" \")\n    if scheme.lower() != \"bearer\" or token not in VALID_TOKENS:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Invalid token\")\n    user = VALID_TOKENS[token]\n    print(f\"🔓 authenticate → identity={user['id']}\", flush=True)\n    return {\"identity\": user[\"id\"]}\n\n\n@auth.on\nasync def add_owner(ctx: Auth.types.AuthContext, value: dict):\n    filters = {\"owner\": ctx.user.identity}\n    metadata = value.setdefault(\"metadata\", {})\n    metadata.update(filters)  # written to metadata on write/create actions\n    print(f\"🔐 on → resource={ctx.resource} action={ctx.action}\", flush=True)\n    return filters",
+   "notas": "`python/m5/l3a/auth.py`. `@auth.on` sin nada más cubre **todos** los recursos y acciones.\n`value.setdefault(\"metadata\", {})` devuelve el dict de metadata (y lo crea si no existe); `.update(filters)` le pone `owner`.\nLa key `\"owner\"` es tu convención: puedes llamarla como quieras, siempre que marques y filtres con la misma.",
+   "resaltar": [
+    24,
+    28,
+    30
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Correr los handlers sin servidor",
+   "contenido": "\"\"\"Corre los handlers de un auth.py del curso con el MISMO código que usa el Agent Server\n(langgraph_api.auth.custom.handle_event), pero sin servidor: sin HTTP ni base de datos.\nUso: python t_disp2.py l3a   (o l3b, l3c)\"\"\"\nimport asyncio, json, os, sys\n\nLAB = sys.argv[1]\nM5 = r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/m5/\"\nos.environ.update({\"REDIS_URI\": \"redis://fake:6379\", \"DATABASE_URI\": \"postgres://fake\"})  # falsos: no se conecta\nos.environ[\"LANGGRAPH_AUTH\"] = json.dumps({\"path\": M5 + LAB + \"/auth.py:auth\"})          # = \"auth\" de langgraph.json\n\nfrom langgraph_sdk import Auth\nfrom langgraph_api.auth.custom import _get_handler, get_auth_instance, handle_event, normalize_user\nfrom starlette.exceptions import HTTPException\n\nauth = get_auth_instance()\n\n\nasync def request(user_id, resource, action, value):\n    ctx = Auth.types.AuthContext(user=normalize_user({\"identity\": user_id}), permissions=[],\n                                 resource=resource, action=action)\n    handler = _get_handler(auth, ctx)          # el handler más específico que exista\n    name = handler.__name__ if handler else \"ninguno\"\n    try:\n        filtro = await handle_event(ctx, value)\n        print(f\"{user_id} {resource}.{action} [{name}] -> permitido, filtro={filtro}, metadata={value.get('metadata')}\")\n    except HTTPException as e:\n        print(f\"{user_id} {resource}.{action} [{name}] -> HTTP {e.status_code}: {e.detail}\")\n\n\nasync def main():\n    await request(\"user1\", \"threads\", \"create\", {\"thread_id\": \"t-1\", \"metadata\": {}})\n    await request(\"user2\", \"threads\", \"read\", {\"thread_id\": \"t-1\"})\n    await request(\"user2\", \"threads\", \"search\", {\"limit\": 10})\n    await request(\"user1\", \"assistants\", \"create\", {\"graph_id\": \"agent\", \"metadata\": {}})\n    await request(\"user2\", \"store\", \"get\", {\"namespace\": (\"user1\", \"notes\"), \"key\": \"note1\"})\n    await request(\"admin\", \"store\", \"get\", {\"namespace\": (\"user1\", \"notes\"), \"key\": \"note1\"})\n\nasyncio.run(main())",
+   "notas": "Este script llama a `handle_event`, la función del Agent Server (`langgraph_api`) que elige y corre tu handler, pero sin HTTP ni base de datos. Salida real con `l3a`:\n`user1 threads.create [add_owner] -> permitido, filtro={'owner': 'user1'}, metadata={'owner': 'user1'}`\n`user2 threads.read [add_owner] -> permitido, filtro={'owner': 'user2'}, ...`\n`user2 threads.search [add_owner] -> permitido, filtro={'owner': 'user2'}, ...`\n`user2 store.get [add_owner] -> permitido, filtro={'owner': 'user2'}, ...`\nLa base de datos no está: lo que pasa después con el filtro sale del material oficial (paso 6).",
+   "resaltar": [
+    21,
+    24
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Marcar al escribir, filtrar al leer",
+   "contenido": "graph TD\n  AC[Alice: threads.create] --> M[auth.on marca metadata.owner = user1]\n  M --> DB[(thread t-1 con owner user1)]\n  BR[Bob: threads.get t-1] --> F[auth.on devuelve filtro owner = user2]\n  F --> Q{¿t-1 cumple owner = user2?}\n  DB --> Q\n  Q -->|no| N[404: para Bob no existe]\n  class F clave",
+   "notas": "Un solo handler sirve en las dos direcciones: al crear marca, al leer filtra.\nLa consulta de Bob se vuelve \"threads donde owner = user2\". El de Alice no aparece, así que el servidor responde que no existe."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "¿Por qué 404 y no 403?",
+   "contenido": "Salida del material oficial (m5.3, `client.py` de l3a contra `langgraph dev`; aquí no se corrió el servidor):\n\n```\n✅ Alice created thread: 019dc647-e8b8-7751-8689-4f2faae4347b\n✅ Bob correctly blocked: 404 — Thread with ID 019dc647-... not found\n✅ Alice sees 1 thread(s)\n✅ Bob sees 0 thread(s)\n```\n\nCon el filtro `{\"owner\": \"user2\"}`, el thread de Alice **no sale en la consulta**. Para el servidor no hay nada que prohibir: para Bob ese thread no existe. Además es más seguro: un 403 confirmaría que el recurso existe; un 404 no revela nada.\n\nSi agregas `print` en los handlers, en `langgraph dev` salen en la terminal del servidor; en una deployment, en la pestaña **Logs** (no en Traces: la auth corre antes del grafo). No imprimas tokens."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lab 3b: un handler por recurso y acción",
+   "contenido": "from langgraph_sdk import Auth\n\n# Stand-in for a real user database. Do not use hardcoded tokens in production.\nVALID_TOKENS = {\n    \"alice-token\": {\"id\": \"user1\", \"name\": \"Alice\"},\n    \"bob-token\":   {\"id\": \"user2\", \"name\": \"Bob\"},\n}\n\nauth = Auth()\n\n\n@auth.authenticate\nasync def get_current_user(authorization: str | None) -> Auth.types.MinimalUserDict:\n    if not authorization:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Missing token\")\n    scheme, _, token = authorization.partition(\" \")\n    if scheme.lower() != \"bearer\" or token not in VALID_TOKENS:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Invalid token\")\n    return {\"identity\": VALID_TOKENS[token][\"id\"]}\n\n\n@auth.on.threads.create\nasync def on_thread_create(\n    ctx: Auth.types.AuthContext,\n    value: Auth.types.on.threads.create.value,\n):\n    metadata = value.setdefault(\"metadata\", {})\n    metadata[\"owner\"] = ctx.user.identity  # stamp owner on the new thread\n    print(f\"📝 threads.create → owner={ctx.user.identity}\", flush=True)\n    return {\"owner\": ctx.user.identity}\n\n\n# Read does not write metadata — the thread already exists. We just return\n# the filter that scopes the lookup to threads owned by this user.\n@auth.on.threads.read\nasync def on_thread_read(\n    ctx: Auth.types.AuthContext,\n    value: Auth.types.on.threads.read.value,\n):\n    print(f\"🔍 threads.read   → filter owner={ctx.user.identity}\", flush=True)\n    return {\"owner\": ctx.user.identity}\n\n\n@auth.on.threads.search\nasync def on_thread_search(\n    ctx: Auth.types.AuthContext,\n    value: Auth.types.on.threads.search.value,\n):\n    print(f\"🔎 threads.search → filter owner={ctx.user.identity}\", flush=True)\n    return {\"owner\": ctx.user.identity}\n\n\n# Different rule for a different resource: deny all access to assistants.\n@auth.on.assistants\nasync def on_assistants(ctx: Auth.types.AuthContext, value: dict):\n    print(f\"⛔ assistants     → DENY {ctx.user.identity}\", flush=True)\n    raise Auth.exceptions.HTTPException(\n        status_code=403,\n        detail=\"Assistants cannot be modified by users.\",\n    )",
+   "notas": "`python/m5/l3b/auth.py`. Dos ventajas sobre el handler único: `value` tipado (`Auth.types.on.threads.create.value`, el IDE conoce sus campos) y reglas distintas por recurso.\n`read` y `search` solo devuelven el filtro: no hay nada que escribir, el thread ya existe.\n`@auth.on.assistants` niega todo lanzando un **403**.",
+   "resaltar": [
+    22,
+    35,
+    54
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué handler corre",
+   "contenido": "Salida real del script del paso 4 con `l3b`:\n\n```\nuser1 threads.create [on_thread_create] -> permitido, filtro={'owner': 'user1'}, metadata={'owner': 'user1'}\nuser2 threads.read [on_thread_read] -> permitido, filtro={'owner': 'user2'}, metadata=None\nuser1 assistants.create [on_assistants] -> HTTP 403: Assistants cannot be modified by users.\nuser2 store.get [ninguno] -> permitido, filtro=None, metadata=None\n```\n\n**Gana el más específico.** El servidor busca en este orden (código de `_get_handler` en `langgraph_api`) y usa el primero que exista:\n1. recurso + acción (`@auth.on.threads.create`)\n2. recurso (`@auth.on.threads`, `@auth.on.assistants`)\n3. acción (`@auth.on(actions=\"create\")`)\n4. global (`@auth.on`)\n\nSi no hay ninguno, se permite: en l3b nadie cuida el Store."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lab 3c: el Store",
+   "contenido": "from langgraph_sdk import Auth\n\n# Stand-in for a real user database. Do not use hardcoded tokens in production.\nVALID_TOKENS = {\n    \"alice-token\": {\"id\": \"user1\", \"name\": \"Alice\"},\n    \"bob-token\":   {\"id\": \"user2\", \"name\": \"Bob\"},\n    \"admin-token\": {\"id\": \"admin\", \"name\": \"Admin\"},\n}\n\nauth = Auth()\n\n\n@auth.authenticate\nasync def get_current_user(authorization: str | None) -> Auth.types.MinimalUserDict:\n    if not authorization:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Missing token\")\n    scheme, _, token = authorization.partition(\" \")\n    if scheme.lower() != \"bearer\" or token not in VALID_TOKENS:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Invalid token\")\n    return {\"identity\": VALID_TOKENS[token][\"id\"]}\n\n\n@auth.on.store()\nasync def on_store(ctx: Auth.types.AuthContext, value: dict):\n    if ctx.user.identity == \"admin\":\n        return\n    namespace: tuple = value[\"namespace\"]\n    assert namespace[0] == ctx.user.identity, \"Not authorized\"",
+   "notas": "`python/m5/l3c/auth.py`. El Store **no** usa el filtro: el handler permite o bloquea. `return` (None) = permitido; `assert` falso = `AssertionError`, que el servidor convierte en **403**.\nPor convención, el primer elemento del namespace es la identidad: `(\"user1\", \"notes\")` es de Alice. El admin se salta la regla. Salida real del script del paso 4 con `l3c`:\n`user2 store.get [on_store] -> HTTP 403: Not authorized`\n`admin store.get [on_store] -> permitido, filtro=None`",
+   "resaltar": [
+    23,
+    25,
+    28
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que devuelve un handler",
+   "contenido": "Lo que hace el servidor con cada resultado (código de `handle_event` en `langgraph_api` 0.17):\n\n| El handler… | Resultado |\n|---|---|\n| devuelve `None` o `True` | permitido, sin filtro |\n| devuelve un dict | permitido; el dict es el filtro sobre `metadata` |\n| devuelve `False` | 403 Forbidden |\n| lanza `Auth.exceptions.HTTPException(status_code=...)` | ese status |\n| falla un `assert` | 403 con el mensaje del assert |\n\nEn threads, assistants y runs el filtro se aplica a la consulta. En el Store, `put`, `get` y `delete` **ignoran** el filtro (en `api/store.py` el resultado ni se guarda); solo `search` lo usa. Por eso en el Store se permite o se bloquea."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: Bob pide el thread de Alice",
+   "contenido": "Tu `auth.py` tiene `@auth.authenticate` y el `@auth.on` del lab 3a (marca `owner` y devuelve `{\"owner\": identity}`). Alice crea un thread. Bob, con un token válido, llama a `client.threads.get(<id del thread de Alice>)`. ¿Qué recibe?\n\nA) 401 Unauthorized\nB) 403 Forbidden\nC) 404 Not Found\nD) 200 con el thread, porque su token es válido",
+   "respuesta": "**C.** El filtro `{\"owner\": \"user2\"}` se aplica a la consulta; el thread tiene `owner: user1`, así que no aparece: para Bob no existe. Un 404 tampoco revela que el recurso existe.\nA sería con un token inválido. B sería si un handler lanzara 403 (como `@auth.on.assistants` en l3b). D es lo que pasaba en 5.A, sin `@auth.on`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿El filtro protege el Store?",
+   "contenido": "En el paso 4, con el handler único de **l3a**, salió:\n\n`user2 store.get [add_owner] -> permitido, filtro={'owner': 'user2'}, ...`\n\nBob pide `store.get_item((\"user1\", \"notes\"), key=\"note1\")`, la nota de Alice. Con el `auth.py` de l3a (sin `@auth.on.store`), ¿Bob recibe la nota? ¿Qué agregarías?",
+   "respuesta": "**Sí la recibe.** El handler la permite, y para `store.get` el servidor ignora el filtro (no hay columna `metadata` que filtrar en un get). El filtro solo protege threads, assistants y runs (y el `search` del Store).\nPara cerrarlo: un `@auth.on.store()` como el de l3c que revise `namespace[0] == ctx.user.identity` y lance un `assert`/403 si no coincide.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Variación: devolver {} y devolver False",
+   "contenido": "Escribes dos handlers de prueba y los pasas por el mismo `handle_event` del servidor:\n\n```python\nimport asyncio, os\nos.environ.update({\"REDIS_URI\": \"redis://fake:6379\", \"DATABASE_URI\": \"postgres://fake\"})\nfrom langgraph_sdk import Auth\nimport langgraph_api.auth.custom as custom\nfrom starlette.exceptions import HTTPException\n\nauth = Auth()\n\n@auth.on.assistants\nasync def on_assistants(ctx: Auth.types.AuthContext, value: dict):\n    return {}          # \"si devuelvo vacío, niego\"... ¿o no?\n\n@auth.on.threads\nasync def on_threads(ctx: Auth.types.AuthContext, value: dict):\n    return False\n\ncustom.get_auth_instance = lambda: auth   # usar este Auth en vez de leer langgraph.json\n\nasync def main():\n    for resource in [\"assistants\", \"threads\"]:\n        ctx = Auth.types.AuthContext(user=custom.normalize_user({\"identity\": \"user1\"}), permissions=[],\n                                     resource=resource, action=\"create\")\n        try:\n            print(resource, \"-> permitido, filtro =\", await custom.handle_event(ctx, {\"metadata\": {}}))\n        except HTTPException as e:\n            print(resource, \"-> HTTP\", e.status_code, e.detail)\nasyncio.run(main())\n```\n\n¿Qué imprime cada uno?",
+   "respuesta": "Salida real: `assistants -> permitido, filtro = {}` y `threads -> HTTP 403 Forbidden`.\nDevolver `{}` **permite**: es un filtro vacío, no restringe nada. Para negar hay que devolver `False`, lanzar `HTTPException(403)` o fallar un `assert`. \"Devolver vacío = negar\" es un error común."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `@auth.on` corre después de authenticate y antes de la base de datos: **marca** `metadata` al escribir y devuelve un **filtro** que se aplica al leer.\n- Bob recibe **404**, no 403: el filtro hace que el recurso no exista para él, sin revelar nada.\n- Gana el handler más específico: recurso+acción → recurso → acción → global. Sin handler, se permite.\n- `None`/`True`/dict = permitido; `False`, `HTTPException` o `assert` = negado. `{}` permite.\n- El Store no usa el filtro en `put`/`get`/`delete`: se protege con `@auth.on.store()` revisando `namespace[0]`.\n- Al cambiar de proveedor de identidad (5.C), estos handlers no cambian: solo usan `ctx.user.identity`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Auth* (Supported actions and types, Resource-specific handlers)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m5/m5.3-private-conversations.html",
+  "lca-deployment/python/m5/l3a/auth.py",
+  "lca-deployment/python/m5/l3a/client.py",
+  "lca-deployment/python/m5/l3b/auth.py",
+  "lca-deployment/python/m5/l3b/client.py",
+  "lca-deployment/python/m5/l3c/auth.py",
+  "lca-deployment/python/m5/l3c/client.py",
+  "lca-deployment/thinkific/src/m5/m5.3-private-conversations.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué hace un @auth.on en una escritura y qué en una lectura?",
+   "reverso": "En la escritura marca value[\"metadata\"] (p. ej. owner). En la lectura, el filtro que devuelve se aplica contra la columna metadata."
+  },
+  {
+   "frente": "¿Por qué Bob recibe 404 y no 403 al pedir el thread de Alice?",
+   "reverso": "El filtro owner=Bob deja fuera el thread de Alice: para él no existe. Un 403 revelaría que el recurso existe."
+  },
+  {
+   "frente": "Hay @auth.on y @auth.on.threads.create. ¿Cuál corre al crear un thread y cuál al crear un assistant?",
+   "reverso": "threads.create usa el específico; assistants.create cae al global @auth.on. Gana el más específico."
+  },
+  {
+   "frente": "Tu handler devuelve {}. ¿Se permite o se niega?",
+   "reverso": "Se permite: es un filtro vacío. Para negar: devolver False, lanzar HTTPException(403) o fallar un assert."
+  },
+  {
+   "frente": "¿Por qué el Store se protege con assert y no con un filtro?",
+   "reverso": "En put/get/delete del Store el servidor ignora el filtro. El handler @auth.on.store() tiene que permitir o bloquear revisando el namespace."
+  },
+  {
+   "frente": "Cambias de tokens fijos a Supabase. ¿Qué handlers cambian?",
+   "reverso": "Solo @auth.authenticate. Los @auth.on solo usan ctx.user.identity, venga de donde venga."
+  },
+  {
+   "frente": "Pones print() en tus handlers de auth en una deployment. ¿Dónde los ves?",
+   "reverso": "En la pestaña Logs de la deployment, no en Traces: la auth corre antes del grafo."
+  }
+ ]
+}

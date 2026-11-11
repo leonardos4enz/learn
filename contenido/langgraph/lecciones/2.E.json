@@ -1,0 +1,123 @@
+{
+ "mision_id": "2.E",
+ "titulo": "Resumir la conversación",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 2.D viste que recortar o borrar mensajes tiene un costo: lo que el LLM no ve, no lo sabe. Si borras el turno donde el usuario dijo su nombre, el bot lo olvida.\n\nLa alternativa: antes de borrar, pedirle al LLM un **resumen** de lo viejo y guardarlo en el state. Así el prompt se mantiene corto pero conserva lo importante.\n\nOjo con la trampa: el resumen **no reemplaza** la memoria. Convive con los últimos mensajes y con el checkpointer."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las piezas",
+   "contenido": "- **State:** `MessagesState` + una key `summary: str`.\n- **`conversation`:** llama al LLM. Si hay resumen, lo antepone como `SystemMessage`.\n- **`summarize_conversation`:** pide un resumen (o lo extiende) y borra todo menos los 2 últimos mensajes con `RemoveMessage`.\n- **`should_continue`:** conditional edge; si hay más de 6 mensajes, resume; si no, termina.\n- **Checkpointer:** `MemorySaver`, para que el state sobreviva entre turnos del mismo `thread_id`.\n\nEl código va en cuatro bloques que forman **un solo archivo**. Se corre desde `langchain-academy` (carga la key del `.env` de `module-1/studio`)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Bloque 1: state y node que llama al LLM",
+   "contenido": "from typing import Literal\nfrom dotenv import load_dotenv\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\nfrom langgraph.checkpoint.memory import MemorySaver\n\nload_dotenv(\"module-1/studio/.env\")\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n\nclass State(MessagesState):\n    summary: str\n\ndef call_model(state: State):\n    summary = state.get(\"summary\", \"\")\n    if summary:\n        system_message = f\"Summary of conversation earlier: {summary}\"\n        messages = [SystemMessage(content=system_message)] + state[\"messages\"]\n    else:\n        messages = state[\"messages\"]\n    response = model.invoke(messages)\n    return {\"messages\": response}",
+   "notas": "El resumen **no** entra a `state[\"messages\"]`: se arma una lista nueva para esta llamada con el `SystemMessage` delante. El node devuelve solo la respuesta; `add_messages` la añade. Uso `gpt-4o-mini` en vez del `gpt-4o` del notebook, para gastar menos.",
+   "resaltar": [
+    12,
+    18
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Bloque 2: node que resume y borra",
+   "contenido": "def summarize_conversation(state: State):\n    summary = state.get(\"summary\", \"\")\n    if summary:\n        summary_message = (\n            f\"This is summary of the conversation to date: {summary}\\n\\n\"\n            \"Extend the summary by taking into account the new messages above:\"\n        )\n    else:\n        summary_message = \"Create a summary of the conversation above:\"\n    messages = state[\"messages\"] + [HumanMessage(content=summary_message)]\n    response = model.invoke(messages)\n    # Borra todos menos los 2 mensajes más recientes\n    delete_messages = [RemoveMessage(id=m.id) for m in state[\"messages\"][:-2]]\n    return {\"summary\": response.content, \"messages\": delete_messages}",
+   "notas": "Si ya hay resumen, le pide al LLM **extenderlo** con los mensajes nuevos: los viejos ya se borraron y el resumen anterior es lo único que los representa. El update trae dos keys: `summary` (se sobrescribe) y `messages` (una lista de `RemoveMessage`, que `add_messages` convierte en borrados).",
+   "resaltar": [
+    13,
+    14
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Bloque 3: edge condicional, grafo y checkpointer",
+   "contenido": "def should_continue(state: State) -> Literal[\"summarize_conversation\", \"__end__\"]:\n    if len(state[\"messages\"]) > 6:\n        return \"summarize_conversation\"\n    return END\n\nworkflow = StateGraph(State)\nworkflow.add_node(\"conversation\", call_model)\nworkflow.add_node(summarize_conversation)\nworkflow.add_edge(START, \"conversation\")\nworkflow.add_conditional_edges(\"conversation\", should_continue)\nworkflow.add_edge(\"summarize_conversation\", END)\n\nmemory = MemorySaver()\ngraph = workflow.compile(checkpointer=memory)",
+   "notas": "`should_continue` corre después de `conversation`. Con más de 6 mensajes va a `summarize_conversation`; si no, a `END`. `add_node(summarize_conversation)` sin nombre usa el nombre de la función. Sin `checkpointer`, cada `invoke` empezaría con un state vacío.",
+   "resaltar": [
+    2,
+    14
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo",
+   "contenido": "graph LR\n  S([START]) --> c[conversation]\n  c -.->|más de 6 mensajes| s[summarize_conversation]\n  c -.->|6 o menos| E([END])\n  s --> E\n  class s clave",
+   "notas": "Resumir no es un paso de cada turno: solo ocurre cuando el historial pasa el umbral. En los demás turnos el grafo es `START → conversation → END`, como el chatbot del Módulo 1."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Bloque 4: cinco turnos en el mismo thread",
+   "contenido": "config = {\"configurable\": {\"thread_id\": \"1\"}}\nfor texto in [\"hi! I'm Lance\", \"what's my name?\", \"i like the 49ers!\",\n              \"i like Nick Bosa, isn't he the highest paid defensive player?\"]:\n    output = graph.invoke({\"messages\": [HumanMessage(content=texto)]}, config)\n    values = graph.get_state(config).values\n    print(f\"> {texto}\")\n    print(f\"  mensajes en el state: {len(values['messages'])} | hay resumen: {bool(values.get('summary'))}\")\n\nprint()\nprint(\"Resumen:\", graph.get_state(config).values[\"summary\"])\nprint()\noutput = graph.invoke({\"messages\": [HumanMessage(content=\"what's my name, and which team do I like?\")]}, config)\nprint(\"Respuesta:\", output[\"messages\"][-1].content)\nprint(\"Mensajes en el state:\", len(graph.get_state(config).values[\"messages\"]))",
+   "notas": "Salida real:\nturno 1 → 2 mensajes, sin resumen · turno 2 → 4 · turno 3 → 6 · turno 4 → **2 mensajes, con resumen**.\nResumen: \"In the conversation, Lance introduces himself and shares his support for the San Francisco 49ers. He expresses his admiration for Nick Bosa...\"\nTurno 5: `Your name is Lance, and you support the San Francisco 49ers.` · 4 mensajes en el state.",
+   "resaltar": [
+    1
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué pasó en el turno 4",
+   "contenido": "1. Llega la pregunta de Nick Bosa: 7 mensajes. `conversation` responde: **8**.\n2. `should_continue` ve 8 > 6 y manda a `summarize_conversation`.\n3. El LLM escribe el resumen; el node borra los 6 más viejos. Quedan **2** mensajes + `summary`.\n\nEn el turno 5, el LLM recibe `SystemMessage(resumen)` + esos 2 + la pregunta nueva. Por eso sabe tu nombre aunque el mensaje \"hi! I'm Lance\" ya no exista.\n\nUn dato honesto: en 1 de 3 corridas, `gpt-4o-mini` contestó que no le habías dicho tu nombre, aunque el resumen lo decía. El resumen es información comprimida en un prompt, no una garantía."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Por qué no resume en el turno 3?",
+   "contenido": "En los cinco turnos del paso 7, después del turno 3 hay 6 mensajes en el state (3 tuyos y 3 del bot). Mirando `should_continue` del paso 5, ¿por qué no se generó resumen?",
+   "respuesta": "Porque la condición es `len(messages) > 6`, estrictamente mayor. Con 6 exactos, `should_continue` devuelve `END`. En el turno 4 llegan a 8 (tu pregunta + la respuesta) y ahí sí resume. Salida real: después del turno 3, `mensajes en el state: 6 | hay resumen: False`.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué recibe el LLM en el turno 5?",
+   "contenido": "Después del turno 4 del paso 7, el state tiene `summary` y 2 mensajes. En el turno 5 mandas \"what's my name, and which team do I like?\". Mirando `call_model` del paso 3: ¿cuántos mensajes recibe `model.invoke`, y de qué tipo es el primero?",
+   "respuesta": "Cuatro: un `SystemMessage` con el resumen, los 2 mensajes que sobrevivieron (la pregunta de Nick Bosa y su respuesta) y tu pregunta nueva. El `SystemMessage` no se guarda en el state: se arma en cada llamada. Al terminar el turno hay 4 mensajes en el state (salida real).",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Mismo chatbot, sin checkpointer",
+   "contenido": "El mismo chatbot de los pasos 3 a 5, pero compilado con `workflow.compile()` (sin `checkpointer`) y con los 4 primeros mensajes del paso 7, sin `config`:\n\n```python\nfrom typing import Literal\nfrom dotenv import load_dotenv\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage\nfrom langgraph.graph import MessagesState, StateGraph, START, END\n\nload_dotenv(\"module-1/studio/.env\")\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\n\nclass State(MessagesState):\n    summary: str\n\ndef call_model(state: State):\n    summary = state.get(\"summary\", \"\")\n    if summary:\n        system_message = f\"Summary of conversation earlier: {summary}\"\n        messages = [SystemMessage(content=system_message)] + state[\"messages\"]\n    else:\n        messages = state[\"messages\"]\n    response = model.invoke(messages)\n    return {\"messages\": response}\n\ndef summarize_conversation(state: State):\n    summary = state.get(\"summary\", \"\")\n    if summary:\n        summary_message = (\n            f\"This is summary of the conversation to date: {summary}\\n\\n\"\n            \"Extend the summary by taking into account the new messages above:\"\n        )\n    else:\n        summary_message = \"Create a summary of the conversation above:\"\n    messages = state[\"messages\"] + [HumanMessage(content=summary_message)]\n    response = model.invoke(messages)\n    delete_messages = [RemoveMessage(id=m.id) for m in state[\"messages\"][:-2]]\n    return {\"summary\": response.content, \"messages\": delete_messages}\n\ndef should_continue(state: State) -> Literal[\"summarize_conversation\", \"__end__\"]:\n    if len(state[\"messages\"]) > 6:\n        return \"summarize_conversation\"\n    return END\n\nworkflow = StateGraph(State)\nworkflow.add_node(\"conversation\", call_model)\nworkflow.add_node(summarize_conversation)\nworkflow.add_edge(START, \"conversation\")\nworkflow.add_conditional_edges(\"conversation\", should_continue)\nworkflow.add_edge(\"summarize_conversation\", END)\n\ngraph = workflow.compile()  # sin checkpointer\n\nfor texto in [\"hi! I'm Lance\", \"what's my name?\", \"i like the 49ers!\",\n              \"i like Nick Bosa, isn't he the highest paid defensive player?\"]:\n    output = graph.invoke({\"messages\": [HumanMessage(content=texto)]})\n    print(f\"> {texto}\")\n    print(f\"  bot: {output['messages'][-1].content[:80]}\")\n    print(f\"  mensajes: {len(output['messages'])} | resumen: {bool(output.get('summary'))}\")\n```\n\n¿Llega a resumir alguna vez? ¿Sabe tu nombre en el turno 2?",
+   "respuesta": "Nunca resume: cada `invoke` empieza con un state nuevo que solo tiene tu mensaje, así que hay 2 mensajes al final de cada turno (salida real: `mensajes: 2 | resumen: False` las cuatro veces). Y en el turno 2 el bot no sabe tu nombre (salida real: \"I'm sorry, but I don't have access to personal information...\"). El resumen solo funciona si algo guarda el state entre turnos: el checkpointer."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Por qué se quedan 2 mensajes y no 0?",
+   "contenido": "`summarize_conversation` borra `state[\"messages\"][:-2]`. ¿Qué perderías si borraras **todos** los mensajes y dejaras solo el resumen?",
+   "respuesta": "El contexto inmediato. Los 2 últimos son la pregunta y respuesta más recientes, con su texto exacto; el resumen es una versión comprimida y con pérdida. Si el siguiente turno es \"¿y cuánto gana?\", el bot necesita la frase literal anterior. Resumen y mensajes recientes conviven: uno da lo viejo, los otros lo inmediato."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El resumen vive en una key propia (`summary`) y entra al prompt como `SystemMessage`, armado en cada llamada.\n- Resumir = pedir el resumen + borrar lo viejo con `RemoveMessage`, dejando los últimos mensajes.\n- Solo funciona con checkpointer: sin él, cada `invoke` empieza vacío y nunca hay nada que resumir.\n- El resumen tiene pérdida y el LLM puede ignorarlo. Es la versión a mano de `SummarizationMiddleware`, el middleware de `create_agent` (curso 01, Módulo 3)."
+  }
+ ],
+ "fuentes": [
+  "module-2/chatbot-summarization.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué el chatbot con resumen conserva los 2 últimos mensajes en vez de borrar todos?",
+   "reverso": "El resumen tiene pérdida. Los mensajes recientes dan el texto exacto del contexto inmediato; el resumen cubre lo viejo. Conviven."
+  },
+  {
+   "frente": "¿Dónde entra el resumen cuando el bot llama al LLM?",
+   "reverso": "Como un `SystemMessage` antepuesto a `state[\"messages\"]` en una lista nueva. No se guarda en `messages`; vive en la key `summary`."
+  },
+  {
+   "frente": "Quitas el checkpointer del chatbot con resumen. ¿Qué pasa?",
+   "reverso": "Cada `invoke` empieza con un state vacío: nunca pasa de 6 mensajes, nunca resume y el bot no recuerda nada entre turnos."
+  },
+  {
+   "frente": "¿Por qué `summarize_conversation` pide *extender* el resumen anterior en vez de hacer uno nuevo?",
+   "reverso": "Porque los mensajes viejos ya se borraron. El resumen anterior es lo único que los representa; rehacerlo con los mensajes actuales los perdería."
+  },
+  {
+   "frente": "El state tiene `summary` y 2 mensajes. ¿Es seguro que el bot recuerde lo que dice el resumen?",
+   "reverso": "No. Es texto en el prompt: el LLM puede ignorarlo o el resumen puede haber omitido el dato. Es memoria comprimida, no exacta."
+  }
+ ]
+}

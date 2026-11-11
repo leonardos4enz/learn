@@ -1,0 +1,105 @@
+{
+ "mision_id": "2.C",
+ "titulo": "State privado y entrada/salida",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora todo el grafo usaba **un solo** schema: todos los nodes veían todas las keys, y `invoke` te devolvía todas.\n\nPero un grafo real tiene datos de trabajo (notas, resultados crudos de una búsqueda) que no le importan al usuario. Y quieres que el usuario mande solo la pregunta y reciba solo la respuesta.\n\nAquí ves dos herramientas: el **state privado** entre nodes y los **schemas de entrada y salida**. La idea clave: no todo lo que un node devuelve llega al usuario."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "State privado entre nodes",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass OverallState(TypedDict):\n    foo: int\n\nclass PrivateState(TypedDict):\n    baz: int\n\ndef node_1(state: OverallState) -> PrivateState:\n    print(\"---Node 1---\")\n    return {\"baz\": state[\"foo\"] + 1}\n\ndef node_2(state: PrivateState) -> OverallState:\n    print(\"---Node 2---\")\n    return {\"foo\": state[\"baz\"] + 1}\n\nbuilder = StateGraph(OverallState)\nbuilder.add_node(\"node_1\", node_1)\nbuilder.add_node(\"node_2\", node_2)\nbuilder.add_edge(START, \"node_1\")\nbuilder.add_edge(\"node_1\", \"node_2\")\nbuilder.add_edge(\"node_2\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"foo\": 1}))",
+   "notas": "`node_1` escribe `baz`, una key que **no** está en `OverallState`, sino en `PrivateState`. `node_2` declara `state: PrivateState`, así que recibe `baz`. Salida real: `---Node 1---` / `---Node 2---` / `{'foo': 3}`. `baz` existió (por eso `foo` llegó a 3), pero no sale.",
+   "resaltar": [
+    7,
+    14
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Por dónde viaja baz",
+   "contenido": "graph LR\n  S([START]) -->|foo=1| n1[node_1]\n  n1 -->|baz=2 privado| n2[node_2]\n  n2 -->|foo=3| E([END])\n  class n1 clave",
+   "notas": "LangGraph registra como canales las keys de todos los schemas que aparecen en los type hints de los nodes. `baz` es un canal más, pero la salida de `invoke` se filtra a `OverallState`, que solo tiene `foo`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Quién decide qué ve un node",
+   "contenido": "El **type hint del parámetro** del node (`state: PrivateState`) decide qué keys recibe. LangGraph lee esa anotación y le arma un state con solo esas keys.\n\nLo que el node **devuelve** se escribe en los canales que nombra, existan en el schema principal o en uno privado.\n\nY lo que sale de `invoke` lo decide el schema de salida del grafo. Si no declaras uno, es el schema principal (`OverallState`)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un solo schema: sale todo",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass OverallState(TypedDict):\n    question: str\n    answer: str\n    notes: str\n\ndef thinking_node(state: OverallState):\n    return {\"answer\": \"bye\", \"notes\": \"... his name is Lance\"}\n\ndef answer_node(state: OverallState):\n    return {\"answer\": \"bye Lance\"}\n\nbuilder = StateGraph(OverallState)\nbuilder.add_node(\"answer_node\", answer_node)\nbuilder.add_node(\"thinking_node\", thinking_node)\nbuilder.add_edge(START, \"thinking_node\")\nbuilder.add_edge(\"thinking_node\", \"answer_node\")\nbuilder.add_edge(\"answer_node\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"question\": \"hi\"}))",
+   "notas": "Sin schemas extra, `invoke` devuelve todas las keys del state, incluidas las `notes` internas. Salida real: `{'question': 'hi', 'answer': 'bye Lance', 'notes': '... his name is Lance'}`.",
+   "resaltar": [
+    4
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "input_schema y output_schema",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass InputState(TypedDict):\n    question: str\n\nclass OutputState(TypedDict):\n    answer: str\n\nclass OverallState(TypedDict):\n    question: str\n    answer: str\n    notes: str\n\ndef thinking_node(state: InputState):\n    print(\"thinking_node ve:\", state)\n    return {\"answer\": \"bye\", \"notes\": \"... his name is Lance\"}\n\ndef answer_node(state: OverallState) -> OutputState:\n    print(\"answer_node ve:\", state)\n    return {\"answer\": \"bye Lance\"}\n\nbuilder = StateGraph(OverallState, input_schema=InputState, output_schema=OutputState)\nbuilder.add_node(\"answer_node\", answer_node)\nbuilder.add_node(\"thinking_node\", thinking_node)\nbuilder.add_edge(START, \"thinking_node\")\nbuilder.add_edge(\"thinking_node\", \"answer_node\")\nbuilder.add_edge(\"answer_node\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"question\": \"hi\"}))",
+   "notas": "`OverallState` sigue guardando todo por dentro. `input_schema` filtra lo que entra y `output_schema` lo que sale. Salida real:\n`thinking_node ve: {'question': 'hi'}`\n`answer_node ve: {'question': 'hi', 'answer': 'bye', 'notes': '... his name is Lance'}`\n`{'answer': 'bye Lance'}`\nOjo: la salida guardada en el notebook original muestra las tres keys; con langgraph 1.2.19 sale solo `answer`.",
+   "resaltar": [
+    23
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Tres schemas, un grafo",
+   "contenido": "graph LR\n  U1[usuario: question] --> I{{input_schema}}\n  I --> t[thinking_node]\n  t --> a[answer_node]\n  a --> O{{output_schema}}\n  O --> U2[usuario: answer]\n  t -. notes .-> a\n  class O clave",
+   "notas": "Por dentro viajan `question`, `answer` y `notes` (el `OverallState`). Los filtros solo actúan en los bordes del grafo: al entrar y al salir. `thinking_node` ve solo `question` porque su type hint es `InputState`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Una key de más en el input",
+   "contenido": "Los mismos tres schemas del paso 6 (`InputState`, `OutputState`, `OverallState`), pero el grafo tiene un solo node `t` y el input trae una key de más:\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass InputState(TypedDict):\n    question: str\n\nclass OutputState(TypedDict):\n    answer: str\n\nclass OverallState(TypedDict):\n    question: str\n    answer: str\n    notes: str\n\ndef t(state: OverallState):\n    print(\"t ve:\", state)\n    return {\"answer\": \"bye\"}\n\nbuilder = StateGraph(OverallState, input_schema=InputState, output_schema=OutputState)\nbuilder.add_node(\"t\", t)\nbuilder.add_edge(START, \"t\")\nbuilder.add_edge(\"t\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"question\": \"hi\", \"notes\": \"colada\"}))\n```\n\n¿Qué imprime `t` y qué devuelve `invoke`?",
+   "respuesta": "Salida real: `t ve: {'question': 'hi'}` y `{'answer': 'bye'}`. `notes` está en `OverallState`, pero `input_schema=InputState` solo deja entrar `question`, así que la key colada se descarta antes del primer node. Y `t` no ve `answer` ni `notes` porque todavía nadie los escribió."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿El node siguiente ve la key privada?",
+   "contenido": "Tres nodes en cadena con un schema principal `O = {foo}` y uno privado `P = {baz}`, como en el paso 2 pero con un tercer node:\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass O(TypedDict):\n    foo: int\n\nclass P(TypedDict):\n    baz: int\n\ndef n1(s: O) -> P:\n    return {\"baz\": s[\"foo\"] + 1}\n\ndef n2(s: P):\n    print(\"n2 ve:\", s)\n    return {\"foo\": s[\"baz\"] + 1}\n\ndef n3(s: O):\n    print(\"n3 ve:\", s)\n    return {}\n\nbuilder = StateGraph(O)\nbuilder.add_node(\"n1\", n1)\nbuilder.add_node(\"n2\", n2)\nbuilder.add_node(\"n3\", n3)\nbuilder.add_edge(START, \"n1\")\nbuilder.add_edge(\"n1\", \"n2\")\nbuilder.add_edge(\"n2\", \"n3\")\nbuilder.add_edge(\"n3\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"foo\": 1}))\n```\n\n¿Qué imprimen `n2` y `n3`?",
+   "respuesta": "Salida real: `n2 ve: {'baz': 2}` y `n3 ve: {'foo': 3}`. Cada node recibe solo las keys de su type hint: `n2` ve el canal privado y no `foo`; `n3` ve `foo` y no `baz`, aunque `baz` siga existiendo como canal. El resultado final es `{'foo': 3}`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿El return type hint filtra lo que escribe el node?",
+   "contenido": "```python\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass InputState(TypedDict):\n    question: str\n\nclass OutputState(TypedDict):\n    answer: str\n\nclass OverallState(TypedDict):\n    question: str\n    answer: str\n    notes: str\n\ndef thinking_node(state: InputState):\n    return {\"answer\": \"bye\", \"notes\": \"... his name is Lance\"}\n\ndef answer_node(state: OverallState) -> OutputState:\n    return {\"answer\": \"bye Lance\", \"notes\": \"cambiada en answer_node\"}\n\ndef check_node(state: OverallState):\n    print(\"check_node ve:\", state)\n    return {}\n\nbuilder = StateGraph(OverallState, input_schema=InputState, output_schema=OutputState)\nbuilder.add_node(\"thinking_node\", thinking_node)\nbuilder.add_node(\"answer_node\", answer_node)\nbuilder.add_node(\"check_node\", check_node)\nbuilder.add_edge(START, \"thinking_node\")\nbuilder.add_edge(\"thinking_node\", \"answer_node\")\nbuilder.add_edge(\"answer_node\", \"check_node\")\nbuilder.add_edge(\"check_node\", END)\ngraph = builder.compile()\n\nprint(graph.invoke({\"question\": \"hi\"}))\n```\n\n`answer_node` dice `-> OutputState` (solo `answer`) pero devuelve también `notes`. ¿Qué ve `check_node` y qué devuelve `invoke`?",
+   "respuesta": "Salida real: `check_node ve: {'question': 'hi', 'answer': 'bye Lance', 'notes': 'cambiada en answer_node'}` y `{'answer': 'bye Lance'}`. La anotación de retorno **no filtra**: el update escribe `notes` igual. Lo que filtra es el `output_schema`, y solo en la salida del grafo. El type hint de entrada sí decide lo que el node ve."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El type hint del parámetro (`state: X`) decide qué keys recibe cada node.\n- Un node puede escribir keys de un schema privado; existen como canales, pero no salen en `invoke`.\n- `input_schema` filtra lo que entra; `output_schema` filtra lo que sale. Por dentro, el schema principal guarda todo.\n- No todo lo que un node devuelve llega al usuario. Es la misma idea que en un agente: el usuario ve la respuesta final, no cada `ToolMessage` intermedio (a menos que le devuelvas todo `messages`)."
+  }
+ ],
+ "fuentes": [
+  "module-2/multiple-schemas.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "`node_1` escribe `baz` (de `PrivateState`) y el grafo es `StateGraph(OverallState)` con solo `foo`. ¿Por qué `baz` no aparece en el resultado de `invoke`?",
+   "reverso": "La salida se filtra al schema de salida, que por defecto es `OverallState`. `baz` existe como canal y lo leen los nodes que lo piden, pero no sale."
+  },
+  {
+   "frente": "¿Qué decide qué keys del state recibe un node?",
+   "reverso": "El type hint de su parámetro (`def nodo(state: X)`). LangGraph le arma un state con solo las keys de `X`."
+  },
+  {
+   "frente": "¿Para qué le pones `output_schema` a un grafo?",
+   "reverso": "Para que el usuario reciba solo lo relevante (p. ej. `answer`) y no las keys internas como `notes`. Por dentro el state sigue guardando todo."
+  },
+  {
+   "frente": "Con `input_schema=InputState` (solo `question`), invocas con `question` y `notes`. ¿Qué pasa con `notes`?",
+   "reverso": "Se descarta: el input se filtra a `InputState` antes del primer node."
+  },
+  {
+   "frente": "Un node anota `-> OutputState` pero devuelve también `notes`. ¿Se escribe `notes`?",
+   "reverso": "Sí. El type hint de retorno no filtra el update; solo el `output_schema` filtra, y solo en la salida del grafo."
+  }
+ ]
+}

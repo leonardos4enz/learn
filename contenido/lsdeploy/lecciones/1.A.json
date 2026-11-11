@@ -1,0 +1,128 @@
+{
+ "mision_id": "1.A",
+ "titulo": "Conceptos y el agente",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En LangGraph corrías `graph.invoke(...)` dentro de tu notebook. El grafo vivía en tu proceso: si lo cerrabas, se acababa todo.\n\nEn producción necesitas otras cosas:\n\n- Atender a **muchos usuarios a la vez**.\n- Que una conversación **sobreviva** si un contenedor se cae.\n- Memoria que se comparta **entre conversaciones**.\n- Cambiar el comportamiento del agente (qué módulo enseña, a quién) **sin volver a desplegar**.\n\nEso es lo que añade una deployment alrededor de tu grafo."
+  },
+  {
+   "tipo": "imagen",
+   "titulo": "Anatomía de una deployment",
+   "notas": "Lee el diagrama de izquierda a derecha:\n- El **api server** recibe el HTTP y deja cada run en la **queue**.\n- Hay **n contenedores**; en cada uno, **m workers** toman runs de la cola y corren tu grafo con el runtime de LangGraph.\n- La **base de datos** guarda tres cosas: los *records* (assistants, threads, runs), el **checkpointer** (estado del grafo) y el **store** (memoria de largo plazo).\nFuente: diapositiva 8 de 9 de m1.0.",
+   "url": "/imagenes/lsdeploy/m1-deployment-anatomia.png",
+   "alt": "Diagrama de una deployment de LangSmith: api server y queue a la izquierda; containers x n con worker processes x m que corren el langgraph runtime con tu agent graph; a la derecha la base de datos con records (assistants, threads, runs), checkpointer (graph state) y store (long-term memory)."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Las 4 capas",
+   "contenido": "graph TD\n  code[\"Tu código<br/>agent.py: el grafo\"] --> oss[\"langgraph OSS<br/>compila y corre el loop Pregel\"]\n  oss --> api[\"langgraph-api<br/>API server, workers, adaptador de cola,<br/>adaptadores de checkpointer y store, auth middleware\"]\n  api --> infra[\"Infraestructura<br/>Postgres: threads, assistants, crons, store, checkpoints<br/>Redis: la cola de runs\"]\n  class api clave",
+   "notas": "`langgraph` (OSS, el que usaste en el curso 02) y `langgraph-api` (el servidor, propietario) son **paquetes distintos**: el servidor importa el motor y lo corre.\nUn `docker-compose.yml` self-hosted tiene justo esto: `langgraph-api` (imagen `langchain/langgraph-api`), `langgraph-postgres` y `langgraph-redis`. En LangSmith Deployment, las dos capas de abajo las administra LangSmith."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Quién guarda qué",
+   "contenido": "El malentendido típico: \"Redis guarda el estado\". No:\n\n- **Redis** solo lleva la **cola** de runs pendientes.\n- **Postgres** guarda todo lo que tiene que durar: checkpoints de cada thread, el Store y los *records* (assistants, threads, runs, crons).\n\nPor eso una conversación sobrevive a un contenedor caído: el estado del thread está en el checkpointer de Postgres, que comparten todos los contenedores, y otro worker retoma desde el último checkpoint.\n\nCompáralo con LangGraph M1 (`agent-memory`): tu `MemorySaver` vivía en la RAM de tu proceso. Era la misma idea (estado por `thread_id`), pero sin durabilidad."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Vocabulario del examen",
+   "contenido": "| Término | Qué es |\n|---|---|\n| **graph** | Tu código compilado (`StateGraph`, `create_agent`, `create_deep_agent`). Se registra en `langgraph.json` con un id, p. ej. `\"tutor\"`. |\n| **deployment** | La instancia en la nube: contenedores + Postgres + Redis + URL. Puede alojar varios graphs. |\n| **revision** | Una versión de la deployment: imagen + env vars. Cada deploy o cambio de env vars crea una nueva. |\n| **assistant** | Un registro de configuración (`context`, `config`) encima de un graph. Sin código nuevo. |\n| **thread** | Una conversación: su estado vive en el checkpointer. |\n| **run** | Una ejecución del graph sobre un thread, con un assistant. |\n\nUn graph se despliega una vez; los assistants lo personalizan; los threads guardan conversaciones; cada mensaje es un run."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente: deep_tutor/agent/agent.py",
+   "contenido": "\"\"\"\nDeep Tutor Agent\n\nTutor agent using create_deep_agent with FilesystemBackend.\n\nPersonality and teaching guidelines are loaded from AGENTS.md via MemoryMiddleware.\nModule skills are loaded from /skills/ via SkillsMiddleware (progressive disclosure).\nThe dynamic prompt injects per-session context: student name, module, and goals.\n\nAssistant context (set per assistant in LangSmith):\n- module_id:       which module to load (e.g. \"module-1\")\n- store_namespace: student's Store namespace (derived from email, e.g. \"jane@example_com\")\n\"\"\"\n\nimport asyncio\nfrom dataclasses import dataclass\nfrom pathlib import Path\n\nfrom deepagents import create_deep_agent\nfrom deepagents.backends.filesystem import FilesystemBackend\nfrom deepagents.middleware.permissions import FilesystemPermission\nfrom langchain.agents.middleware import ModelRequest, dynamic_prompt\nfrom langchain.chat_models import init_chat_model\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\n\n# ---------------------------------------------------------------------------\n# Model\n# ---------------------------------------------------------------------------\nmodel = init_chat_model(\"anthropic:claude-sonnet-4-6\")\n# model = init_chat_model(\"openai:gpt-4o\")\n# model = init_chat_model(\"google_genai:gemini-2.5-flash\")\n\n\n# ---------------------------------------------------------------------------\n# Context schema\n# ---------------------------------------------------------------------------\n@dataclass\nclass ContextSchema:\n    module_id: str = \"module-1\"\n    store_namespace: str = \"\"  # derived from student email\n\n\n# ---------------------------------------------------------------------------\n# Dynamic system prompt\n# ---------------------------------------------------------------------------\n@dynamic_prompt\nasync def tutor_prompt(request: ModelRequest) -> str:\n    module_id = request.runtime.context.module_id\n    store_namespace = request.runtime.context.store_namespace\n    student_name = \"Student\"\n    goals = \"\"\n\n    if store_namespace and request.runtime.store:\n        item = await request.runtime.store.aget((store_namespace,), key=\"profile\")\n        if item is not None:\n            profile = item.value\n            student_name = f\"{profile.get('first_name', '')} {profile.get('last_name', '')}\".strip() or \"Student\"\n            goals = profile.get(\"goals\", \"\")\n\n    goals_line = f\"\\n\\nThe student's goals: {goals}\" if goals else \"\"\n    return (\n        f\"Your student's name is {student_name}. \"\n        f\"They are working on {module_id}.{goals_line}\\n\\n\"\n        f\"On your first response, read /skills/{module_id}/SKILL.md. \"\n        f\"That file contains your teaching instructions — follow them. \"\n        f\"When you need to answer a factual question, read /skills/{module_id}/information.md.\"\n    )\n\n\n# ---------------------------------------------------------------------------\n# MCP tools\n# ---------------------------------------------------------------------------\n_mcp_client = MultiServerMCPClient({\n    \"docs\": {\n        \"url\": \"https://docs.langchain.com/mcp\",\n        \"transport\": \"http\",\n    }\n})\nmcp_tools = asyncio.run(_mcp_client.get_tools())\n\n\n# ---------------------------------------------------------------------------\n# Agent\n# ---------------------------------------------------------------------------\nbackend = FilesystemBackend(\n    root_dir=Path(__file__).parent.parent,\n    virtual_mode=True,\n)\n\ngraph = create_deep_agent(\n    model=model,\n    tools=[*mcp_tools],\n    middleware=[tutor_prompt],\n    backend=backend,\n    memory=[\"/AGENTS.md\"],\n    skills=[\"/skills/\"],\n    permissions=[\n        FilesystemPermission(operations=[\"write\"], paths=[\"/skills/**\"], mode=\"deny\"),\n    ],\n    context_schema=ContextSchema,\n)",
+   "notas": "El código completo del tutor. Mira tres cosas:\n- `ContextSchema`: los dos valores que cambian por assistant (`module_id`, `store_namespace`). Es el mismo `context_schema` de LangGraph y de `create_agent`.\n- `tutor_prompt` (un `@dynamic_prompt`, middleware del curso 01) lee ese context **y el Store** antes de cada llamada al modelo.\n- `create_deep_agent` con `memory=[\"/AGENTS.md\"]`, `skills=[\"/skills/\"]`, un `FilesystemBackend` y un permiso que **niega escribir** en `/skills/**`.\nNo lo corrí tal cual: al importarse llama por red al MCP de docs, y responder pide `ANTHROPIC_API_KEY`. En el paso 9 está la versión verificada.",
+   "resaltar": [
+    38,
+    54,
+    100
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Python: el nombre por defecto con `.strip() or`",
+   "contenido": "for profile in ({\"first_name\": \"\", \"last_name\": \"\"},\n                {\"first_name\": \"Jane\"},\n                {\"first_name\": \"Jane\", \"last_name\": \"Doe\"}):\n    name = f\"{profile.get('first_name', '')} {profile.get('last_name', '')}\"\n    print(repr(name), \"->\", repr(name.strip() or \"Student\"))",
+   "notas": "`tutor_prompt` arma el nombre con `f\"{first} {last}\".strip() or \"Student\"`. Dos trucos de Python:\n- `.strip()` quita los espacios de los extremos: `' '` queda `''`.\n- `x or \"Student\"` devuelve `x` si no está vacío; si está vacío (falsy), devuelve `\"Student\"`.\nSalida real:\n`' ' -> 'Student'` · `'Jane ' -> 'Jane'` · `'Jane Doe' -> 'Jane Doe'`",
+   "resaltar": [
+    5
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo mismo que ya conoces",
+   "contenido": "El tutor no inventa nada nuevo; junta piezas que ya viste:\n\n- **`memory=[\"/AGENTS.md\"]`**: la personalidad fija, cargada en cada run (Deep Agents M2).\n- **`skills=[\"/skills/\"]`**: un `SKILL.md` e `information.md` por módulo, con *progressive disclosure*: el agente lee el archivo solo cuando lo necesita.\n- **`FilesystemBackend(virtual_mode=True)`**: el agente ve rutas como `/skills/module-1/SKILL.md`, aunque en disco estén dentro de `deep_tutor/`.\n- **context** (LangGraph): valores tipados por ejecución. Aquí la clave es que se **guardan en un assistant**, así que un solo deploy sirve para seis módulos y cualquier alumno."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Verificado: el mismo agente con un modelo falso",
+   "contenido": "import re\nfrom dataclasses import dataclass\nfrom pathlib import Path\n\nfrom deepagents import create_deep_agent\nfrom deepagents.backends.filesystem import FilesystemBackend\nfrom deepagents.middleware.permissions import FilesystemPermission\nfrom langchain.agents.middleware import ModelRequest, dynamic_prompt\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langgraph.store.memory import InMemoryStore\n\nSEEN = {}\nclass FakeModel(BaseChatModel):\n    \"\"\"Hace de LLM: guarda el system prompt que recibe y contesta 'ok'.\"\"\"\n    @property\n    def _llm_type(self): return \"fake\"\n    def bind_tools(self, tools, **kw): return self\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        SEEN[\"system\"] = messages[0].text\n        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=\"ok\"))])\n\n@dataclass\nclass ContextSchema:\n    module_id: str = \"module-1\"\n    store_namespace: str = \"\"\n\n@dynamic_prompt\nasync def tutor_prompt(request: ModelRequest) -> str:\n    module_id = request.runtime.context.module_id\n    store_namespace = request.runtime.context.store_namespace\n    student_name = \"Student\"\n    goals = \"\"\n    if store_namespace and request.runtime.store:\n        item = await request.runtime.store.aget((store_namespace,), key=\"profile\")\n        if item is not None:\n            profile = item.value\n            student_name = f\"{profile.get('first_name', '')} {profile.get('last_name', '')}\".strip() or \"Student\"\n            goals = profile.get(\"goals\", \"\")\n    goals_line = f\"\\n\\nThe student's goals: {goals}\" if goals else \"\"\n    return (\n        f\"Your student's name is {student_name}. \"\n        f\"They are working on {module_id}.{goals_line}\\n\\n\"\n        f\"On your first response, read /skills/{module_id}/SKILL.md. \"\n        f\"That file contains your teaching instructions — follow them. \"\n        f\"When you need to answer a factual question, read /skills/{module_id}/information.md.\"\n    )\n\nbackend = FilesystemBackend(\n    root_dir=Path(r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/deep_tutor\"),\n    virtual_mode=True,\n)\nstore = InMemoryStore()\nstore.put((\"jane@example_com\",), \"profile\", {\"first_name\": \"Jane\", \"last_name\": \"Doe\", \"goals\": \"pasar el LCAE\"})\n\ngraph = create_deep_agent(\n    model=FakeModel(),\n    tools=[],                     # el original trae las tools del MCP de docs (red)\n    middleware=[tutor_prompt],\n    backend=backend,\n    memory=[\"/AGENTS.md\"],\n    skills=[\"/skills/\"],\n    permissions=[FilesystemPermission(operations=[\"write\"], paths=[\"/skills/**\"], mode=\"deny\")],\n    context_schema=ContextSchema,\n    store=store,\n)\n\nimport asyncio\nasync def main():\n    for ctx in ({\"module_id\": \"module-2\", \"store_namespace\": \"jane@example_com\"},\n                {\"module_id\": \"module-4\", \"store_namespace\": \"\"}):\n        await graph.ainvoke({\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]}, context=ctx)\n        s = SEEN[\"system\"]\n        print(ctx)\n        print(\"  \", re.search(r\"Your student's name is.*?\\.\\s*They are working on [\\w-]+\\.\", s, re.S).group(0).replace(\"\\n\", \" \"))\n        print(\"   trae AGENTS.md:\", \"empathetic but concise tutor\" in s)\nasyncio.run(main())",
+   "notas": "Es `agent.py` con tres cambios: un `FakeModel` que guarda el system prompt en vez de llamar a Claude, sin las tools del MCP (red) y un `InMemoryStore` con el perfil de Jane. Lo corrí con el `.venv` del curso 03 (deepagents 0.7; el curso fija 0.5.9). Salida real:\n`{'module_id': 'module-2', 'store_namespace': 'jane@example_com'}` → `Your student's name is Jane Doe. They are working on module-2.`\n`{'module_id': 'module-4', 'store_namespace': ''}` → `Your student's name is Student. They are working on module-4.`\nEn los dos, `trae AGENTS.md: True`. Mismo grafo, distinto context, distinto prompt.",
+   "resaltar": [
+    55,
+    73
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: un tutor para dos alumnos",
+   "contenido": "Quieres que el tutor ya desplegado enseñe el **módulo 3 a Ana** y el **módulo 5 a Luis**, cada uno con su perfil. ¿Qué haces?\n\n- **A)** Dos deployments, cada una con una copia de `agent.py` que fija el módulo.\n- **B)** Dos entradas en `graphs` de `langgraph.json` y un redeploy.\n- **C)** Dos assistants sobre el mismo graph `tutor`, cada uno con su `context` (`module_id`, `store_namespace`).\n- **D)** Editar `AGENTS.md` con el nombre del alumno y redeployar cada vez.",
+   "respuesta": "**C.** El código lee `module_id` y `store_namespace` del context, y el context se guarda en un **assistant**. Crear assistants no despliega nada: es un registro en la base de datos.\nA y B duplican código y cobran o tardan un deploy por alumno. D cambia la personalidad para todos los alumnos a la vez y exige una nueva revisión."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: se cae un contenedor",
+   "contenido": "Un contenedor de tu deployment se cae a mitad de un run de Jane. ¿Qué pasa con la conversación?\n\n- **A)** Se pierde: el estado del thread estaba en Redis.\n- **B)** Sigue: el estado está en el checkpointer (Postgres); otro contenedor retoma desde el último checkpoint y repite el paso que no terminó.\n- **C)** Se pierde: el estado estaba en el disco del contenedor.\n- **D)** Sigue, porque el navegador reenvía todo el historial.",
+   "respuesta": "**B.** El checkpointer guarda el estado después de cada superstep en Postgres, compartido por todos los contenedores. Las escrituras del paso que falló se descartan y ese paso se reintenta.\nA: Redis solo lleva la cola. C: el disco del contenedor no es donde vive el estado de los threads. D: el cliente solo manda el mensaje nuevo; el historial está en el servidor."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Un alumno que no está en el Store",
+   "contenido": "Con el agente verificado del paso 9, haces un run con este context:\n\n```python\n{\"module_id\": \"module-3\", \"store_namespace\": \"bob@example_com\"}\n```\n\nBob nunca se registró: en el Store solo está `(\"jane@example_com\",)`. ¿Con qué frase empieza el system prompt?",
+   "respuesta": "Salida real: `Your student's name is Student. They are working on module-3.`\n`store.aget((\"bob@example_com\",), key=\"profile\")` devuelve `None`, así que no entra al `if item is not None` y quedan los valores por defecto (`\"Student\"`, sin goals). El `module_id` sí viene del context, así que el módulo es el 3.",
+   "ref": 9
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Una deployment envuelve tu grafo: API server + cola (Redis) + workers en n contenedores + Postgres (checkpointer, Store y records).\n- `langgraph` (motor OSS) no es lo mismo que `langgraph-api` (el servidor que lo corre). Es el servidor que montas si lo despliegas self-hosted.\n- Vocabulario: graph → deployment → revision; assistant (config), thread (conversación), run (ejecución).\n- El tutor se despliega **una vez**; el `context` de cada assistant (`module_id`, `store_namespace`) cambia lo que hace en runtime.\n- El agente es un Deep Agent normal: AGENTS.md, skills, `FilesystemBackend` y un `@dynamic_prompt` que lee el Store.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Agent Server* (arquitectura y \"run execution lifecycle\")."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m1/m1.0-intro.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m1/m1.1-the-agent.html",
+  "lca-deployment/thinkific/src/m1/m1.0-intro.md",
+  "lca-deployment/thinkific/src/m1/m1.1-the-agent.md",
+  "lca-deployment/python/deep_tutor/agent/agent.py",
+  "lca-deployment/thinkific/src/m1/images/deploy-step8.png"
+ ],
+ "tarjetas": [
+  {
+   "frente": "En una deployment, ¿qué guarda Redis y qué guarda Postgres?",
+   "reverso": "Redis solo la cola de runs. Postgres guarda lo que dura: checkpoints de los threads, el Store y los records (assistants, threads, runs, crons)."
+  },
+  {
+   "frente": "¿Por qué una conversación sobrevive si se cae el contenedor que la corría?",
+   "reverso": "Su estado está en el checkpointer (Postgres), compartido por todos los contenedores. Otro worker retoma desde el último checkpoint."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre `langgraph` y `langgraph-api`?",
+   "reverso": "`langgraph` es el motor OSS que compila y corre el grafo. `langgraph-api` es el servidor (HTTP, workers, cola, auth) que importa ese motor y lo hospeda."
+  },
+  {
+   "frente": "El tutor se despliega una vez y enseña seis módulos a muchos alumnos. ¿Qué lo hace posible?",
+   "reverso": "El `context_schema` (`module_id`, `store_namespace`): cada assistant guarda sus valores y el `@dynamic_prompt` los lee en cada run."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre una revision y un assistant?",
+   "reverso": "Una revision es una versión de la deployment (imagen + env vars). Un assistant es solo configuración (context/config) encima de un graph; crearlo no despliega nada."
+  },
+  {
+   "frente": "¿Qué hace `\"  \".strip() or \"Student\"`?",
+   "reverso": "`.strip()` deja `''`, que es falsy, así que `or` devuelve `\"Student\"`. Es el nombre por defecto del tutor."
+  }
+ ]
+}

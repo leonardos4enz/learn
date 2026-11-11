@@ -1,0 +1,120 @@
+{
+ "mision_id": "5.A",
+ "titulo": "Memoria entre threads",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En el Módulo 2 el checkpointer guardó la conversación **por thread**. Si abres un thread nuevo, el grafo empieza en blanco: no sabe tu nombre ni lo que te gusta.\n\nUn asistente útil necesita recordar al **usuario**, no solo a la conversación. Para eso LangGraph tiene un segundo tipo de memoria: el **Store**, una base key-value que vive fuera de los threads."
+  },
+  {
+   "tipo": "imagen",
+   "titulo": "Cómo se organiza el Store",
+   "notas": "- **namespace**: una tupla, como una carpeta. Ej.: `(user_id, \"memories\")`.\n- **key**: el nombre del archivo dentro de la carpeta.\n- **value**: el contenido, siempre un `dict`.\nDiagrama del notebook original.",
+   "url": "/imagenes/langgraph/m5-store-namespaces.png",
+   "alt": "Un Store con dos namespaces: (User, Profile) con una key 'profile', y (User, Memories) con dos keys memory_1 y memory_2."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "put, search y get",
+   "contenido": "import uuid\nfrom langgraph.store.memory import InMemoryStore\n\nstore = InMemoryStore()\n\n# namespace = carpeta, key = archivo, value = contenido (un dict)\nnamespace = (\"1\", \"memories\")\nkey = str(uuid.uuid4())\nstore.put(namespace, key, {\"food_preference\": \"I like pizza\"})\n\n# search: todo lo que hay en el namespace (lista de Items)\nmemories = store.search(namespace)\nprint(type(memories), len(memories))\nprint(memories[0].value)\n\n# get: un Item exacto por namespace + key\nitem = store.get(namespace, key)\nprint(item.namespace, item.value)\n\n# otro namespace: no ve nada del usuario \"1\"\nprint(store.search((\"2\", \"memories\")))\n\n# get con una key que no existe\nprint(store.get(namespace, \"no-existe\"))\n",
+   "notas": "- `put` guarda un value en (namespace, key).\n- `search` devuelve una **lista** de Items de un namespace.\n- `get` devuelve **un** Item, o `None` si la key no existe.\nSalida real:\n```\n<class 'list'> 1\n{'food_preference': 'I like pizza'}\n('1', 'memories') {'food_preference': 'I like pizza'}\n[]\nNone\n```",
+   "resaltar": [
+    9,
+    12,
+    17
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué es un Item",
+   "contenido": "`search` y `get` no devuelven el dict a secas: devuelven un **Item** con `value`, `key`, `namespace`, `created_at` y `updated_at`. Por eso escribes `item.value`.\n\nDos reglas que salen de la salida anterior:\n- Otro namespace no ve nada: `(\"2\", \"memories\")` devuelve `[]`. El namespace es lo que separa a un usuario de otro.\n- `put` con una key que ya existe **sobrescribe**. No hay reducer como en el state: el último `put` gana."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dos memorias, dos llaves",
+   "contenido": "Ahora juntas las dos memorias en un mismo grafo:\n\n| | Checkpointer (`MemorySaver`) | Store (`InMemoryStore`) |\n|---|---|---|\n| Guarda | el **state** del grafo en cada paso | lo que tú decidas, como dicts |\n| Llave | `thread_id` | namespace (p. ej. con `user_id`) |\n| Alcance | **dentro** de un thread | **entre** threads |\n| Quién escribe | LangGraph, solo | tus nodes, con `store.put` |\n\nEl checkpointer es automático. El Store no: si ningún node hace `put`, no se guarda nada."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Chatbot con las dos memorias (sin LLM)",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langchain_core.runnables.config import RunnableConfig\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.store.base import BaseStore\nfrom langgraph.store.memory import InMemoryStore\n\ndef call_model(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    # Lee la memoria larga del usuario (no del thread)\n    user_id = config[\"configurable\"][\"user_id\"]\n    item = store.get((\"memory\", user_id), \"user_memory\")\n    facts = item.value[\"facts\"] if item else []\n    n = len(state[\"messages\"])  # mensajes que hay en ESTE thread\n    return {\"messages\": AIMessage(f\"Recuerdo de ti: {facts}. Mensajes en este thread: {n}\")}\n\ndef write_memory(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    # En el notebook, aquí un LLM resume la conversación. Aquí: guardamos el texto del usuario.\n    user_id = config[\"configurable\"][\"user_id\"]\n    namespace = (\"memory\", user_id)\n    item = store.get(namespace, \"user_memory\")\n    facts = item.value[\"facts\"] if item else []\n    last_human = [m for m in state[\"messages\"] if m.type == \"human\"][-1]\n    store.put(namespace, \"user_memory\", {\"facts\": facts + [last_human.content]})\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"call_model\", call_model)\nbuilder.add_node(\"write_memory\", write_memory)\nbuilder.add_edge(START, \"call_model\")\nbuilder.add_edge(\"call_model\", \"write_memory\")\nbuilder.add_edge(\"write_memory\", END)\n\nwithin_thread_memory = MemorySaver()     # memoria corta: por thread_id\nacross_thread_memory = InMemoryStore()   # memoria larga: por user_id (namespace)\ngraph = builder.compile(checkpointer=within_thread_memory, store=across_thread_memory)\n\ndef chat(text, thread_id, user_id):\n    config = {\"configurable\": {\"thread_id\": thread_id, \"user_id\": user_id}}\n    out = graph.invoke({\"messages\": [HumanMessage(text)]}, config)\n    print(f\"[thread {thread_id}, user {user_id}] {out['messages'][-1].content}\")\n\nchat(\"Me llamo Lance\", \"1\", \"1\")\nchat(\"Me gusta la bici\", \"1\", \"1\")\nchat(\"Hola de nuevo\", \"2\", \"1\")   # thread nuevo, mismo usuario\nchat(\"Hola\", \"3\", \"2\")            # thread nuevo, otro usuario\n",
+   "notas": "- Si un node declara el parámetro `store: BaseStore`, LangGraph le **inyecta** el store que pasaste a `compile`. Igual con `config`.\n- `user_id` llega por `config[\"configurable\"]`, junto al `thread_id`.\n- `write_memory` lee, agrega y vuelve a hacer `put` con la misma key.\nNodes de Python puro para que la salida sea fija; en el notebook un LLM hace este trabajo.",
+   "resaltar": [
+    8,
+    23,
+    34
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo",
+   "contenido": "graph LR\n  START([START]) --> call_model\n  call_model --> write_memory\n  write_memory --> END([END])\n  class write_memory clave",
+   "notas": "- `call_model` **lee** el Store y responde.\n- `write_memory` **escribe** en el Store después de cada turno.\nGuardar mientras el usuario conversa se llama escribir \"in the hot path\"."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real",
+   "contenido": "```\n[thread 1, user 1] Recuerdo de ti: []. Mensajes en este thread: 1\n[thread 1, user 1] Recuerdo de ti: ['Me llamo Lance']. Mensajes en este thread: 3\n[thread 2, user 1] Recuerdo de ti: ['Me llamo Lance', 'Me gusta la bici']. Mensajes en este thread: 1\n[thread 3, user 2] Recuerdo de ti: []. Mensajes en este thread: 1\n```\n- Turno 2: hay 3 mensajes porque el **checkpointer** trae el historial del thread 1.\n- Thread 2: el historial vuelve a 1 mensaje, pero el **Store** sí recuerda a Lance.\n- User 2: namespace distinto, memoria vacía.\n\nLa respuesta se escribe antes de `write_memory`: por eso el turno 1 aún dice `[]`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La versión con LLM del notebook",
+   "contenido": "En el notebook, `write_memory` no copia el texto: le pasa al LLM la conversación y la memoria actual con la instrucción *\"Merge any new information with existing memory... Format the memory as a clear, bulleted list\"*, y guarda la respuesta en `{\"memory\": ...}`.\n\nSalida del notebook original (gpt-4o), después de dos mensajes en el thread 1:\n```\n{'memory': \"**Updated User Information:**\\n- User's name is Lance.\\n- Likes to bike around San Francisco.\"}\n```\nEn el thread 2 preguntó *\"Where would you recommend that I go biking?\"* y el bot contestó *\"Hi Lance! Since you enjoy biking around San Francisco...\"*: el historial estaba vacío, el dato vino del Store."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Mismo thread, otro usuario",
+   "contenido": "Es el chatbot del paso 6 con una llamada más al final: el **thread 1** (el de Lance) pero con **user 2**. ¿Qué imprime la última línea? Di los dos números: qué recuerda y cuántos mensajes hay.\n\n```python\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langchain_core.runnables.config import RunnableConfig\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.store.base import BaseStore\nfrom langgraph.store.memory import InMemoryStore\n\ndef call_model(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    # Lee la memoria larga del usuario (no del thread)\n    user_id = config[\"configurable\"][\"user_id\"]\n    item = store.get((\"memory\", user_id), \"user_memory\")\n    facts = item.value[\"facts\"] if item else []\n    n = len(state[\"messages\"])  # mensajes que hay en ESTE thread\n    return {\"messages\": AIMessage(f\"Recuerdo de ti: {facts}. Mensajes en este thread: {n}\")}\n\ndef write_memory(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    # En el notebook, aquí un LLM resume la conversación. Aquí: guardamos el texto del usuario.\n    user_id = config[\"configurable\"][\"user_id\"]\n    namespace = (\"memory\", user_id)\n    item = store.get(namespace, \"user_memory\")\n    facts = item.value[\"facts\"] if item else []\n    last_human = [m for m in state[\"messages\"] if m.type == \"human\"][-1]\n    store.put(namespace, \"user_memory\", {\"facts\": facts + [last_human.content]})\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"call_model\", call_model)\nbuilder.add_node(\"write_memory\", write_memory)\nbuilder.add_edge(START, \"call_model\")\nbuilder.add_edge(\"call_model\", \"write_memory\")\nbuilder.add_edge(\"write_memory\", END)\n\nwithin_thread_memory = MemorySaver()     # memoria corta: por thread_id\nacross_thread_memory = InMemoryStore()   # memoria larga: por user_id (namespace)\ngraph = builder.compile(checkpointer=within_thread_memory, store=across_thread_memory)\n\ndef chat(text, thread_id, user_id):\n    config = {\"configurable\": {\"thread_id\": thread_id, \"user_id\": user_id}}\n    out = graph.invoke({\"messages\": [HumanMessage(text)]}, config)\n    print(f\"[thread {thread_id}, user {user_id}] {out['messages'][-1].content}\")\n\nchat(\"Me llamo Lance\", \"1\", \"1\")\nchat(\"Me gusta la bici\", \"1\", \"1\")\nchat(\"Hola de nuevo\", \"2\", \"1\")   # thread nuevo, mismo usuario\nchat(\"Hola\", \"3\", \"2\")            # thread nuevo, otro usuario\nchat(\"¿Cómo me llamo?\", \"1\", \"2\")\n```",
+   "respuesta": "`Recuerdo de ti: ['Hola']. Mensajes en este thread: 5` (salida real).\nEl historial sale del **checkpointer**, que solo mira `thread_id`: el thread 1 ya tenía 4 mensajes, más el nuevo, 5. La memoria sale del **Store**, que solo mira el namespace con `user_id`: user 2 solo dijo \"Hola\". Son dos memorias independientes con llaves distintas."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Compilar sin store",
+   "contenido": "Es el chatbot del paso 6 con una sola línea cambiada: `compile` recibe el checkpointer pero **no** el store. Corres un turno. ¿Qué pasa? ¿Funciona como un bot sin memoria larga?\n\n```python\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langchain_core.runnables.config import RunnableConfig\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langgraph.store.base import BaseStore\nfrom langgraph.store.memory import InMemoryStore\n\ndef call_model(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    # Lee la memoria larga del usuario (no del thread)\n    user_id = config[\"configurable\"][\"user_id\"]\n    item = store.get((\"memory\", user_id), \"user_memory\")\n    facts = item.value[\"facts\"] if item else []\n    n = len(state[\"messages\"])  # mensajes que hay en ESTE thread\n    return {\"messages\": AIMessage(f\"Recuerdo de ti: {facts}. Mensajes en este thread: {n}\")}\n\ndef write_memory(state: MessagesState, config: RunnableConfig, store: BaseStore):\n    # En el notebook, aquí un LLM resume la conversación. Aquí: guardamos el texto del usuario.\n    user_id = config[\"configurable\"][\"user_id\"]\n    namespace = (\"memory\", user_id)\n    item = store.get(namespace, \"user_memory\")\n    facts = item.value[\"facts\"] if item else []\n    last_human = [m for m in state[\"messages\"] if m.type == \"human\"][-1]\n    store.put(namespace, \"user_memory\", {\"facts\": facts + [last_human.content]})\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"call_model\", call_model)\nbuilder.add_node(\"write_memory\", write_memory)\nbuilder.add_edge(START, \"call_model\")\nbuilder.add_edge(\"call_model\", \"write_memory\")\nbuilder.add_edge(\"write_memory\", END)\n\ngraph = builder.compile(checkpointer=MemorySaver())   # sin store=\n\ndef chat(text, thread_id, user_id):\n    config = {\"configurable\": {\"thread_id\": thread_id, \"user_id\": user_id}}\n    out = graph.invoke({\"messages\": [HumanMessage(text)]}, config)\n    print(f\"[thread {thread_id}, user {user_id}] {out['messages'][-1].content}\")\n\nchat(\"Me llamo Lance\", \"1\", \"1\")\n```",
+   "respuesta": "Truena: `AttributeError: 'NoneType' object has no attribute 'get'` (salida real). LangGraph inyecta `store=None` porque no le diste uno, y `store.get` falla. El checkpointer no reemplaza al Store: son piezas distintas y cada una se pasa a `compile` por separado."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Reiniciar Python",
+   "contenido": "Corres el chatbot del paso 6, cierras el proceso de Python y lo vuelves a abrir con el mismo código. Llamas `chat(\"Hola\", \"9\", \"1\")`. ¿Recuerda a Lance?",
+   "respuesta": "No. `InMemoryStore` y `MemorySaver` viven en la RAM del proceso: al cerrarlo se borran las dos memorias. Para que dure se usa un store con base de datos (p. ej. `PostgresStore`). Un Agent Server de LangGraph ya trae un store persistente en Postgres; por eso los grafos que se despliegan ahí se compilan sin `store=`: el servidor pone el suyo.",
+   "ref": 6
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Checkpointer** = memoria corta, por `thread_id`, automática. **Store** = memoria larga, por namespace, la escribes tú.\n- El Store guarda dicts en `(namespace, key)`; `put` sobrescribe, `search` da una lista, `get` da un Item o `None`.\n- Un node recibe el store declarando `store: BaseStore`; el `user_id` llega por `config[\"configurable\"]`.\n- En Deep Agents (M3.3) verás lo mismo: el checkpointer guarda el hilo y un Store da memoria que sobrevive entre threads."
+  }
+ ],
+ "fuentes": [
+  "module-5/memory_store.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Mismo `thread_id`, distinto `user_id`. ¿Qué memoria cambia y cuál se queda igual?",
+   "reverso": "El historial (checkpointer) es el mismo porque depende del `thread_id`. La memoria larga (Store) cambia porque el namespace usa el `user_id`."
+  },
+  {
+   "frente": "¿Por qué el Store no guarda nada solo, como sí lo hace el checkpointer?",
+   "reverso": "El checkpointer guarda el state en cada paso de forma automática. El Store solo cambia cuando un node llama `store.put`; tú decides qué y cuándo recordar."
+  },
+  {
+   "frente": "¿Qué pasa si haces `store.put(ns, \"k\", {...})` dos veces con la misma key?",
+   "reverso": "El segundo `put` sobrescribe al primero: queda un solo Item. No hay reducer que acumule."
+  },
+  {
+   "frente": "¿Cómo recibe un node el store para poder leerlo y escribirlo?",
+   "reverso": "Declarando el parámetro `store: BaseStore`. LangGraph inyecta el store que pasaste a `compile(store=...)`. Si no pasaste ninguno, llega `None`."
+  },
+  {
+   "frente": "¿Para qué sirve el namespace del Store, por ejemplo `(\"memory\", user_id)`?",
+   "reverso": "Separa la memoria de cada usuario (como una carpeta). `search` de un namespace no ve los Items de otro."
+  },
+  {
+   "frente": "Cierras el proceso de Python con `InMemoryStore`. ¿Qué queda de la memoria larga?",
+   "reverso": "Nada: vive en RAM. Para que dure necesitas un store con base de datos, como el Postgres del Agent Server."
+  }
+ ]
+}

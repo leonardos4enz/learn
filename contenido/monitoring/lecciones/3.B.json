@@ -1,0 +1,109 @@
+{
+ "mision_id": "3.B",
+ "titulo": "A/B testing: comparar versiones con Group by",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Encontraste un problema de calidad (con sentimiento o con Insights) y escribiste un prompt nuevo. ¿Cómo sabes que es **mejor**? Subirlo y \"ver qué pasa\" no es monitoreo: el tráfico de hoy no es el de ayer, así que comparar antes/después mezcla el cambio con todo lo demás.\n\n**A/B testing:** corres las dos versiones **al mismo tiempo** sobre tráfico real, marcas cada traza con la versión que usó y comparas en el dashboard. Y cuando una versión sale peor, todavía falta saber **por qué**: para eso se desglosa por tipo de run."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La idea: una llave de metadata y Group by",
+   "contenido": "1. Cada traza lleva en su **metadata** qué versión usó (`prompt_version`, `app_version`…).\n2. En el **Monitor** del proyecto: **Group by** > metadata > esa llave. Todos los charts (errores, latencia, feedback) se parten por versión, lado a lado.\n3. Tus **online evaluators** (como `user-sentiment`) califican las trazas de ambas versiones sin configurar nada extra: el feedback ya trae la versión porque va pegado a la traza.\n\n**Un solo proyecto.** No necesitas un proyecto por versión ni filtrar una y luego la otra.\n\nEs lo mismo que agrupar costo por `customer` en el módulo 1: lo que pones en metadata se vuelve una dimensión del dashboard."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Etiquetar cada traza con su versión",
+   "contenido": "import random\nimport langsmith as ls\nfrom langsmith import tracing_context\n\nrandom.seed(7)                          # para que la salida se repita\n\ndef run_agent(version, question):\n    # Agente falso: cada versión contesta con otro prompt\n    return f\"[{version}] Respuesta a: {question}\"\n\ncapturados = []\nwith tracing_context(enabled=\"local\"):\n    for user_question in [\"¿Dónde está mi pedido?\", \"¿Tienen yunques de 50 kg?\", \"Quiero un reembolso\"]:\n        version = random.choice([\"control\", \"variant\"])\n        with ls.trace(\n            name=\"support-agent\",\n            metadata={\"prompt_version\": version},\n            inputs={\"question\": user_question},\n        ) as rt:\n            response = run_agent(version, user_question)\n            rt.end(outputs={\"response\": response})\n        capturados.append(rt)\n\nfor rt in capturados:\n    print(rt.name, \"| metadata:\", rt.metadata, \"| outputs:\", rt.outputs)",
+   "notas": "El snippet oficial (`ls.trace` con `metadata={\"prompt_version\": version}`) dentro de un ciclo de 3 preguntas, con `run_agent` falso y tracing **local** (no se manda nada).\n- `random.choice([...])` elige una versión al azar por petición: así las dos ven tráfico parecido. `random.seed(7)` solo hace que la salida se repita.\n- `with ls.trace(...) as rt:` abre una traza raíz; `rt.end(outputs=...)` la cierra con su salida.\n- Salida real:\n```\nsupport-agent | metadata: {'prompt_version': 'variant', 'ls_method': 'trace'} | outputs: {'response': '[variant] Respuesta a: ¿Dónde está mi pedido?'}\nsupport-agent | metadata: {'prompt_version': 'control', 'ls_method': 'trace'} | outputs: {'response': '[control] Respuesta a: ¿Tienen yunques de 50 kg?'}\nsupport-agent | metadata: {'prompt_version': 'variant', 'ls_method': 'trace'} | outputs: {'response': '[variant] Respuesta a: Quiero un reembolso'}\n```",
+   "resaltar": [
+    14,
+    17
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Huellas: de dónde sale una diferencia de latencia",
+   "contenido": "Que una versión sea más lenta es el síntoma. Los dashboards de **latencia por run type** y **error rate por run type / por tool** te dicen la causa:\n\n| Causa | Huella en el desglose |\n|---|---|\n| Prompt más largo o modelo más lento | Sube la latencia de cada run **LLM**; mismas llamadas por traza |\n| Tool fallando con reintentos | Sube el **error rate de tool** y las **llamadas LLM por traza** (el agente reintenta) |\n| Tool lento | Sube la latencia de los runs **tool**; sin errores |\n| Más turnos por conversación | Más trazas por thread; latencia por traza parecida |\n\nEl paso siguiente reproduce ese desglose en Python sobre datos inventados."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Datos de práctica con la forma de `module3_traces.json`",
+   "contenido": "\"\"\"Trazas FALSAS con la forma de module-3/module3_traces.json.\"\"\"\nfrom datetime import datetime, timedelta\n\ndef run(id_, trace, parent, tipo, nombre, inicio, segundos, version, error=None):\n    return {\"id\": id_, \"trace_id\": trace, \"parent_run_id\": parent,\n            \"run_type\": tipo, \"name\": nombre, \"error\": error,\n            \"start_time\": inicio.isoformat(),\n            \"end_time\": (inicio + timedelta(seconds=segundos)).isoformat(),\n            \"extra\": {\"metadata\": {\"prompt_version\": version}}}\n\ndef generar():\n    runs = []\n    t0 = datetime(2026, 11, 11, 9, 0)\n    for n in range(40):\n        version = \"control\" if n % 2 == 0 else \"variant\"\n        trace, inicio = f\"t{n}\", t0 + timedelta(minutes=n)\n        # variant usa un prompt 3 veces más largo: cada llamada al LLM tarda más\n        seg_llm = 1.2 if version == \"control\" else 3.0\n        falla = (n % 5 == 0)           # 1 de cada 5 trazas, en ambas versiones\n        hijos = [\n            run(f\"{trace}-l1\", trace, trace, \"llm\", \"ChatOpenAI\", inicio, seg_llm, version),\n            run(f\"{trace}-t1\", trace, trace, \"tool\", \"lookup_order\", inicio, 0.3, version,\n                error=\"timeout\" if falla else None),\n            run(f\"{trace}-l2\", trace, trace, \"llm\", \"ChatOpenAI\", inicio, seg_llm, version),\n        ]\n        total = sum((datetime.fromisoformat(h[\"end_time\"]) -\n                     datetime.fromisoformat(h[\"start_time\"])).total_seconds() for h in hijos)\n        runs.append(run(trace, trace, None, \"chain\", \"ACME Support\", inicio, total, version))\n        runs += hijos\n    return runs",
+   "notas": "Trazas **falsas**: raíz `chain` + 2 llamadas `llm` + 1 `tool`, cada run con `start_time`, `end_time`, `error` y `metadata.prompt_version`.\n- `n % 2` alterna versiones: 20 trazas `control`, 20 `variant`.\n- `variant` usa un prompt 3 veces más largo: cada llamada LLM tarda 3.0 s contra 1.2 s.\n- 1 de cada 5 trazas tiene un `timeout` en el tool, **en ambas versiones**.\n- `timedelta(seconds=...)` suma segundos a una fecha; `end_time - start_time` da la duración.",
+   "resaltar": [
+    18,
+    19
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El análisis: Group by versión y por run type",
+   "contenido": "import json\nimport statistics\nfrom collections import defaultdict\nfrom datetime import datetime\n\nfrom f3_datos import generar\n\nCLAVE = \"prompt_version\"     # en el lab la clave es \"app_version\"\n\ndef segundos(r):\n    return (datetime.fromisoformat(r[\"end_time\"]) -\n            datetime.fromisoformat(r[\"start_time\"])).total_seconds()\n\nruns = generar()              # después del lab: json.load(open(\"module3_traces.json\"))\n\n# version -> run_type -> lista de runs   (como \"Group by\" + \"by run type\" del Monitor)\ngrupos = defaultdict(lambda: defaultdict(list))\nfor r in runs:\n    version = r[\"extra\"][\"metadata\"][CLAVE]\n    tipo = \"TRAZA\" if r[\"parent_run_id\"] is None else r[\"run_type\"]\n    grupos[version][tipo].append(r)\n\nfor version, por_tipo in sorted(grupos.items()):\n    n_trazas = len(por_tipo[\"TRAZA\"])\n    print(f\"== {CLAVE}={version}  ({n_trazas} trazas)\")\n    for tipo, lista in sorted(por_tipo.items()):\n        errores = sum(1 for r in lista if r[\"error\"])\n        print(f\"   {tipo:6} runs={len(lista):3}  latencia media={statistics.mean(map(segundos, lista)):5.2f}s\"\n              f\"  errores={errores:2} ({errores / len(lista):.0%})\")\n    print(f\"   llamadas LLM por traza: {len(por_tipo['llm']) / n_trazas:.1f}\")",
+   "notas": "- `defaultdict(lambda: defaultdict(list))`: diccionario de diccionarios de listas; `grupos[\"variant\"][\"llm\"]` existe solo con usarlo.\n- La raíz cuenta como `TRAZA`; los hijos por su `run_type`.\n- Salida real:\n```\n== prompt_version=control  (20 trazas)\n   TRAZA  runs= 20  latencia media= 2.70s  errores= 0 (0%)\n   llm    runs= 40  latencia media= 1.20s  errores= 0 (0%)\n   tool   runs= 20  latencia media= 0.30s  errores= 4 (20%)\n   llamadas LLM por traza: 2.0\n== prompt_version=variant  (20 trazas)\n   TRAZA  runs= 20  latencia media= 6.30s  errores= 0 (0%)\n   llm    runs= 40  latencia media= 3.00s  errores= 0 (0%)\n   tool   runs= 20  latencia media= 0.30s  errores= 4 (20%)\n   llamadas LLM por traza: 2.0\n```\n`variant` tarda 6.30 s contra 2.70 s. Errores de tool **iguales** (20 %), llamadas por traza **iguales**: la diferencia está toda en la latencia de cada run LLM. Huella de \"prompt más largo\".",
+   "resaltar": [
+    17,
+    20
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El lab (sin respuestas)",
+   "contenido": "1. Crea el evaluador por thread `user-sentiment` (lección 3.A) y pon el **idle time** del proyecto en **1 minuto**.\n2. Sube las trazas (vienen con `app_version` = A o B y agrupadas en threads):\n```bash\ncd lca-production-monitoring/python/module-3\nuv run python upload_traces.py --project ACME-quality\n```\n3. Espera a que el evaluador califique los threads.\n4. Monitor > **Group by** `app_version`. Revisa errores (por run type y por tool), latencia (por run type) y el feedback de sentimiento. Usa la tabla de huellas del paso 4.\n\nEste upload remapea también el `thread_id` de la metadata para que los turnos sigan juntos con ids nuevos. Después del quiz puedes correr el script del paso 6 sobre `module3_traces.json` con `CLAVE = \"app_version\"`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: ¿un proyecto o dos?",
+   "contenido": "Vas a probar un prompt nuevo contra el actual en producción durante una semana. Ya tienes activos un evaluador de sentimiento por thread y alertas de errores en el proyecto `soporte-prod`. ¿Cuál es la forma recomendada de montar la comparación?\n\n- **A)** Crear `soporte-prod-v2`, mandar ahí las trazas de la versión nueva y copiar evaluadores y alertas.\n- **B)** Mandar ambas versiones a `soporte-prod` con `metadata={\"prompt_version\": ...}` y usar Group by en el Monitor.\n- **C)** Mandar ambas a `soporte-prod` con un **tag** distinto por versión y comparar filtrando una y después la otra.\n- **D)** Correr la versión nueva solo en un offline eval y comparar contra el dashboard de producción.",
+   "respuesta": "**B.** Una llave de metadata convierte la versión en una dimensión de **todos** los charts, y los evaluadores existentes califican ambas sin tocarlos.\n- A: duplicas configuración y no ves las versiones lado a lado.\n- C: comparar filtrando una versión y después la otra es justo lo que Group by evita; además los tags son etiquetas sueltas, y la metadata clave/valor (`prompt_version: variant`) es lo que el curso usa para agrupar.\n- D: un offline eval no usa tráfico real; el A/B se hace en producción."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Otra variante, otras huellas",
+   "contenido": "Otro A/B, otro equipo. El Group by por versión, desglosado por run type, muestra:\n\n| | Versión X | Versión Y |\n|---|---|---|\n| Latencia media de la traza | 3.1 s | 3.0 s |\n| Latencia media por run LLM | 1.2 s | 1.2 s |\n| Error rate de tools | 2 % | 2 % |\n| Llamadas LLM por traza | 2.0 | 2.0 |\n| `user_sentiment` positivo | 81 % | 64 % |\n\n¿Hay una versión mejor? ¿Qué te dice cada fila? ¿Qué harías antes de decidir?",
+   "respuesta": "X es mejor, pero **no** por velocidad ni por errores: esas filas son prácticamente iguales. La diferencia está en el **sentimiento** (81 % vs 64 %): Y contesta igual de rápido y sin fallar, pero deja peor a los usuarios. Es el caso que solo una señal de calidad detecta.\nAntes de decidir: lee threads de Y con `user_sentiment = false` (o mándalos a una annotation queue) para entender qué contesta peor, y revisa que haya suficientes threads calificados en cada versión (con muestreo de 30–50 %, pocos threads dan porcentajes ruidosos)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Cambia los datos de práctica",
+   "contenido": "En `f3_datos.py` (paso 5) cambias **solo** la línea de la latencia del LLM para que ambas versiones tarden igual:\n\n```python\nseg_llm = 1.2          # antes: 1.2 if version == \"control\" else 3.0\n```\n\ny vuelves a correr `f3_analiza.py` (paso 6). ¿Qué latencia media de TRAZA sale para cada versión? ¿Cambian los errores?",
+   "respuesta": "Las dos quedan en **2.70 s** (1.2 + 0.3 + 1.2). Los errores no cambian: 4 de 20 tools (20 %) en cada versión, porque `falla` no depende de la versión. Con esos datos no hay diferencia que atribuir: el dashboard mostraría dos líneas encimadas.",
+   "ref": 6
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- A/B = etiquetar cada traza con la versión en **metadata** y usar **Group by** en el Monitor. Un solo proyecto.\n- Los online evals existentes califican ambas versiones solos; el feedback hereda la versión por estar en la traza.\n- Una diferencia de latencia se explica con el desglose **por run type / por tool**: LLM más lento, tool fallando con reintentos, tool lento.\n- Mira también el sentimiento: dos versiones igual de rápidas pueden dejar muy distinto al usuario.\n- Relación: es el mismo Group by metadata del costo por `customer` (1.B); el thread que califica el evaluador es tu `thread_id` de LangGraph.\n\n**Dónde buscarlo en docs:** LangSmith > Observability > Dashboards (Group by); Add metadata and tags to traces."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-3/ab-testing",
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-3/lab",
+  "lca-production-monitoring/python/module-3/upload_traces.py",
+  "lca-production-monitoring/python/module-3/module3_traces.json"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué necesitas para comparar dos versiones de un prompt en el Monitor?",
+   "reverso": "Que cada traza lleve la versión en su metadata (p. ej. `prompt_version`) y usar Group by esa llave. Un solo proyecto."
+  },
+  {
+   "frente": "¿Por qué no comparar \"antes vs después\" del cambio en lugar de A/B?",
+   "reverso": "Porque el tráfico cambia con el tiempo; A/B corre ambas versiones a la vez sobre tráfico parecido y aísla el efecto del cambio."
+  },
+  {
+   "frente": "La versión nueva es más lenta, con el mismo error rate y las mismas llamadas por traza. ¿Dónde está la diferencia?",
+   "reverso": "En la latencia de cada run LLM: prompt más largo o modelo más lento."
+  },
+  {
+   "frente": "¿Qué huella deja un tool que falla y obliga a reintentar?",
+   "reverso": "Más error rate en runs tool y más llamadas LLM por traza; eso sube la latencia total."
+  },
+  {
+   "frente": "¿Hay que reconfigurar el evaluador de sentimiento para un A/B?",
+   "reverso": "No. Califica todas las trazas/threads del proyecto, y Group by metadata separa su feedback por versión."
+  }
+ ]
+}

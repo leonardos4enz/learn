@@ -1,0 +1,101 @@
+{
+ "mision_id": "3.B",
+ "titulo": "Online evals y automations",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Insights te da una foto cuando la pides. Pero las fallas llegan a cualquier hora: si mañana un cambio hace que Emma vuelva a revelar stock, no quieres enterarte en el próximo análisis manual.\n\nNecesitas una **señal continua** sobre cada trace nuevo y que algo **actúe** con esa señal sin que estés mirando: mandar lo malo a revisión humana y lo bueno a un dataset. Eso cierra el ADLC: lo que pasa en producción vuelve a Build y Test."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Offline vs online",
+   "contenido": "| | Offline | Online |\n|---|---|---|\n| Sobre qué | un dataset fijo | tráfico real de producción |\n| Cuándo | cuando corres un experiment (antes de desplegar, en CI) | al llegar cada trace (o una muestra) |\n| Fase | Test | Monitor |\n| Para qué | **gatear** lo que despliegas: regresiones, A/B | **observar** lo desplegado: inputs nuevos, casos límite, cambios de uso |\n| Reference outputs | puede tener | no hay: es reference-free |\n\nSe complementan: offline solo prueba lo que anticipaste; online ve lo que nadie anticipó, pero ya con usuarios."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La online eval del curso: sentimiento por thread",
+   "contenido": "Es el primer eval **de thread** del curso: un LLM-as-judge lee **toda la conversación**, no un solo turno, y clasifica el sentimiento del usuario. Para eso los traces necesitan la metadata `thread_id` / `session_id` que viste en 1.A.\n\n¿Por qué no usar botones de like, NPS o encuestas? Porque solo los usa quien está muy motivado (muy contento o muy enojado), igual que las reseñas de aerolíneas. Un juez sobre todas las conversaciones da una imagen representativa.\n\nSe crea en la UI del tracing project (no hay código en el repo). Sola, una online eval solo pone scores: sirve para dashboards, alertas y tendencias. Para **actuar** hace falta una automation."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "De la señal a la acción",
+   "contenido": "graph LR\n  T[Trace nuevo] --> E[Online eval: sentimiento]\n  E --> F{Filtro: sentiment = negative}\n  F -->|coincide| S{Sampling rate}\n  S -->|elegido| A[Acción: annotation queue]\n  A --> H[Personas revisan]\n  H --> D[Dataset]\n  D --> B[Build y Test]\n  class F clave",
+   "notas": "La online eval genera la señal; la **automation** (filtro → sampling → acción) actúa. Las personas revisan en la annotation queue y promueven los casos útiles al dataset. Ese dataset es el que usa el siguiente experiment offline: así producción se vuelve un test. Es el loop externo completo: Monitor → Build → Test."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Una automation = filtro + sampling + acción",
+   "contenido": "- **Filtro:** qué traces (por feedback o score de una eval, error, metadata...).\n- **Sampling rate:** qué porcentaje de los que coinciden se procesa (0–100 %).\n- **Acción:** *add to annotation queue* (revisión humana), *add to dataset*, *trigger webhook* (llamar un servicio externo, p. ej. para una evaluación remota) o *extend data retention* (guardar esos traces más tiempo).\n\nPatrones del curso:\n\n| Patrón | Filtro | Acción |\n|---|---|---|\n| Atrapar usuarios molestos | sentimiento negativo | annotation queue |\n| Armar un golden dataset | sentimiento positivo | add to dataset |\n| Revisar una muestra al azar | sin filtro, sampling 10 % | annotation queue |"
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Simular las automations",
+   "contenido": "import random\n\nrandom.seed(7)  # para que el ejemplo sea repetible\n\n# 100 traces de un día; la online eval ya les puso un score de sentimiento\ntraces = [{\"id\": i, \"sentiment\": \"negative\" if i % 5 == 0 else \"positive\"} for i in range(100)]\n\n# Cada automation: filtro + sampling rate + acción (filtro None = todos los traces)\nautomations = [\n    {\"nombre\": \"Catch unhappy users\",  \"filtro\": \"negative\", \"sampling\": 1.0, \"accion\": \"annotation queue\"},\n    {\"nombre\": \"Build golden dataset\", \"filtro\": \"positive\", \"sampling\": 0.2, \"accion\": \"add to dataset\"},\n    {\"nombre\": \"Spot-check 10%\",       \"filtro\": None,       \"sampling\": 0.1, \"accion\": \"annotation queue\"},\n]\n\ndef simular_automation(traces, filtro, sampling):\n    \"\"\"Filtro -> sampling rate -> los que quedan reciben la acción.\"\"\"\n    coinciden = [t for t in traces if filtro is None or t[\"sentiment\"] == filtro]\n    elegidos = [t for t in coinciden if random.random() < sampling]\n    return coinciden, elegidos\n\nfor a in automations:\n    coinciden, elegidos = simular_automation(traces, a[\"filtro\"], a[\"sampling\"])\n    print(f'{a[\"nombre\"]:21} coinciden {len(coinciden):3} | sampling {a[\"sampling\"]:.0%} '\n          f'| van a \"{a[\"accion\"]}\": {len(elegidos)}')",
+   "notas": "Simulación en Python puro para ver la mecánica: **no es la API de LangSmith** (allá se configura en la UI). Cada trace ya trae el score de la online eval. `random.random()` da un número entre 0 y 1; `< sampling` es verdadero con esa probabilidad. Salida real (con `random.seed(7)`):\n`Catch unhappy users   coinciden  20 | sampling 100% | van a \"annotation queue\": 20`\n`Build golden dataset  coinciden  80 | sampling 20% | van a \"add to dataset\": 17`\n`Spot-check 10%        coinciden 100 | sampling 10% | van a \"annotation queue\": 12`\nCon sampling menor a 100 % el número es aproximado: 20 % de 80 dio 17, no 16 exactos.",
+   "resaltar": [
+    10,
+    17,
+    18
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sampling al 50 %",
+   "contenido": "40 traces negativos en un día, una automation con filtro `negative` y sampling 50 %. Pruebas con tres semillas distintas:\n\n```python\nimport random\n\ntraces = [{\"id\": i, \"sentiment\": \"negative\"} for i in range(40)]\n\ndef simular_automation(traces, filtro, sampling):\n    coinciden = [t for t in traces if filtro is None or t[\"sentiment\"] == filtro]\n    elegidos = [t for t in coinciden if random.random() < sampling]\n    return coinciden, elegidos\n\nfor semilla in (1, 2, 3):\n    random.seed(semilla)\n    coinciden, elegidos = simular_automation(traces, \"negative\", 0.5)\n    print(f\"semilla {semilla}: coinciden {len(coinciden)}, a la queue {len(elegidos)}\")\n```\n\n¿Cuántos traces llegan a la queue? ¿Siempre el mismo número?",
+   "respuesta": "Salida real: `semilla 1: coinciden 40, a la queue 26` · `semilla 2: ... 18` · `semilla 3: ... 18`. Coinciden siempre 40 (el filtro es determinista), pero a la queue llegan **alrededor de 20**, no exactamente 20: el sampling elige al azar cada trace con probabilidad 0.5. Si necesitas revisar **todos** los negativos, el sampling va en 100 %."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué falta?",
+   "contenido": "Quieres que cada conversación donde un cliente termina molesto se convierta, después de revisión humana, en un example del dataset de regresión. Ya tienes una online eval de sentimiento por thread. ¿Qué falta?\n\nA) Correr cada día un experiment offline con el dataset actual.\nB) Una automation: filtro sentimiento negativo → annotation queue; desde la queue, los revisores agregan los casos útiles al dataset.\nC) Correr el Insights Agent cada vez que llega un trace.\nD) Pasar la online eval a una escala 1–5 para filtrar mejor.",
+   "respuesta": "**B.** La online eval ya da la señal; falta quien **actúe**: la automation filtra los negativos y los manda a revisión, y de ahí al dataset. A corre sobre el dataset actual, que todavía no tiene esas conversaciones. C usa mal Insights: es por lotes y bajo demanda, no por trace. D rompe la regla de salida binaria o categórica y no agrega ninguna acción."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Online contra offline",
+   "contenido": "Antes del deploy de ayer, tu experiment offline de stock leakage daba 0 % de fallas en las 25 preguntas. Desde el deploy, tu online eval de stock leakage marca 3 % de los traces de producción. ¿Se contradicen? ¿Qué haces?",
+   "respuesta": "No se contradicen: offline solo mide tus 25 preguntas; producción trajo inputs que no anticipaste (y donde Emma sí revela stock). Qué hacer: una automation que mande esos traces a una annotation queue, promover los casos reales al dataset, arreglar a Emma (Build), volver a correr el experiment (ahora sí atrapa ese caso) y desplegar. La online eval por sí sola no arregla nada: solo pone scores."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Online eval: un evaluator (casi siempre LLM-as-judge, reference-free) que califica cada trace o thread de producción, o una muestra, al llegar. Monitor.\n- Offline gatea lo que despliegas; online observa lo desplegado. Se complementan.\n- Sentimiento con un juez sobre todas las conversaciones, no con botones: evita el sesgo de quién deja feedback.\n- Automation = filtro + sampling rate + acción (annotation queue, add to dataset, webhook, extend retention). La online eval da la señal; la automation actúa.\n- Loop completo: Build → Test → Deploy → Monitor → de vuelta a Build y Test con los casos reales.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Set up online evaluators* (incluye thread evals) y *Automation rules*; *Annotation queues*. En la UI: tracing project → *Rules* / *Automations*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-3/online-evals",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-3/automations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Offline vs online evaluation: ¿cuál puede tener reference outputs y por qué?",
+   "reverso": "Offline, porque corre sobre un dataset que tú armaste. Online califica tráfico real, donde no hay respuesta esperada: es reference-free."
+  },
+  {
+   "frente": "¿Qué tres partes tiene una automation de LangSmith?",
+   "reverso": "Filtro (qué traces), sampling rate (qué % de los que coinciden) y acción (annotation queue, add to dataset, webhook, extend retention)."
+  },
+  {
+   "frente": "Filtro negative, sampling 50 %, 40 traces negativos. ¿Cuántos llegan a la annotation queue?",
+   "reverso": "Alrededor de 20, no exacto: el sampling elige cada trace al azar. Para revisarlos todos, sampling 100 %."
+  },
+  {
+   "frente": "¿Por qué medir el sentimiento con un LLM-as-judge y no con botones de like?",
+   "reverso": "Los botones y encuestas solo los usa quien está muy motivado (sesgo). Un juez sobre todas las conversaciones da una imagen representativa."
+  },
+  {
+   "frente": "¿Una online eval arregla o cambia algo por sí sola?",
+   "reverso": "No. Solo pone scores (dashboards, alertas). Para actuar hace falta una automation, y el arreglo pasa por Build y Test."
+  },
+  {
+   "frente": "¿Qué necesitan tus traces para una online eval por thread, como la de sentimiento?",
+   "reverso": "La metadata thread_id / session_id / conversation_id, para que LangSmith junte los turnos de la conversación."
+  },
+  {
+   "frente": "La online eval marca fallas que tu experiment offline nunca vio. ¿Contradicción?",
+   "reverso": "No: offline solo mide tu dataset; producción trae inputs nuevos. Esos casos entran al dataset para que el offline también los atrape."
+  }
+ ]
+}

@@ -1,0 +1,148 @@
+{
+ "mision_id": "5.A",
+ "titulo": "Qué es auth y authentication",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora, cada llamada a tu deployment lleva **tu** LangSmith API key en el header `x-api-key`. LangSmith revisa la key, sabe que eres tú y te deja usar *tu* deployment. Funciona porque el único usuario eres tú.\n\nUn tutor público tiene cientos de alumnos sin cuenta de LangSmith. Necesitas responder dos preguntas por cada request:\n\n1. **¿Quién eres?** → *authentication* (AuthN).\n2. **¿Qué puedes ver o hacer?** → *authorization* (AuthZ).\n\nJuntas se llaman **auth**. Esta lección es la primera: identificar al usuario. Si alguna vez protegiste un Agent Server self-hosted con una custom auth por `x-api-key`, eso ya era un `@auth.authenticate`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "AuthN, AuthZ y dónde se aplican",
+   "contenido": "- **Authentication (AuthN)**: verificar que el usuario es quien dice. Responde con una identidad o con un **401**.\n- **Authorization (AuthZ)**: con esa identidad, decidir qué recursos puede tocar. Es la lección 5.B.\n\nHay tres lugares donde se habla de auth en LangSmith, y el módulo cubre solo el primero:\n\n| Qué controla | Nombre |\n|---|---|\n| Qué ve cada **usuario** de tu app | Custom auth (`@auth.authenticate`, `@auth.on`) |\n| A qué puede entrar el **agente** en nombre del usuario (su email, su calendario) | *Agent Auth* |\n| Quién de **tu equipo** puede desplegar, actualizar o monitorear | RBAC de LangSmith |"
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El camino de un request",
+   "contenido": "graph TD\n  R[HTTP request] --> U[Uvicorn]\n  U --> A[auth.authenticate: quién eres]\n  A -->|401| X[se corta: el agente nunca corre]\n  A --> O[auth.on: qué puedes hacer]\n  O --> API[\"rutas del servidor: /threads, /runs, /store\"]\n  U --> C[custom routes: sin auth por defecto]\n  class A clave",
+   "notas": "`@auth.authenticate` corre **antes** que todo lo demás. Si lanza 401, no se crea ningún thread ni run.\nLas custom routes (`http.app`, como `/register` del tutor) **no** pasan por la auth por defecto. Se activa con `\"enable_custom_route_auth\": true` en la sección `http` de `langgraph.json` (aplica a todas)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El handler de authentication",
+   "contenido": "from langgraph_sdk import Auth\n\n# Stand-in for a real user database. Do not use hardcoded tokens in production.\nVALID_TOKENS = {\n    \"alice-token\": {\"id\": \"user1\", \"name\": \"Alice\"},\n    \"bob-token\":   {\"id\": \"user2\", \"name\": \"Bob\"},\n}\n\nauth = Auth()\n\n\n@auth.authenticate\nasync def get_current_user(authorization: str | None) -> Auth.types.MinimalUserDict:\n    \"\"\"Validate the bearer token and return the authenticated user.\"\"\"\n    if not authorization:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Missing token\")\n    scheme, _, token = authorization.partition(\" \")\n    if scheme.lower() != \"bearer\" or token not in VALID_TOKENS:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Invalid token\")\n    return {\n        \"identity\": VALID_TOKENS[token][\"id\"],\n    }",
+   "notas": "`python/m5/l2/auth.py`. `VALID_TOKENS` hace de base de datos de usuarios (solo para aprender).\nEl decorador mira la **firma** de tu función y le inyecta lo que pidas por nombre: `authorization`, `headers`, `path`, `method`, `query_params`, `path_params`, `request`.\n`partition(\" \")` parte `\"Bearer alice-token\"` en `(\"Bearer\", \" \", \"alice-token\")`.\nDevuelve un dict con al menos `identity`, o lanza `Auth.exceptions.HTTPException(status_code=401)`.",
+   "resaltar": [
+    12,
+    17,
+    21
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Probar el handler como función",
+   "contenido": "import asyncio, importlib.util, sys\nfrom langgraph_sdk import Auth\nL = r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/m5/\"\ndef load(lab):\n    spec = importlib.util.spec_from_file_location(f\"auth_{lab}\", L + lab + \"/auth.py\")\n    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m\nm = load(\"l2\")\nasync def main():\n    for header in [\"Bearer alice-token\", \"Bearer bob-token\", \"Bearer hacker-token\", \"alice-token\", None]:\n        try:\n            user = await m.get_current_user(header)\n            print(repr(header), \"->\", user)\n        except Auth.exceptions.HTTPException as e:\n            print(repr(header), \"->\", e.status_code, e.detail)\nasyncio.run(main())",
+   "notas": "Cargo el `auth.py` del curso y llamo al handler directo, sin servidor (es una función `async`). Salida real:\n`'Bearer alice-token' -> {'identity': 'user1'}`\n`'Bearer bob-token' -> {'identity': 'user2'}`\n`'Bearer hacker-token' -> 401 Invalid token`\n`'alice-token' -> 401 Invalid token` (falta el esquema `Bearer`)\n`None -> 401 Missing token`",
+   "resaltar": [
+    11,
+    13
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El header que se llama mal",
+   "contenido": "El token llega en el header **`Authorization`**:\n\n```\nAuthorization: Bearer alice-token\n```\n\nEl nombre confunde: ese header viene de HTTP/1.0 (1996) y lleva credenciales de **autenticación**, no de autorización. `Bearer` dice \"quien porte este token\". En producción el token es un JWT de un proveedor (5.C); aquí es un string fijo.\n\nLo que devuelve el handler es tuyo: solo `identity` es obligatorio (tipo `MinimalUserDict`). Puedes agregar `name`, `role`, `email`… y estarán disponibles más adelante.\n\nCon custom auth no hace falta `LANGSMITH_API_KEY`: tu handler **reemplaza** la auth por API key de LangSmith."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Registrar el handler",
+   "contenido": "{\n  \"dependencies\": [\".\"],\n  \"graphs\": {\n    \"agent\": \"./agent/graph.py:graph\"\n  },\n  \"auth\": {\n    \"path\": \"./auth.py:auth\"\n  },\n  \"env\": \".env\"\n}",
+   "notas": "`python/m5/l2/langgraph.json`. `\"auth\": {\"path\": \"./auth.py:auth\"}` = archivo, dos puntos, y el nombre de la instancia `Auth()` dentro. El nombre de la función no importa; importa el decorador.\nStudio sigue entrando aunque haya custom auth (útil en desarrollo). Para cerrarlo en producción: `\"disable_studio_auth\": true` dentro de `auth`.",
+   "resaltar": [
+    6,
+    7
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El usuario dentro del grafo",
+   "contenido": "from langchain_core.messages import AIMessage\nfrom langchain_core.runnables import RunnableConfig\nfrom langgraph.graph import END, START, MessagesState, StateGraph\n\n\ndef chat(state: MessagesState, config: RunnableConfig) -> dict:\n    user = config[\"configurable\"].get(\"langgraph_auth_user\", {})\n    identity = user.get(\"identity\", \"unknown\")\n    last = state[\"messages\"][-1].content\n    return {\"messages\": [AIMessage(content=f\"[{identity}] {last}\")]}\n\n\ngraph = StateGraph(MessagesState)\ngraph.add_node(\"chat\", chat)\ngraph.add_edge(START, \"chat\")\ngraph.add_edge(\"chat\", END)\ngraph = graph.compile()\n\n# --- Fuera del servidor: lo que hace el Agent Server con el dict de @auth.authenticate ---\ninp = {\"messages\": [{\"role\": \"user\", \"content\": \"Hello from Alice!\"}]}\nout = graph.invoke(inp, {\"configurable\": {\"langgraph_auth_user\": {\"identity\": \"user1\"}}})\nprint(out[\"messages\"][-1].content)\nout = graph.invoke(inp)  # sin servidor no hay usuario\nprint(out[\"messages\"][-1].content)",
+   "notas": "`agent/graph.py` de l2 (un grafo eco, sin LLM) más dos invokes al final. El Agent Server guarda el dict de `@auth.authenticate` en `config[\"configurable\"][\"langgraph_auth_user\"]`; aquí lo pongo a mano para simularlo. Salida real:\n`[user1] Hello from Alice!`\n`[unknown] Hello from Alice!` (sin servidor no hay usuario, por eso el `.get(..., {})`).",
+   "resaltar": [
+    7,
+    21
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres lugares para leer al usuario",
+   "contenido": "| Dónde estás | Cómo lees al usuario |\n|---|---|\n| Un handler `@auth.on` (5.B) | `ctx.user.identity` |\n| Un node que recibe `config` | `config[\"configurable\"][\"langgraph_auth_user\"][\"identity\"]` |\n| Un node o middleware que recibe `runtime` | `runtime.server_info.user.identity` |\n\nSon los mismos datos. `runtime.server_info` es `None` cuando corres el grafo fuera de una deployment (como en el paso 8), así que revísalo antes de leerlo.\n\nAsí puedes personalizar respuestas o decidir por rol dentro del grafo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El cliente del lab: authN no es authZ",
+   "contenido": "\"\"\"\nTest client for Lesson 2 — run with: uv run python client.py\nRequires the server to be running: langgraph dev --no-browser\n\"\"\"\n\nimport asyncio\nfrom langgraph_sdk import get_client\n\nURL = \"http://localhost:2024\"\n\n\nasync def main():\n    # --- Unknown token: not in VALID_TOKENS, should be blocked ---\n    hacker = get_client(url=URL, headers={\"Authorization\": \"Bearer hacker-token\"})\n    try:\n        await hacker.threads.create()\n        print(\"❌ Should have been blocked!\")\n    except Exception as e:\n        print(f\"✅ Unknown token correctly blocked: {e}\")\n\n    # --- Valid token (Alice) ---\n    alice = get_client(url=URL, headers={\"Authorization\": \"Bearer alice-token\"})\n    thread = await alice.threads.create()\n    print(f\"✅ Alice created thread: {thread['thread_id']}\")\n\n    result = await alice.runs.wait(\n        thread[\"thread_id\"], \"agent\",\n        input={\"messages\": [{\"role\": \"user\", \"content\": \"Hello from Alice!\"}]},\n    )\n    print(f\"✅ Response: {result['messages'][-1]['content']}\")\n\n    # --- Valid token (Bob) ---\n    bob = get_client(url=URL, headers={\"Authorization\": \"Bearer bob-token\"})\n    thread = await bob.threads.create()\n    print(f\"✅ Bob created thread: {thread['thread_id']}\")\n\n    # --- Bob can see Alice's thread! No @auth.on means no isolation ---\n    bob_view = await bob.threads.search()\n    print(f\"⚠️  Bob can see {len(bob_view)} thread(s) — including Alice's.\")\n    print(\"   Authentication confirmed who Bob is, but didn't scope what he sees.\")\n    print(\"   m5.3 fixes this with @auth.on.\")\n\n\nasyncio.run(main())",
+   "notas": "`python/m5/l2/client.py`. **No se corrió aquí**: necesita `langgraph dev` dentro de `m5/l2`. Salida del material oficial (m5.2):\n`✅ Unknown token correctly blocked: Invalid token`\n`✅ Response: [user1] Hello from Alice!`\n`⚠️  Bob can see 2 thread(s) — including Alice's.`\nLa última línea es la idea clave: Bob está **autenticado**, pero nada limita lo que ve.",
+   "resaltar": [
+    14,
+    38
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: autenticado, pero…",
+   "contenido": "Tu deployment tiene un `@auth.authenticate` que valida tokens correctamente y **ningún** `@auth.on`. Alice crea un thread. Bob, con un token válido, llama a `client.threads.search()`. ¿Qué pasa?\n\nA) 401: Bob no es el dueño del thread.\nB) Bob recibe una lista vacía: LangGraph aísla por `identity` por defecto.\nC) Bob ve el thread de Alice.\nD) 403: hace falta `@auth.on` para buscar threads.",
+   "respuesta": "**C.** Authentication solo dice *quién* es Bob. Sin `@auth.on` no hay ninguna regla que marque dueños ni filtre: todos los usuarios autenticados ven todo (por eso el lab imprime \"Bob can see 2 thread(s)\").\nA: 401 es para credenciales inválidas, y las de Bob son válidas. B: no hay aislamiento por defecto. D: sin handlers, no se niega nada."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Variación: el esquema y los espacios",
+   "contenido": "Con el `auth.py` del paso 4, pruebas dos headers nuevos:\n\n```python\nimport asyncio, importlib.util, sys\nfrom langgraph_sdk import Auth\nL = r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/m5/\"\ndef load(lab):\n    spec = importlib.util.spec_from_file_location(f\"auth_{lab}\", L + lab + \"/auth.py\")\n    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m\nm = load(\"l2\")\nasync def main():\n    for header in [\"bearer alice-token\", \"Bearer  alice-token\"]:\n        try:\n            user = await m.get_current_user(header)\n            print(repr(header), \"->\", user)\n        except Auth.exceptions.HTTPException as e:\n            print(repr(header), \"->\", e.status_code, e.detail)\nasyncio.run(main())\n```\n\n¿Qué devuelve cada uno?",
+   "respuesta": "Salida real: `'bearer alice-token' -> {'identity': 'user1'}` y `'Bearer  alice-token' -> 401 Invalid token`.\nEl primero pasa porque el handler compara `scheme.lower()`. El segundo tiene **dos** espacios: `partition(\" \")` corta en el primero y el token queda `\" alice-token\"` (con un espacio adelante), que no está en `VALID_TOKENS`.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: la ruta de registro",
+   "contenido": "El tutor tiene una custom route `POST /register` (en `http.app`) y un `@auth.authenticate` registrado en `langgraph.json`. No tocaste nada más. Un visitante nuevo, sin token, llama a `/register`. ¿Qué pasa?\n\nA) 401, porque toda request pasa por `@auth.authenticate`.\nB) Entra: las custom routes no pasan por la auth salvo que actives `enable_custom_route_auth`.\nC) 403, porque las custom routes necesitan `@auth.on.custom`.\nD) Entra solo si `disable_studio_auth` es `true`.",
+   "respuesta": "**B.** Por defecto, `@auth.authenticate` corre en las rutas del Agent Server (`/threads`, `/runs`, `/store`…), no en tus custom routes. Para incluirlas: `\"enable_custom_route_auth\": true` en la sección `http` (aplica a todas; para excepciones, pide el parámetro `path` en el handler y decide).\nA olvida la excepción. C no existe. D es solo para Studio."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **AuthN** = ¿quién eres? **AuthZ** = ¿qué puedes ver? Autenticar no aísla a nadie.\n- `@auth.authenticate` recibe lo que pidas por nombre (`authorization`, `headers`, `path`…) y devuelve un dict con al menos `identity`, o lanza 401 y el agente nunca corre.\n- Se registra en `langgraph.json` → `\"auth\": {\"path\": \"./auth.py:auth\"}`. Reemplaza a la auth por API key de LangSmith.\n- El usuario llega al grafo en `config[\"configurable\"][\"langgraph_auth_user\"]` (o `runtime.server_info.user`).\n- Custom routes: sin auth por defecto (`enable_custom_route_auth`). Studio: abierto por defecto (`disable_studio_auth`).\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Custom authentication* / *Auth* (Supported parameters)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m5/m5.1-intro.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m5/m5.2-local-auth.html",
+  "lca-deployment/python/m5/l2/auth.py",
+  "lca-deployment/python/m5/l2/agent/graph.py",
+  "lca-deployment/python/m5/l2/client.py",
+  "lca-deployment/python/m5/l2/langgraph.json",
+  "lca-deployment/thinkific/src/m5/m5.1-intro.md",
+  "lca-deployment/thinkific/src/m5/m5.2-local-auth.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué diferencia hay entre authentication y authorization?",
+   "reverso": "Authentication responde ¿quién eres? (identidad o 401). Authorization responde ¿qué puedes ver o hacer? con esa identidad."
+  },
+  {
+   "frente": "Tu @auth.authenticate funciona y no hay @auth.on. ¿Bob ve los threads de Alice?",
+   "reverso": "Sí. Autenticar solo identifica; sin @auth.on no hay dueño ni filtro."
+  },
+  {
+   "frente": "¿Qué pasa si @auth.authenticate lanza HTTPException(401)?",
+   "reverso": "El request se corta ahí: el cliente recibe 401 y no se crea thread ni run; el agente nunca corre."
+  },
+  {
+   "frente": "¿Qué es lo mínimo que debe devolver @auth.authenticate?",
+   "reverso": "Un dict con identity. Lo demás (name, role, email) es opcional y queda disponible después."
+  },
+  {
+   "frente": "¿Dónde lee un node el usuario autenticado?",
+   "reverso": "En config[\"configurable\"][\"langgraph_auth_user\"], o en runtime.server_info.user (None fuera de una deployment)."
+  },
+  {
+   "frente": "¿Pasan tus custom routes por @auth.authenticate?",
+   "reverso": "No por defecto. Se activa con enable_custom_route_auth en la sección http de langgraph.json."
+  },
+  {
+   "frente": "¿Por qué el token va en el header Authorization si es authentication?",
+   "reverso": "Es un nombre histórico de HTTP/1.0: ese header siempre llevó credenciales de autenticación."
+  }
+ ]
+}

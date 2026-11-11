@@ -1,0 +1,101 @@
+{
+ "mision_id": "1.A",
+ "titulo": "El grafo que decide",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En `chain`, el modelo pedía `multiply(2, 3)` y el grafo terminaba ahí: nadie ejecutaba el tool. Y si el usuario solo decía \"Hola\", tampoco hacía falta ejecutar nada.\n\nNecesitas dos cosas: un node que **ejecute** tools y un punto donde el grafo **decida** si ir a ese node o terminar. La decisión depende de lo que respondió el modelo. Eso es un router."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Quién hace qué",
+   "contenido": "Es fácil pensar que el edge \"llama\" al tool. No es así. Son tres trabajos separados:\n\n1. **El LLM** devuelve un `AIMessage`. Si quiere un tool, ese mensaje trae `tool_calls`. Es solo una petición.\n2. **El conditional edge** (`tools_condition`) lee el último mensaje y devuelve un nombre: `\"tools\"` o `\"__end__\"`. No ejecuta nada.\n3. **El ToolNode** lee los `tool_calls` del último mensaje, corre las funciones y devuelve un `ToolMessage` por cada una."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El router (tu script de la misión)",
+   "contenido": "\"\"\"Mision 1.A - El grafo que decide (router).\nCorrer desde langchain-academy/:  uv run python tutor/misiones/1A_router.py \"tu mensaje\" [roto]\n\"\"\"\nimport sys\nsys.stdout.reconfigure(encoding=\"utf-8\")\nfrom dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\n\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\nfrom langgraph.prebuilt import ToolNode, tools_condition\n\n\ndef multiply(a: int, b: int) -> int:\n    \"\"\"Multiply a and b.\"\"\"\n    return a * b\n\n\nllm_with_tools = ChatOpenAI(model=\"gpt-4o-mini\").bind_tools([multiply])\n\n\ndef tool_calling_llm(state: MessagesState):\n    return {\"messages\": [llm_with_tools.invoke(state[\"messages\"])]}\n\n\nroto = len(sys.argv) > 2 and sys.argv[2] == \"roto\"\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"tool_calling_llm\", tool_calling_llm)\nbuilder.add_node(\"tools\", ToolNode([multiply]))\nbuilder.add_edge(START, \"tool_calling_llm\")\nif roto:\n    builder.add_edge(\"tool_calling_llm\", \"tools\")          # sin decidir: siempre a tools\nelse:\n    builder.add_conditional_edges(\"tool_calling_llm\", tools_condition)\nbuilder.add_edge(\"tools\", END)\ngraph = builder.compile()\n\ntexto = sys.argv[1] if len(sys.argv) > 1 else \"Hola, cuanto es 2 por 2?\"\nfor update in graph.stream({\"messages\": [HumanMessage(texto)]}, stream_mode=\"updates\"):\n    for nodo, cambio in update.items():\n        if not cambio[\"messages\"]:\n            print(f\"[{nodo}] (no devolvio mensajes)\")\n            continue\n        m = cambio[\"messages\"][-1]\n        print(f\"[{nodo}] {type(m).__name__}: {m.content!r} tool_calls={getattr(m, 'tool_calls', None)}\")",
+   "notas": "Es `tutor/misiones/1A_router.py`, el que corriste. Con el argumento `roto`, el conditional edge se cambia por un edge fijo.\nSalida real con \"Hola, cuanto es 2 por 2?\": `[tool_calling_llm] AIMessage: '' tool_calls=[multiply 2,2]` y luego `[tools] ToolMessage: '4'`.\nSalida real con \"Hola\": solo `[tool_calling_llm] AIMessage: '¡Hola! ¿Cómo puedo ayudarte hoy?'`. El node `tools` no corrió.",
+   "resaltar": [
+    31,
+    36,
+    37
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El router",
+   "contenido": "graph TD\n  START([START]) --> tool_calling_llm\n  tool_calling_llm -.->|tool_calls| tools\n  tool_calling_llm -.->|sin tool_calls| END([END])\n  tools --> END\n  class tool_calling_llm clave",
+   "notas": "La decisión sale del node del LLM, pero la toma el edge leyendo su mensaje.\n`tools → END`: el resultado del tool no vuelve al modelo. Por eso el router termina con un `ToolMessage` y no con una frase."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "tools_condition sin LLM",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.prebuilt import tools_condition\n\npregunta = HumanMessage(content=\"¿Cuánto es 2 por 2?\")\n\n# Dos respuestas posibles del LLM, escritas a mano (sin llamar a ningún modelo)\ncon_tool_call = AIMessage(\n    content=\"\",\n    tool_calls=[{\"name\": \"multiply\", \"args\": {\"a\": 2, \"b\": 2}, \"id\": \"call_1\"}],\n)\nsin_tool_call = AIMessage(content=\"Hola, ¿en qué te ayudo?\")\n\n# tools_condition solo lee el último mensaje y devuelve el nombre de la ruta\nprint(tools_condition({\"messages\": [pregunta, con_tool_call]}))\nprint(tools_condition({\"messages\": [pregunta, sin_tool_call]}))",
+   "notas": "Aquí no hay modelo: los dos `AIMessage` están escritos a mano.\nSalida real: `tools` y `__end__`.\n`tools_condition` es una función normal: recibe el state, mira si el último mensaje trae `tool_calls` y devuelve un nombre. Ese nombre tiene que coincidir con un node: tu ToolNode debe llamarse `\"tools\"`.",
+   "resaltar": [
+    14,
+    15
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El ToolNode ejecuta solo lo que se le pide",
+   "contenido": "from langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\nfrom langgraph.prebuilt import ToolNode\n\n\ndef multiply(a: int, b: int) -> int:\n    \"\"\"Multiply a and b.\"\"\"\n    print(f\"  multiply({a}, {b}) se ejecutó\")\n    return a * b\n\n\n# Grafo mínimo: el ToolNode solo, sin LLM ni conditional edge\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"tools\", ToolNode([multiply]))\nbuilder.add_edge(START, \"tools\")\nbuilder.add_edge(\"tools\", END)\ngraph = builder.compile()\n\npregunta = HumanMessage(content=\"¿Cuánto es 2 por 2?\")\ncon_tool_call = AIMessage(\n    content=\"\",\n    tool_calls=[{\"name\": \"multiply\", \"args\": {\"a\": 2, \"b\": 2}, \"id\": \"call_1\"}],\n)\nsin_tool_call = AIMessage(content=\"Hola, ¿en qué te ayudo?\")\n\nfor ultimo in [con_tool_call, sin_tool_call]:\n    resultado = graph.invoke({\"messages\": [pregunta, ultimo]})\n    print([type(m).__name__ for m in resultado[\"messages\"]], \"->\", resultado[\"messages\"][-1].content)",
+   "notas": "Un grafo con el ToolNode solo, sin edge que decida.\nSalida real con `tool_calls`: imprime `multiply(2, 2) se ejecutó` y queda `['HumanMessage', 'AIMessage', 'ToolMessage'] -> 4`.\nSalida real sin `tool_calls`: `['HumanMessage', 'AIMessage']`. No truena: no había nada que ejecutar y no agregó mensajes.\nEn la versión 1.2.19 el ToolNode no se puede llamar suelto con `.invoke()`; necesita estar en un grafo.",
+   "resaltar": [
+    14,
+    26
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: el router con edge fijo",
+   "contenido": "Corres el router del paso 3 como `1A_router.py \"Hola\" roto`: el edge `tool_calling_llm → tools` es fijo, sin `tools_condition`. El LLM responde \"¡Hola!\" sin `tool_calls`. ¿Qué pasa en el node `tools`?",
+   "respuesta": "Corre, pero no hace nada (salida real: `[tools] (no devolvio mensajes)`). El grafo termina sin error.\nEl ToolNode recorre la lista `tool_calls` del último mensaje; si está vacía, devuelve cero mensajes. El edge fijo no rompe nada aquí: solo hace correr un node de más.",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: otro nombre para el ToolNode",
+   "contenido": "Registras el ToolNode con otro nombre, `\"herramientas\"`, y dejas `tools_condition` en el conditional edge. Para no depender de un LLM, el node `llm` siempre pide `multiply(2, 2)`:\n\n```python\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.graph import StateGraph, START, END, MessagesState\nfrom langgraph.prebuilt import ToolNode, tools_condition\n\n\ndef multiply(a: int, b: int) -> int:\n    \"\"\"Multiply a and b.\"\"\"\n    return a * b\n\n\n# En vez de un LLM, un node que siempre pide multiply(2, 2)\ndef llm(state: MessagesState):\n    pedido = AIMessage(\n        content=\"\",\n        tool_calls=[{\"name\": \"multiply\", \"args\": {\"a\": 2, \"b\": 2}, \"id\": \"call_1\"}],\n    )\n    return {\"messages\": [pedido]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"llm\", llm)\nbuilder.add_node(\"herramientas\", ToolNode([multiply]))\nbuilder.add_edge(START, \"llm\")\nbuilder.add_conditional_edges(\"llm\", tools_condition)\nbuilder.add_edge(\"herramientas\", END)\n\ntry:\n    graph = builder.compile()\n    print(\"compiló\")\n    resultado = graph.invoke({\"messages\": [HumanMessage(content=\"¿Cuánto es 2 por 2?\")]})\n    print(resultado[\"messages\"][-1])\nexcept Exception as e:\n    print(type(e).__name__, \":\", e)\n```\n\n¿Qué imprime? ¿En qué momento falla, si falla?",
+   "respuesta": "Imprime `ValueError : At 'llm' node, 'tools_condition' branch found unknown target 'tools'` (salida real), y nunca imprime `compiló`: falla en `compile()`, antes de correr ningún node.\n`tools_condition` declara que devuelve `\"tools\"` o `\"__end__\"`, y al compilar el grafo revisa que exista un node con cada nombre. El edge solo devuelve un nombre; no sabe dónde está tu ToolNode."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: quién multiplica",
+   "contenido": "En el router del paso 3, con \"¿cuánto es 2 por 2?\", ¿en qué momento exacto se ejecuta `multiply(2, 2)`: cuando el LLM responde, cuando corre `tools_condition` o cuando corre el node `tools`?",
+   "respuesta": "Cuando corre el node `tools`. El LLM solo escribió la petición (`tool_calls`) y `tools_condition` solo leyó que existía y devolvió `\"tools\"`.\nPor eso en el paso 5, con `tools_condition` aislado, no se ejecutó ninguna multiplicación.",
+   "ref": 3
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Router = un node con LLM + un conditional edge que decide si ir a `tools` o a `END`.\n- El LLM **pide** (`tool_calls`), el edge **elige la ruta** (devuelve un nombre), el ToolNode **ejecuta**.\n- `tools_condition` devuelve `\"tools\"` o `\"__end__\"`: tu ToolNode debe llamarse `tools`.\n- Un ToolNode sin `tool_calls` no truena: no ejecuta nada.\n- En el router el resultado no vuelve al modelo (`tools → END`). En ReAct sí (`tools → assistant`)."
+  }
+ ],
+ "fuentes": [
+  "module-1/router.ipynb",
+  "tutor/misiones/1A_router.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "En el router, ¿quién ejecuta `multiply`: el LLM, `tools_condition` o el ToolNode?",
+   "reverso": "El **ToolNode**. El LLM solo escribe la petición en `tool_calls` y `tools_condition` solo lee el mensaje y devuelve `\"tools\"`."
+  },
+  {
+   "frente": "Llamas a tu ToolNode `\"herramientas\"` y usas `tools_condition`. ¿Qué pasa cuando el LLM pide un tool?",
+   "reverso": "Un `ValueError`: `tools_condition` devuelve el nombre `\"tools\"` y no existe un node con ese nombre. El edge solo devuelve un nombre."
+  },
+  {
+   "frente": "¿Qué dos valores puede devolver `tools_condition` y de qué depende?",
+   "reverso": "`\"tools\"` si el último mensaje trae `tool_calls`; `\"__end__\"` (END) si no. Solo mira el último mensaje."
+  },
+  {
+   "frente": "En el router le dices solo \"Hola\" al LLM. ¿Qué nodes corren?",
+   "reverso": "Solo `tool_calling_llm`. Su respuesta no trae `tool_calls`, así que `tools_condition` manda directo a END y el node `tools` ni se ejecuta."
+  }
+ ]
+}

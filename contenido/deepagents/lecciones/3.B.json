@@ -1,0 +1,104 @@
+{
+ "mision_id": "3.B",
+ "titulo": "Skills",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Tu agente de ventas tiene que saber calificar leads, escribir pitches, preparar demos... Si metes cada procedimiento completo en el system prompt, pagas esos tokens en **cada** llamada, aunque la tarea no tenga nada que ver.\n\nLas **skills** resuelven eso con *progressive disclosure*: el modelo ve siempre un índice corto (nombre y cuándo usarla) y lee el procedimiento completo solo cuando la tarea lo pide.\n\nYa las conoces: `/tutor` e `/ingestar`, las que usa Claude Code en este repo, son skills con el mismo formato abierto (*Agent Skills*). Lo que aprendas aquí es exactamente cómo funcionan esas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Anatomía de una skill",
+   "contenido": "Una skill es una **carpeta** con un archivo `SKILL.md`:\n\n```\nskills/\n  qualify-lead/\n    SKILL.md\n  draft-pitch/\n    SKILL.md\n```\n\n`SKILL.md` tiene dos partes: un *frontmatter* YAML entre `---` y, debajo, las instrucciones en markdown.\n\n| Campo | ¿Obligatorio? | Para qué |\n|---|---|---|\n| `name` | Sí | Minúsculas, números y guiones. Igual al nombre de la carpeta. |\n| `description` | Sí | **Cuándo** usarla. Siempre está en contexto: corta y precisa. |\n| `allowed-tools`, `compatibility`, `metadata` | No | Tools que usa, requisitos, datos extra. |\n\nSi falta `name` o `description`, Deep Agents se salta esa skill y deja un aviso en el log."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "m3/skills/qualify-lead/SKILL.md",
+   "contenido": "---\nname: qualify-lead\ndescription: Use when the user wants to qualify a sales lead or prospect.\n---\n\n# Qualify a Lead\n\nUse the BANT framework to qualify the prospect systematically.\n\n**Step 1: Budget**: Ask what budget range they are working with and how purchasing decisions are made in their organisation.\n\n**Step 2: Authority**: Confirm whether you are speaking with the decision maker. If not, ask who is and whether they can be involved.\n\n**Step 3: Need**: Understand the specific pain point. What problem are they trying to solve? What happens if it stays unsolved?\n\n**Step 4: Timeline**: Ask when they are looking to make a decision and when they would need the solution running.\n\n## Output\n\nAfter gathering responses, classify the lead and summarise your findings:\n\n- **Qualified**: clear budget, authority confirmed, defined need, decision within 90 days\n- **Nurture**: one or more gaps; recommend a follow-up in 30 days\n- **Disqualify**: no budget, no authority, or no real need identified",
+   "notas": "Arriba, el frontmatter: es lo único que el modelo ve de entrada.\nLa `description` dice **cuándo** activarla (\"when the user wants to qualify a sales lead\"), no cómo funciona por dentro.\nEl cuerpo (BANT en 4 pasos y cómo clasificar) solo entra al contexto cuando el modelo hace `read_file` de este archivo.",
+   "resaltar": [
+    2,
+    3
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Las tres etapas",
+   "contenido": "graph LR\n  D[\"1. Discovery: el middleware lee el frontmatter en código y lo pone en el system prompt\"] --> A[\"2. Activation: el modelo hace read_file del SKILL.md\"]\n  A --> E[\"3. Execution: el modelo sigue las instrucciones con sus tools\"]\n  class A clave",
+   "notas": "Discovery no es una tool call: lo hace `SkillsMiddleware` antes de que corra el modelo.\nActivation sí es del modelo: un `read_file` normal, el de 2.A. En LangSmith lo ves como una tool call más.\nExecution: la skill no hace nada sola; le dice al agente cómo usar las tools que ya tiene."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Discovery y activation, sin LLM",
+   "contenido": "from pathlib import Path\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom deepagents.backends import FilesystemBackend\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\ncarpeta = Path(__file__).parent / \"skills_demo\"  # adentro: skills/qualify-lead/SKILL.md y skills/draft-pitch/SKILL.md\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"read_file\", {\"file_path\": \"/skills/qualify-lead/SKILL.md\"}, \"1\"),\n    AIMessage(content=\"Acme Corp: Qualified.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    backend=FilesystemBackend(root_dir=str(carpeta), virtual_mode=True),\n    skills=[\"/skills\"],\n    system_prompt=\"You are a sales assistant.\",\n)\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Qualify this lead: Acme Corp, $45k budget, VP of Sales, live by Q3.\"}]})\n\nsystem = modelo.vistos[0][0].text\ninicio = system.index(\"## Skills System\")\nprint(system[inicio:inicio + 900])\nprint(\"...\")\nprint(\"read_file devolvió:\", r[\"messages\"][2].content[:120])",
+   "notas": "Copia `m3/skills/` dentro de una carpeta `skills_demo/` junto al script. `skills=[\"/skills\"]` es una ruta **dentro del backend**: aquí, `skills_demo/skills` en disco. Salida real (recortada al bloque de skills):\n`## Skills System` ... `**Available Skills:**`\n`- **draft-pitch**: Use when the user wants to write a sales pitch... -> Read /skills/draft-pitch/SKILL.md`\n`- **qualify-lead**: Use when the user wants to qualify a sales lead or prospect. -> Read /skills/qualify-lead/SKILL.md`\n`**How to Use Skills (Progressive Disclosure):** ...`\n`read_file devolvió:  1  ---  2  name: qualify-lead ...`\nEl guion hizo de modelo que reconoce la tarea y activa la skill con `read_file`.",
+   "resaltar": [
+    43,
+    36
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Skill, tool y system prompt",
+   "contenido": "| | Qué es | ¿Qué está siempre en contexto? |\n|---|---|---|\n| Tool | Una función que el modelo llama y que **hace** algo | Su nombre, descripción y argumentos |\n| Skill | Instrucciones (texto) que el modelo **lee** con `read_file` | Solo `name` y `description` |\n| System prompt | Instrucciones fijas | Todo, en cada llamada |\n\nUna skill no ejecuta nada: le explica al agente cómo usar las tools que ya tiene. Por eso vive en el **backend** como cualquier archivo (2.A).\n\nCómo escribir la `description`: el modelo la compara con la tarea. \"Califica con BANT en 4 pasos y escribe un resumen\" describe el *cómo*; \"Use when the user wants to qualify a sales lead or prospect\" dice el *cuándo*, y esa sí se activa.\n\nEn versiones más nuevas que la 0.7.0 del curso existen `pinned_skills` y `metadata.include_tools`; no están en la versión instalada."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿El cuerpo de la skill está en el system prompt?",
+   "contenido": "En el agente del paso 5, la variable `system` es el system prompt de la **primera** llamada al modelo (antes del `read_file`). Si agregas al final:\n\n```python\nprint(\"BANT\" in system)\n```\n\n¿Qué imprime? (\"BANT\" solo aparece en el cuerpo de `qualify-lead/SKILL.md`, el del paso 3.)",
+   "respuesta": "Salida real: `False`.\nEn discovery el middleware pone solo `name`, `description` y la ruta. El cuerpo, donde está BANT, entra al contexto cuando el modelo hace `read_file` (activation), en una llamada posterior. Eso es *progressive disclosure*: con 100 skills pagas 100 líneas cortas, no 100 procedimientos.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Una skill sin description",
+   "contenido": "Agregas una tercera skill, `resumir-llamada`, junto a `qualify-lead`. Su `SKILL.md` es:\n\n```markdown\n---\nname: resumir-llamada\n---\n\n# Resumir una llamada\n\nHaz 3 viñetas: problema, siguiente paso, fecha.\n```\n\nEl agente es el del paso 5, apuntando a esta nueva carpeta:\n\n```python\nfrom pathlib import Path\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom deepagents.backends import FilesystemBackend\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\ncarpeta = Path(__file__).parent / \"skills_demo3\"  # adentro: skills/qualify-lead y skills/resumir-llamada (sin description)\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"read_file\", {\"file_path\": \"/skills/qualify-lead/SKILL.md\"}, \"1\"),\n    AIMessage(content=\"Acme Corp: Qualified.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    backend=FilesystemBackend(root_dir=str(carpeta), virtual_mode=True),\n    skills=[\"/skills\"],\n    system_prompt=\"You are a sales assistant.\",\n)\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Qualify this lead: Acme Corp, $45k budget, VP of Sales, live by Q3.\"}]})\n\nsystem = modelo.vistos[0][0].text\ninicio = system.index(\"## Skills System\")\nprint(system[inicio:inicio + 900])\nprint(\"...\")\nprint(\"read_file devolvió:\", r[\"messages\"][2].content[:120])\n```\n\n¿Qué skills aparecen en `**Available Skills:**`?",
+   "respuesta": "Salida real: solo `qualify-lead`. En el log sale `Skipping /skills/resumir-llamada/SKILL.md: missing required 'name' or 'description'`.\nSin `description` el middleware no tiene con qué anunciarla, así que la salta. No es un error que detenga al agente: la skill simplemente no existe para el modelo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: las skills están en tu disco",
+   "contenido": "Tienes la carpeta `skills/` con `qualify-lead` en tu disco, junto al script, y creas el agente **sin** `backend=`:\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\nmodelo = ModeloConGuion(guion=[AIMessage(content=\"Hola.\")])\n\n# La carpeta skills/ existe en tu disco, pero el backend es el de por defecto (StateBackend)\nagent = create_deep_agent(model=modelo, skills=[\"/skills\"], system_prompt=\"You are a sales assistant.\")\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Qualify this lead: Acme Corp.\"}]})\n\nsystem = modelo.vistos[0][0].text\nprint(\"¿Aparece qualify-lead?\", \"qualify-lead\" in system)\ninicio = system.index(\"**Available Skills:**\")\nprint(system[inicio:inicio + 200])\n```\n\n¿Qué ve el modelo en el bloque de skills?\n\nA) `qualify-lead`, porque la carpeta `skills/` existe junto al script.\n\nB) \"No skills available yet\", porque `/skills` se busca en el backend por defecto (`StateBackend`), que está vacío.\n\nC) Un error al crear el agente, porque `skills=` exige un `FilesystemBackend`.\n\nD) `qualify-lead`, porque el modelo hace `read_file` de cada `SKILL.md` al arrancar.",
+   "respuesta": "**B.** Salida real: `¿Aparece qualify-lead? False` y `(No skills available yet. You can create skills in /skills)`.\n`skills=[\"/skills\"]` es una ruta **del backend**, no de tu disco. Sin `backend=`, es `StateBackend`: el state del hilo empieza sin archivos. A: tu disco no importa si el backend no apunta ahí. C: no hay error, solo una lista vacía. D: discovery lo hace el middleware en código, no el modelo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Skill = carpeta con `SKILL.md`: frontmatter (`name`, `description` obligatorios) + instrucciones en markdown. Formato abierto: el mismo de `/tutor` e `/ingestar`.\n- *Progressive disclosure*: el middleware lee el frontmatter en código y pone solo nombre, descripción y ruta en el system prompt; el modelo hace `read_file` del cuerpo cuando la tarea coincide.\n- La `description` dice **cuándo** usarla, no cómo funciona.\n- Una skill es texto, no una tool: le dice al agente cómo usar las tools que ya tiene.\n- `skills=[\"/skills\"]` es una ruta del **backend** (2.A): las skills tienen que existir ahí.\n\nDónde buscarlo en docs: docs.langchain.com → Deep Agents → *Skills*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m3/m3.2-skills.html",
+  "lca-deepagents/python/m3/m3.2_scratch_agent_skills.py",
+  "lca-deepagents/python/m3/skills/qualify-lead/SKILL.md",
+  "lca-deepagents/python/m3/skills/draft-pitch/SKILL.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Tienes 50 skills. ¿Qué parte de cada una está en el contexto en cada llamada?",
+   "reverso": "Solo `name`, `description` y la ruta. El cuerpo del `SKILL.md` entra cuando el modelo hace `read_file` (activation)."
+  },
+  {
+   "frente": "¿Quién lee el frontmatter de las skills: el modelo con `read_file` o el middleware?",
+   "reverso": "El middleware, en código, antes de que corra el modelo (discovery). El `read_file` del modelo es la activation."
+  },
+  {
+   "frente": "¿Qué debe decir la `description` de una skill y por qué?",
+   "reverso": "Cuándo usarla. El modelo la compara con la tarea para decidir si la activa; describir el cómo por dentro no le ayuda a decidir."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre una skill y una tool?",
+   "reverso": "Una tool es una función que hace algo. Una skill es texto que el modelo lee y que le dice cómo usar las tools que ya tiene."
+  },
+  {
+   "frente": "`skills=[\"/skills\"]` sin `backend=`, con la carpeta `skills/` en tu disco. ¿El modelo ve las skills?",
+   "reverso": "No. La ruta se busca en el backend; el default es `StateBackend` (vacío). Necesitas un backend que apunte a esa carpeta, p. ej. `FilesystemBackend`."
+  },
+  {
+   "frente": "Un `SKILL.md` no tiene `description`. ¿Qué pasa?",
+   "reverso": "Deep Agents salta esa skill y deja un aviso en el log. El modelo nunca la ve."
+  }
+ ]
+}

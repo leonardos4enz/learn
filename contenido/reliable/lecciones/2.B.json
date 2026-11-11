@@ -1,0 +1,131 @@
+{
+ "mision_id": "2.B",
+ "titulo": "Experimentos y evals de código",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Ya tienes el dataset. Falta calificar **solo** lo que hace Emma en cada ejemplo y guardar el resultado para comparar versiones.\n\nPara elegir el tipo de evaluator, la pregunta es una: **¿puedo escribir una función que decida esto de forma confiable?** Si la respuesta es sí, usa código. Un evaluator de código es como un unit test: determinista, rápido, gratis y fácil de depurar cuando falla. Sirve para la forma de la salida (JSON o texto), qué tool se llamó y en qué orden, palabras clave, latencia y costo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "evaluate() en una frase",
+   "contenido": "`evaluate(target, data=..., evaluators=[...], experiment_prefix=...)`\n\n- **target**: tu app. Recibe los `inputs` de cada example y devuelve un dict.\n- **data**: el nombre del dataset en LangSmith (o una lista de examples).\n- **evaluators**: funciones que califican.\n\nLangSmith corre el target en cada example, aplica cada evaluator y guarda todo como un **experiment**: inputs, outputs, scores, latencia, tokens y costo por example. Los experiments son la unidad de comparación entre versiones.\n\nPara trabajos grandes: `aevaluate` (async, misma interfaz) y `max_concurrency` para paralelizar. También hay integración con **pytest**, para escribir evals como tests y correrlas en CI."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Tu primer experiment, sin cuenta",
+   "contenido": "import uuid\nfrom langsmith import evaluate\nfrom langsmith.schemas import Example\n\n# 3 examples en memoria (en el curso: data=\"officeflow-dataset\", que vive en LangSmith)\ndataset_id = uuid.uuid4()\npreguntas = [\n    \"Do you carry staplers?\",\n    \"What is your return policy?\",\n    \"I'm looking for pet food for my cats, do you carry Purina?\",\n]\nexamples = [Example(id=uuid.uuid4(), dataset_id=dataset_id, inputs={\"question\": q}) for q in preguntas]\n\n# Dummy \"app\" that always returns a response mentioning OfficeFlow\ndef dummy_app(inputs: dict) -> dict:\n    print(\"  el target recibe:\", inputs)\n    return {\"response\": \"Sure! In OfficeFlow, you can reset your password from the settings page.\"}\n\n# Code-based Eval — check if the response mentions \"officeflow\"\ndef mentions_officeflow(outputs: dict) -> bool:\n    return \"officeflow\" in outputs[\"response\"].lower()\n\nresults = evaluate(\n    dummy_app,\n    data=examples,\n    evaluators=[mentions_officeflow],\n    upload_results=False,     # no sube nada a LangSmith\n)\n\nfor row in results:\n    pregunta = row[\"example\"].inputs[\"question\"]\n    feedback = row[\"evaluation_results\"][\"results\"][0]\n    print(f\"{pregunta[:30]:30} -> {feedback.key} = {feedback.score}\")",
+   "notas": "Es `module-2/lesson-3/run_experiment.py` con dos cambios para correr sin LangSmith: `data=examples` (3 examples en memoria en vez de `\"officeflow-dataset\"`) y `upload_results=False` (en beta en langsmith 0.14). `Example(...)` es la clase de LangSmith para un example. Salida real:\n`el target recibe: {'question': 'Do you carry staplers?'}` (y las otras 2)\n`Do you carry staplers?         -> mentions_officeflow = True` (las 3 en `True`)\nEl target recibe **solo** `inputs`. El evaluator pide `outputs` por nombre y LangSmith se lo pasa.",
+   "resaltar": [
+    15,
+    20,
+    27
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué puede pedir un evaluator",
+   "contenido": "LangSmith mira los **nombres** de los parámetros de tu evaluator y le pasa lo que pide:\n\n- `inputs`, `outputs`, `reference_outputs`: los dicts del example y del resultado.\n- `run`, `example`: los objetos completos (`run.outputs`, `example.inputs`...).\n\nPuede devolver un `bool`, un número o un dict `{\"score\": ..., \"comment\": ...}`; con `\"key\"` le das nombre a la métrica. Si no, la key es el nombre de la función (`mentions_officeflow`).\n\n`mentions_officeflow(outputs)` es *reference-free*: no compara con ninguna respuesta esperada."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El evaluator del curso: schema antes de la query",
+   "contenido": "\"\"\"\nEvaluator: Schema-Before-Query Check\n\nChecks that whenever the agent uses query_database, it first inspects\nthe database schema (via PRAGMA table_info or sqlite_master) before\nrunning a data query. This ensures the agent doesn't blindly guess\ncolumn names.\n\"\"\"\nimport re\n\n\nSCHEMA_PATTERNS = [\n    r\"PRAGMA\\s+table_info\",\n    r\"SELECT\\s+.*FROM\\s+sqlite_master\",\n    r\"PRAGMA\\s+database_list\",\n    r\"\\.schema\",\n]\n\n\ndef _is_schema_query(sql: str) -> bool:\n    \"\"\"Return True if the SQL is a schema-inspection query.\"\"\"\n    for pattern in SCHEMA_PATTERNS:\n        if re.search(pattern, sql, re.IGNORECASE):\n            return True\n    return False\n\n\ndef _extract_tool_calls(run) -> list[dict]:\n    \"\"\"Extract tool calls from run output messages.\"\"\"\n    run_outputs = run.outputs if hasattr(run, \"outputs\") else run.get(\"outputs\", {}) or {}\n    messages = run_outputs.get(\"messages\", [])\n\n    tool_calls = []\n    for msg in messages:\n        if isinstance(msg, dict):\n            for tc in msg.get(\"tool_calls\", []):\n                func = tc.get(\"function\", {})\n                tool_calls.append({\n                    \"name\": func.get(\"name\", \"\"),\n                    \"arguments\": func.get(\"arguments\", \"\"),\n                })\n    return tool_calls\n\n\ndef schema_before_query(run, example) -> dict:\n    \"\"\"Score 1 if the agent checks DB schema before querying data, 0 otherwise.\n\n    If the agent never calls query_database, scores 1 (not applicable).\n    \"\"\"\n    tool_calls = _extract_tool_calls(run)\n\n    db_calls = [tc for tc in tool_calls if tc[\"name\"] == \"query_database\"]\n\n    # No database calls — nothing to check\n    if not db_calls:\n        return {\"score\": 1, \"comment\": \"No query_database calls — schema check not applicable\"}\n\n    # Check if any schema query appears before the first non-schema data query\n    seen_schema_check = False\n    for tc in db_calls:\n        sql = tc.get(\"arguments\", \"\")\n        if _is_schema_query(sql):\n            seen_schema_check = True\n        else:\n            # First real data query — was there a schema check before it?\n            if not seen_schema_check:\n                return {\n                    \"score\": 0,\n                    \"comment\": f\"Agent queried data without checking schema first. First query: {sql[:200]}\",\n                }\n            break  # Schema was checked before first data query — pass\n\n    if seen_schema_check:\n        return {\"score\": 1, \"comment\": \"Agent checked schema before querying data\"}\n\n    return {\"score\": 1, \"comment\": \"All query_database calls were schema inspections\"}",
+   "notas": "`module-2/lesson-4/eval_schema_check.py`, completo. Atrapa la falla de v1 (consultar sin descubrir el schema).\n`_extract_tool_calls` saca todas las tool calls de `outputs[\"messages\"]` (por eso Emma devuelve toda la lista). Se queda con las de `query_database` y las recorre en orden: si la primera query que **no** es de schema llega antes de cualquier query de schema → 0. Si Emma nunca usa `query_database` → 1, \"no aplica\".",
+   "resaltar": [
+    55,
+    66,
+    68
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Python: lo que hace el regex",
+   "contenido": "`SCHEMA_PATTERNS` son expresiones regulares. `re.search(patrón, sql, re.IGNORECASE)` busca el patrón **en cualquier parte** del texto, sin importar mayúsculas:\n\n- `PRAGMA\\s+table_info`: `\\s+` es \"uno o más espacios\". Encuentra `PRAGMA table_info(items)` y `pragma  table_info(x)`.\n- `SELECT\\s+.*FROM\\s+sqlite_master`: `.*` es \"cualquier cosa\". Encuentra `SELECT name FROM sqlite_master WHERE ...` y `select sql from sqlite_master`.\n\nOjo: el evaluator recibe `arguments` como texto JSON (`'{\"query\": \"PRAGMA table_info(items)\"}'`). Como `re.search` busca en cualquier parte, las comillas y llaves no estorban."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Probarlo con runs falsos",
+   "contenido": "from eval_schema_check import schema_before_query\n\ndef tool_call(sql: str) -> dict:\n    \"\"\"Arma un tool call como los que guarda el agente en outputs[\"messages\"].\"\"\"\n    return {\"function\": {\"name\": \"query_database\", \"arguments\": '{\"query\": \"' + sql + '\"}'}}\n\nruns = {\n    \"schema primero\": {\"outputs\": {\"messages\": [\n        {\"role\": \"user\", \"content\": \"Do you have notebooks?\"},\n        {\"role\": \"assistant\", \"tool_calls\": [tool_call(\"SELECT name FROM sqlite_master WHERE type='table'\")]},\n        {\"role\": \"assistant\", \"tool_calls\": [tool_call(\"PRAGMA table_info(items)\")]},\n        {\"role\": \"assistant\", \"tool_calls\": [tool_call(\"SELECT sku_label FROM items\")]},\n    ]}},\n    \"adivina el schema\": {\"outputs\": {\"messages\": [\n        {\"role\": \"user\", \"content\": \"Do you have notebooks?\"},\n        {\"role\": \"assistant\", \"tool_calls\": [tool_call(\"SELECT * FROM products\")]},\n    ]}},\n    \"solo la knowledge base\": {\"outputs\": {\"messages\": [\n        {\"role\": \"user\", \"content\": \"What is your return policy?\"},\n        {\"role\": \"assistant\", \"tool_calls\": [\n            {\"function\": {\"name\": \"search_knowledge_base\", \"arguments\": '{\"query\": \"returns\"}'}}]},\n    ]}},\n}\n\nfor nombre, run in runs.items():\n    print(f\"{nombre}: {schema_before_query(run, example=None)}\")",
+   "notas": "Corre desde `module-2/lesson-4/` (ahí vive `eval_schema_check.py`). `tool_call()` arma un tool call con la forma que guarda Emma. Los runs son dicts y no objetos: `_extract_tool_calls` acepta los dos (`hasattr(run, \"outputs\")`). Salida real:\n`schema primero: {'score': 1, 'comment': 'Agent checked schema before querying data'}`\n`adivina el schema: {'score': 0, 'comment': 'Agent queried data without checking schema first. First query: {\"query\": \"SELECT * FROM products\"}'}`\n`solo la knowledge base: {'score': 1, 'comment': 'No query_database calls — schema check not applicable'}`",
+   "resaltar": [
+    3,
+    26
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Correrlo contra Emma de verdad",
+   "contenido": "`module-2/lesson-4/run_eval.py` hace lo mismo con la Emma real (`agent_v5`):\n\n1. Carga la knowledge base.\n2. `run_agent` le pone un `thread_id` nuevo a cada pregunta (para que no se mezclen historiales) y llama a `chat`.\n3. `evaluate(run_agent, data=\"officeflow-dataset\", evaluators=[schema_before_query], experiment_prefix=\"schema-check-v5\")`.\n\nNecesita `OPENAI_API_KEY` y `LANGSMITH_API_KEY`. El resultado se ve en la UI: *Datasets & Experiments* → `officeflow-dataset` → el experiment `schema-check-v5-...`, con una columna por evaluator y el trace de cada fila. Comparando dos experiments ves **regresiones**: un example que pasaba y ahora falla. Para escribir evaluators a partir de tus traces hay una skill: `npx skills add langchain-ai/langsmith-skills`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Al revés",
+   "contenido": "Emma consulta los datos y **después** el schema. Desde `module-2/lesson-4/`:\n\n```python\nfrom eval_schema_check import schema_before_query\n\nrun = {\"outputs\": {\"messages\": [\n    {\"role\": \"assistant\", \"tool_calls\": [\n        {\"function\": {\"name\": \"query_database\", \"arguments\": '{\"query\": \"select * from items\"}'}}]},\n    {\"role\": \"assistant\", \"tool_calls\": [\n        {\"function\": {\"name\": \"query_database\", \"arguments\": '{\"query\": \"PRAGMA table_info(items)\"}'}}]},\n]}}\nprint(schema_before_query(run, example=None))\n```\n\n¿Qué score y qué comment?",
+   "respuesta": "Salida real: `{'score': 0, 'comment': 'Agent queried data without checking schema first. First query: {\"query\": \"select * from items\"}'}`. El orden importa: la primera query que no es de schema (`select * from items`) llegó cuando `seen_schema_check` todavía era `False`, y ahí regresa 0. Que después mire el schema ya no cuenta."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Solo una query de schema",
+   "contenido": "Emma hace **una sola** query, de schema, y contesta sin consultar datos:\n\n```python\nfrom eval_schema_check import schema_before_query\n\nrun = {\"outputs\": {\"messages\": [\n    {\"role\": \"assistant\", \"tool_calls\": [\n        {\"function\": {\"name\": \"query_database\", \"arguments\": '{\"query\": \"select sql from sqlite_master where name = \\'items\\'\"}'}}]},\n    {\"role\": \"assistant\", \"content\": \"Yes, we carry several items!\"},\n]}}\nprint(schema_before_query(run, example=None))\n```\n\n¿Qué score y qué comment? Pista: sigue el `for` del evaluator del paso 5.",
+   "respuesta": "Salida real: `{'score': 1, 'comment': 'Agent checked schema before querying data'}`. El `for` marca `seen_schema_check = True` y termina sin encontrar una query de datos; después, `if seen_schema_check:` regresa ese comment. Detalle: la última línea del evaluator (*All query_database calls were schema inspections*) **nunca se alcanza**, porque si todas las queries son de schema, `seen_schema_check` ya es `True`. Leer el código con casos concretos encuentra cosas así.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos evaluators, un target distinto",
+   "contenido": "Ahora el target contesta distinto según la pregunta, y agregas un segundo evaluator:\n\n```python\nimport uuid\nfrom langsmith import evaluate\nfrom langsmith.schemas import Example\n\ndataset_id = uuid.uuid4()\npreguntas = [\n    \"Do you carry staplers?\",\n    \"What is your return policy?\",\n    \"I'm looking for pet food for my cats, do you carry Purina?\",\n]\nexamples = [Example(id=uuid.uuid4(), dataset_id=dataset_id, inputs={\"question\": q}) for q in preguntas]\n\ndef app_v2(inputs: dict) -> dict:\n    if \"pet food\" in inputs[\"question\"]:\n        return {\"response\": \"Sorry, we only sell office supplies.\"}\n    return {\"response\": \"OfficeFlow can help with that!\"}\n\ndef mentions_officeflow(outputs: dict) -> bool:\n    return \"officeflow\" in outputs[\"response\"].lower()\n\ndef short_answer(outputs: dict) -> dict:\n    n = len(outputs[\"response\"].split())\n    return {\"key\": \"short_answer\", \"score\": n <= 6, \"comment\": f\"{n} palabras\"}\n\nresults = evaluate(app_v2, data=examples, evaluators=[mentions_officeflow, short_answer], upload_results=False)\n\nfor row in results:\n    pregunta = row[\"example\"].inputs[\"question\"]\n    scores = {r.key: r.score for r in row[\"evaluation_results\"][\"results\"]}\n    print(f\"{pregunta[:30]:30} -> {scores}\")\n```\n\n¿Qué scores salen para cada pregunta? Y el `False` que aparezca, ¿es una falla de la app o del evaluator?",
+   "respuesta": "Salida real:\n`Do you carry staplers? -> {'mentions_officeflow': True, 'short_answer': True}`\n`What is your return policy? -> {'mentions_officeflow': True, 'short_answer': True}`\n`I'm looking for pet food... -> {'mentions_officeflow': False, 'short_answer': True}`\nEl `False` es culpa del **evaluator**: declinar \"Sorry, we only sell office supplies.\" es justo lo que pide el PRD para fuera de alcance, y no necesita decir \"OfficeFlow\". Un evaluator mide exactamente lo que escribiste, no lo que querías medir."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cuál va con código?",
+   "contenido": "¿Cuál de estos criterios conviene resolver con un evaluator de **código**?\n\nA) Que Emma use un tono empático con un cliente enojado.\nB) Que Emma no haya llamado `search_knowledge_base` más de 2 veces en una corrida.\nC) Que la respuesta sea más clara que la de la versión anterior.\nD) Que Emma no haya insinuado cuántas unidades quedan (\"quedan poquitas, como una docena\").",
+   "respuesta": "**B.** Contar tool calls en `outputs[\"messages\"]` es determinista: una función lo decide siempre bien. A es subjetivo: LLM-as-judge. C compara dos versiones: pairwise (2.C). D parece de regex, pero las paráfrasis (\"como una docena\", \"casi se acaban\") se le escapan: mejor un LLM-as-judge de alcance estrecho."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `evaluate(target, data, evaluators)` corre el target en cada example y guarda un **experiment**; `aevaluate` y `max_concurrency` para trabajos grandes; pytest para CI.\n- El target recibe solo `inputs`. El evaluator pide por nombre `inputs`, `outputs`, `reference_outputs`, `run` o `example`, y devuelve bool, número o `{\"score\", \"comment\"}`.\n- Usa código cuando una función puede decidir de forma confiable: tools llamadas y su orden, formato, palabras clave, latencia, costo.\n- `schema_before_query` lee las tool calls de `outputs[\"messages\"]`; por eso Emma devuelve toda la lista (1.A).\n- Un evaluator mide lo que escribiste: pruébalo con casos falsos antes de creerle.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Evaluate an application* (`evaluate`), *Define a code evaluator* y *Run evals with pytest*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-2/running-experiments",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-2/code-based-eval",
+  "module-2/lesson-3/run_experiment.py",
+  "module-2/lesson-4/eval_schema_check.py",
+  "module-2/lesson-4/run_eval.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "En evaluate(), ¿qué recibe el target de cada example?",
+   "reverso": "Solo los inputs. Los reference outputs y la metadata no le llegan."
+  },
+  {
+   "frente": "¿Cómo sabe LangSmith qué pasarle a tu evaluator?",
+   "reverso": "Por los nombres de sus parámetros: inputs, outputs, reference_outputs, run o example."
+  },
+  {
+   "frente": "¿Qué pregunta decide si un evaluator debe ser de código?",
+   "reverso": "¿Puedo escribir una función que decida esto de forma confiable? Si sí, código: determinista, rápido, gratis."
+  },
+  {
+   "frente": "schema_before_query cuando Emma nunca usa query_database: ¿qué score y por qué?",
+   "reverso": "1, \"no aplica\": la pregunta no necesitaba la base (p. ej. políticas), así que no se penaliza."
+  },
+  {
+   "frente": "Emma corre primero select * from items y después PRAGMA table_info(items). ¿Score de schema_before_query?",
+   "reverso": "0: la primera query de datos llegó antes que cualquier query de schema. El orden importa."
+  },
+  {
+   "frente": "¿Qué es un experiment y para qué sirve comparar dos?",
+   "reverso": "Una pasada del agente sobre el dataset con sus scores, latencia y costo. Comparar dos muestra regresiones y mejoras."
+  },
+  {
+   "frente": "evaluate vs aevaluate: ¿qué cambia y para qué es max_concurrency?",
+   "reverso": "Misma interfaz; aevaluate es async, recomendado para trabajos grandes. max_concurrency reparte los examples en paralelo."
+  }
+ ]
+}

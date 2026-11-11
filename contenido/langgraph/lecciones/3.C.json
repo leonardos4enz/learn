@@ -1,0 +1,128 @@
+{
+ "mision_id": "3.C",
+ "titulo": "Editar el state en pausa",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Con un breakpoint puedes decir sí o no. Pero a veces la respuesta es \"casi\": el agente entendió\n\"multiplica 2 y 3\" y tú querías 3 y 3. Cancelar y empezar de nuevo es tirar el trabajo hecho.\n\nLo que quieres es **corregir el state durante la pausa** y luego reanudar. Para eso está\n`graph.update_state(thread, update)`.\n\nLa trampa: parece que `update_state` \"pone\" el state que le das, y no es así. Pasa por los\n**reducers**, exactamente igual que el update que devuelve un node."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un asistente sin LLM, pausado antes de responder",
+   "contenido": "import re\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, MessagesState, START, END\n\n# \"Asistente\" sin LLM: multiplica los dos números del último mensaje humano\ndef asistente(state: MessagesState):\n    ultimo = [m for m in state[\"messages\"] if isinstance(m, HumanMessage)][-1]\n    a, b = map(int, re.findall(r\"\\d+\", ultimo.content)[:2])\n    return {\"messages\": [AIMessage(content=f\"{a} x {b} = {a * b}\")]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"asistente\", asistente)\nbuilder.add_edge(START, \"asistente\")\nbuilder.add_edge(\"asistente\", END)\ngraph = builder.compile(interrupt_before=[\"asistente\"], checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"messages\": [HumanMessage(content=\"Multiplica 2 y 3\", id=\"h1\")]}, thread, stream_mode=\"values\"):\n    print([m.content for m in event[\"messages\"]])\nprint(\"next:\", graph.get_state(thread).next)",
+   "notas": "`asistente` toma el último `HumanMessage`, saca los dos números y los multiplica: hace el papel del LLM.\nEl breakpoint va **antes** de `asistente` (en el notebook, `interrupt_before=[\"assistant\"]`).\nAl mensaje inicial le ponemos `id=\"h1\"` para poder referirnos a él después.\nSalida real: `['Multiplica 2 y 3']` y `next: ('asistente',)`.",
+   "resaltar": [
+    7,
+    16,
+    19
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Corregir con update_state (sin id)",
+   "contenido": "# Mensaje SIN id: add_messages lo agrega al final\ngraph.update_state(thread, {\"messages\": [HumanMessage(content=\"No, mejor multiplica 3 y 3\")]})\nprint([m.content for m in graph.get_state(thread).values[\"messages\"]])\nprint(\"next:\", graph.get_state(thread).next)\n\nfor event in graph.stream(None, thread, stream_mode=\"values\"):\n    print([m.content for m in event[\"messages\"]])",
+   "notas": "Se corre después del bloque anterior. El `HumanMessage` nuevo **no** trae `id`.\nPrimero miras cómo quedó el state y luego reanudas con `None`, como en la lección anterior.",
+   "resaltar": [
+    2
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: se agregó, no se sobrescribió",
+   "contenido": "```\n['Multiplica 2 y 3', 'No, mejor multiplica 3 y 3']\nnext: ('asistente',)\n['Multiplica 2 y 3', 'No, mejor multiplica 3 y 3']\n['Multiplica 2 y 3', 'No, mejor multiplica 3 y 3', '3 x 3 = 9']\n```\n\nLe pasaste `{\"messages\": [un mensaje]}` y el state **no** quedó con un solo mensaje: quedaron dos.\n\n`update_state` trata tu dict como si fuera lo que devolvió un node: lo combina con el reducer de\ncada key. `messages` tiene `add_messages`, que agrega al final. Es la regla que ya conoces del M1:\ncon reducer se acumula, sin reducer se sobrescribe. `next` no cambió: sigue tocando `asistente`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Reemplazar: el mismo id",
+   "contenido": "# Mensaje CON el mismo id \"h1\": add_messages lo reemplaza\ngraph.update_state(thread, {\"messages\": [HumanMessage(content=\"Multiplica 3 y 3\", id=\"h1\")]})\nprint([m.content for m in graph.get_state(thread).values[\"messages\"]])\n\nfor event in graph.stream(None, thread, stream_mode=\"values\"):\n    print([m.content for m in event[\"messages\"]])",
+   "notas": "Se corre justo después del primer bloque (state recién pausado), en lugar del bloque anterior.\nAhora el mensaje trae `id=\"h1\"`, el mismo del mensaje original.\n`add_messages` ve que el id ya existe y **reemplaza** ese mensaje en vez de agregar.",
+   "resaltar": [
+    2
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real del reemplazo",
+   "contenido": "```\n['Multiplica 3 y 3']\n['Multiplica 3 y 3']\n['Multiplica 3 y 3', '3 x 3 = 9']\n```\n\nUn solo mensaje humano: el original se cambió. Sigue siendo el reducer el que decide; solo le\ndiste la señal (el id) para que reemplace.\n\nEn el notebook, contra el servidor, se hace igual: toma el último mensaje del state, le cambia el\n`content` dejando su `id`, y llama `client.threads.update_state(thread_id, {\"messages\": last_message})`.\nSalida del notebook original: el mensaje queda como \"No, actually multiply 3 and 3!\" con el mismo id,\ny el resultado es `9`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Un lugar fijo para el humano",
+   "contenido": "Editar el state \"desde fuera\" funciona, pero el grafo no dice dónde ni cuándo entra el humano.\n\nEl notebook propone un node vacío, `human_feedback`, que **no hace nada** (`pass`). Sirve como\nlugar con nombre: el grafo se pausa antes de él, el humano escribe, y ese texto entra al state\n\"como si lo hubiera devuelto\" `human_feedback`. Para eso `update_state` tiene `as_node`."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo con human_feedback",
+   "contenido": "flowchart LR\n  S((START)) --> human_feedback --> asistente --> E((END))\n  class human_feedback clave",
+   "notas": "Versión simplificada. En el notebook, `tools` vuelve a `human_feedback`, así que el humano puede\nintervenir después de cada tool: `human_feedback → assistant → tools → human_feedback`.\nEl breakpoint es `interrupt_before=[\"human_feedback\"]`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "update_state como si fueras un node",
+   "contenido": "import re\nfrom langchain_core.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, MessagesState, START, END\n\ndef human_feedback(state: MessagesState):\n    pass  # no hace nada: solo es el lugar donde se pausa y \"escribe\" el humano\n\ndef asistente(state: MessagesState):\n    ultimo = [m for m in state[\"messages\"] if isinstance(m, HumanMessage)][-1]\n    a, b = map(int, re.findall(r\"\\d+\", ultimo.content)[:2])\n    return {\"messages\": [AIMessage(content=f\"{a} x {b} = {a * b}\")]}\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"human_feedback\", human_feedback)\nbuilder.add_node(\"asistente\", asistente)\nbuilder.add_edge(START, \"human_feedback\")\nbuilder.add_edge(\"human_feedback\", \"asistente\")\nbuilder.add_edge(\"asistente\", END)\ngraph = builder.compile(interrupt_before=[\"human_feedback\"], checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"messages\": [HumanMessage(content=\"Multiplica 2 y 3\")]}, thread, stream_mode=\"values\"):\n    print([m.content for m in event[\"messages\"]])\nprint(\"next:\", graph.get_state(thread).next)\n\n# El humano escribe \"como si fuera\" el node human_feedback\ngraph.update_state(thread, {\"messages\": [HumanMessage(content=\"no, multiplica 3 y 3\")]}, as_node=\"human_feedback\")\nprint(\"next:\", graph.get_state(thread).next)\n\nfor event in graph.stream(None, thread, stream_mode=\"values\"):\n    print([m.content for m in event[\"messages\"]])",
+   "notas": "`human_feedback` no devuelve nada: es solo el punto de pausa.\n`as_node=\"human_feedback\"` registra el update como salida de ese node.\nEn el notebook el texto viene de `input(...)`; aquí está fijo para que el resultado sea siempre el mismo.",
+   "resaltar": [
+    7,
+    20,
+    28
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real y qué hace as_node",
+   "contenido": "```\n['Multiplica 2 y 3']\nnext: ('human_feedback',)\nnext: ('asistente',)\n['Multiplica 2 y 3', 'no, multiplica 3 y 3']\n['Multiplica 2 y 3', 'no, multiplica 3 y 3', '3 x 3 = 9']\n```\n\nAntes del update, `next` es `human_feedback`. Después, `asistente`: con `as_node`, LangGraph da por\nhecho que `human_feedback` ya corrió y devolvió tu mensaje, así que sigue por **su** edge.\n\nSin `as_node` (también lo corrí), `next` se queda en `('human_feedback',)` y al reanudar corre el\nnode vacío. Aquí el final es igual, pero en un grafo donde el node siguiente depende de quién\nescribió el update, `as_node` es lo que elige el camino."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cuántos mensajes quedan?",
+   "contenido": "El asistente del paso 2 está pausado antes de `asistente` con `['Multiplica 2 y 3']`. Corres\n`graph.update_state(thread, {\"messages\": [HumanMessage(content=\"No, mejor multiplica 3 y 3\")]})`\n(sin id) y reanudas con `None`. ¿Cuántos mensajes hay al final y qué contesta el asistente?",
+   "respuesta": "**3 mensajes**: los dos humanos y `'3 x 3 = 9'`. El update pasa por `add_messages`, que **agrega**\nporque el mensaje no trae un id existente. El asistente lee el último `HumanMessage`, así que\nmultiplica 3 y 3.",
+   "ref": 2
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos keys, dos reducers",
+   "contenido": "Otro grafo, pausado antes de `trabajar`. `objetivo` es un `str` sin reducer; `notas` tiene `operator.add`. ¿Qué imprime la última línea?\n\n```python\nimport operator\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    objetivo: str                                  # sin reducer\n    notas: Annotated[list[str], operator.add]      # con reducer\n\ndef trabajar(state: State):\n    return {}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"trabajar\", trabajar)\nbuilder.add_edge(START, \"trabajar\")\nbuilder.add_edge(\"trabajar\", END)\ngraph = builder.compile(interrupt_before=[\"trabajar\"], checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\ngraph.invoke({\"objetivo\": \"2x3\", \"notas\": [\"a\"]}, thread)\nprint(\"pausado:\", graph.get_state(thread).values)\n\ngraph.update_state(thread, {\"objetivo\": \"3x3\", \"notas\": [\"b\"]})\nprint(\"después:\", graph.get_state(thread).values)\n```",
+   "respuesta": "`{'objetivo': '3x3', 'notas': ['a', 'b']}` (salida real). `objetivo` no tiene reducer y se\n**sobrescribe**; `notas` tiene `operator.add` y se **suma**. Es la misma regla que con el update\nde un node: `update_state` no se salta los reducers."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué toca después?",
+   "contenido": "En el grafo `human_feedback → asistente` del paso 9, pausado antes de `human_feedback`, corres\n`update_state(thread, {...}, as_node=\"human_feedback\")`. ¿Qué devuelve `graph.get_state(thread).next`?",
+   "respuesta": "`('asistente',)`. Con `as_node` el update cuenta como la salida de `human_feedback`, así que ese node\nse da por ejecutado y el grafo sigue por su edge. Sin `as_node`, `next` seguiría en\n`('human_feedback',)`.",
+   "ref": 9
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `graph.update_state(thread, update)` edita el state de un thread pausado; luego reanudas con `None`.\n- El update **pasa por los reducers** como el de un node: con `add_messages` se agrega (o reemplaza si el id ya existe); una key sin reducer se sobrescribe.\n- Para corregir un mensaje en vez de añadir otro, mándalo con el **mismo id**.\n- Un node vacío `human_feedback` + `interrupt_before` + `update_state(..., as_node=\"human_feedback\")` le da al humano un lugar fijo en el grafo; el grafo sigue por el edge de ese node.\n- Se apoya en lo de la lección anterior: la pausa es un checkpoint, y `update_state` escribe un checkpoint nuevo encima."
+  }
+ ],
+ "fuentes": [
+  "module-3/edit-state-human-feedback.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué `update_state(thread, {\"messages\": [msg]})` no deja el state con un solo mensaje?",
+   "reverso": "Porque `update_state` pasa por los reducers como el update de un node. `messages` usa `add_messages`, que **agrega** el mensaje al final."
+  },
+  {
+   "frente": "Durante una pausa quieres **cambiar** el mensaje humano, no añadir otro. ¿Qué le pones al mensaje que mandas a `update_state`?",
+   "reverso": "El **mismo id** del mensaje original. `add_messages` reemplaza cuando el id ya existe."
+  },
+  {
+   "frente": "State pausado con `objetivo: str` (sin reducer) y `notas` con `operator.add`. `update_state` con ambas keys: ¿qué pasa con cada una?",
+   "reverso": "`objetivo` se **sobrescribe** y `notas` se **suma**. Misma regla que el update de un node."
+  },
+  {
+   "frente": "¿Para qué sirve un node `human_feedback` que solo hace `pass`?",
+   "reverso": "Es un lugar con nombre para pausar (`interrupt_before`) y para que el texto del humano entre al state como salida de ese node (`as_node`)."
+  },
+  {
+   "frente": "¿Qué cambia `as_node=\"human_feedback\"` en `update_state`?",
+   "reverso": "El update cuenta como salida de ese node: se da por ejecutado y el grafo sigue por **su** edge (`next` pasa al node siguiente)."
+  }
+ ]
+}

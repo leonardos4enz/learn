@@ -1,0 +1,145 @@
+{
+ "mision_id": "2.B",
+ "titulo": "Sandboxes, LocalShell e intérprete",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 2.A el agente solo maneja archivos. Pero muchas tareas piden **correr** algo: un script, los tests, un `pip install`. Otras piden hacer 50 consultas y quedarse solo con el total, sin llenar el contexto con 50 resultados.\n\nPara eso hay dos herramientas que se confunden mucho:\n\n- `execute`: corre comandos de shell. La da el **backend** (sandbox o shell local).\n- `eval`: corre JavaScript en un intérprete embebido. La da un **middleware**, no el backend.\n\nDifieren en qué pueden tocar y en cuánto riesgo traen. Esta lección es para que elijas bien."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "execute y los backends con shell",
+   "contenido": "Un backend con shell agrega una tool más a las de archivos: `execute(command)`. La salida (stdout, stderr y código de salida) vuelve como `ToolMessage`.\n\n| | Sandbox (p. ej. `LangSmithSandbox`) | `LocalShellBackend` |\n|---|---|---|\n| Dónde corren los comandos | En un espacio aislado y temporal | En **tu máquina**, con tus permisos |\n| Aislamiento | Sí (si está bien configurado) | Ninguno |\n| Úsalo para | Producción, código no confiable | Un asistente local donde tocar tu máquina **es** la idea |\n\nEl curso usa el sandbox como **tool** (*sandbox as a tool*): el agente corre fuera y le manda comandos al sandbox. La key del LLM se queda en tu host, no dentro del sandbox. La alternativa (*agent in sandbox*) mete al agente entero, con sus keys, dentro del sandbox."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El sandbox del curso (m2/m2.3_sandbox_agent.py)",
+   "contenido": "from uuid import uuid4\n\nfrom deepagents import create_deep_agent\nfrom deepagents.backends.langsmith import LangSmithSandbox\nfrom langsmith.sandbox import SandboxClient\n\nfrom models import model\n\nclient = SandboxClient()\nls_sandbox = client.create_sandbox(name=f\"lca-deepagents-lab-{uuid4().hex[:8]}\")\nprint(f\"Sandbox: {ls_sandbox.name}  (id: {ls_sandbox.id})\")\nbackend = LangSmithSandbox(sandbox=ls_sandbox)\n\nagent = create_deep_agent(\n    model=model,\n    backend=backend,\n    system_prompt=(\n        \"You are a coding assistant. When asked to run code, write the script \"\n        \"to a file first, then execute it. Show the output in your final answer.\"\n    ),\n)\n\ntry:\n    result = agent.invoke(\n        {\n            \"messages\": [\n                {\n                    \"role\": \"user\",\n                    \"content\": (\n                        \"Write a Python script that prints the first 15 Fibonacci numbers, \"\n                        \"save it to fib.py, and run it.\"\n                    ),\n                }\n            ]\n        }\n    )\n    print(result[\"messages\"][-1].text)\nfinally:\n    client.delete_sandbox(ls_sandbox.name)",
+   "notas": "No lo corrimos: requiere `LANGSMITH_API_KEY` (los sandboxes de LangSmith tienen cuota) y `ANTHROPIC_API_KEY`. Se corre desde la carpeta `python` con `uv run ./m2/m2.3_sandbox_agent.py`.\nSegún el material original, en LangSmith verías `write_file` (crea `fib.py` dentro del sandbox) → `execute` (`python fib.py`) → la respuesta con la salida. Si el script falla, el agente usa `edit_file` y vuelve a `execute`.\nEl `try/finally` borra el sandbox aunque el agente falle: se cobra mientras existe.",
+   "resaltar": [
+    12,
+    39
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "LocalShellBackend: aparece execute",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom pathlib import Path\nfrom deepagents import create_deep_agent\nfrom deepagents.backends import LocalShellBackend\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\n\nbase = Path(__file__).parent / \"trabajo\"\nproyecto = base / \"proyecto\"\nproyecto.mkdir(parents=True, exist_ok=True)\n(base / \"fuera\").mkdir(exist_ok=True)\n(base / \"fuera\" / \"secreto.txt\").write_text(\"clave-falsa-123\", encoding=\"utf-8\")\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"read_file\", {\"file_path\": \"/../fuera/secreto.txt\"}, \"1\"),\n    AIMessage(content=\"Fin.\"),\n])\n\n# El modelo es de guion: el shell solo corre lo que está escrito arriba\nagent = create_deep_agent(model=modelo, backend=LocalShellBackend(root_dir=str(proyecto)))\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Lee el secreto\"}]})\nprint(\"Tools que ve el modelo:\", modelo.tools)\nprint(\"read_file:\", r[\"messages\"][-2].content)",
+   "notas": "Corre solo con el modelo de guion, que nunca pide `execute`. **Nunca** conectes un LLM real a `LocalShellBackend` en tu máquina: podría leer tu `.env`.\nSalida real:\n`Tools que ve el modelo: [..., 'grep', 'execute', 'task']`\n`read_file: Error: Path traversal not allowed: /../fuera/secreto.txt`\nAhora sí está `execute`. Y las tools de archivos respetan `root_dir`: con `virtual_mode=True` (default en Python), salirse con `..` se rechaza.",
+   "resaltar": [
+    47,
+    42
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "root_dir no encierra a execute",
+   "contenido": "`virtual_mode` y `root_dir` solo valen para las tools de **archivos**. `execute` hace otra cosa: le pasa el texto del comando a tu shell (`subprocess.run(command, shell=True, cwd=root_dir)`). El shell arranca en `root_dir`, pero un `cd ..`, un `type ..\\algo` o una ruta absoluta lo sacan de ahí sin que nadie lo revise.\n\nPor eso `LocalShellBackend` puede leer cualquier archivo que tu usuario pueda leer, incluidas keys y `.env`. Sus cambios son permanentes y no hay límite de CPU ni de disco. Si lo usas, ponle HITL (1.D) para aprobar cada `execute`, y nunca lo uses en producción ni con input de terceros."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El intérprete: eval",
+   "contenido": "`CodeInterpreterMiddleware` (paquete `langchain_quickjs`) agrega **una** tool: `eval(code)`. Corre JavaScript en **QuickJS**, un motor embebido en el mismo proceso del agente: no levanta nada en la nube ni abre un shell.\n\n- Tiene la librería estándar de JS: arrays, `Math`, `JSON`, `Map`, `Date`, `async/await`, `console.log`.\n- **No** tiene filesystem, ni red (`fetch`), ni Node, ni paquetes npm.\n- Devuelve el valor de la **última expresión** (como la última línea de una celda de notebook) más lo que imprimas con `console.log`.\n- Las variables sobreviven entre llamadas a `eval`. En Python, con checkpointer, también entre turnos del mismo hilo.\n\nNo es un backend: no cambia dónde viven los archivos ni agrega `execute`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Mini-paso: leer JavaScript sabiendo Python",
+   "contenido": "El modelo escribe el código de `eval` en JavaScript. Para leerlo te basta esta tabla:\n\n| JavaScript | Python |\n|---|---|\n| `const precios = [0.99, 1.29];` | `precios = [0.99, 1.29]` |\n| `precios.reduce((a, b) => a + b, 0)` | `sum(precios)` |\n| `` `Total: ${t}` `` | `f\"Total: {t}\"` |\n| `t.toFixed(2)` | `f\"{t:.2f}\"` |\n| `JSON.parse(s)` | `json.loads(s)` |\n| `filas[0].Name` | `filas[0][\"Name\"]` |\n| `await tools.queryChinook({ sql: \"...\" })` | llamar la tool `query_chinook(sql=\"...\")` |\n\nEjemplo resuelto: `[1, 2, 3].reduce((a, b) => a + b, 0)` empieza con `a = 0` y va sumando cada `b`: 0+1 → 1+2 → 3+3 = **6**."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "eval para calcular",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom langchain_quickjs import CodeInterpreterMiddleware\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\ncodigo_js = \"\"\"\nconst precios = [0.99, 1.29, 0.99, 1.99, 0.99];\nconst promedio = precios.reduce((a, b) => a + b, 0) / precios.length;\n`Promedio: $${promedio.toFixed(2)}`\n\"\"\"\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"eval\", {\"code\": codigo_js}, \"1\"),\n    AIMessage(content=\"El precio promedio es $1.25.\"),\n])\n\nagent = create_deep_agent(model=modelo, middleware=[CodeInterpreterMiddleware()])\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"¿Precio promedio?\"}]})\nprint(\"Tools que ve el modelo:\", modelo.tools)\nprint(\"eval:\", r[\"messages\"][-2].content)",
+   "notas": "El guion pide un `eval` con un promedio. Salida real:\n`Tools que ve el modelo: [..., 'task', 'eval']`\n`eval: <result>Promedio: $1.25</result>`\nNo hay `execute`: el backend sigue siendo `StateBackend`. El cálculo lo hizo QuickJS, no el modelo \"de cabeza\": por eso es más confiable para aritmética.",
+   "resaltar": [
+    44,
+    36
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Programmatic Tool Calling (PTC)",
+   "contenido": "Sin intérprete, cada consulta es un turno: el modelo pide la tool, el resultado entra al contexto como `ToolMessage`, el modelo lo lee y pide la siguiente. Cuatro consultas encadenadas = cinco llamadas al modelo.\n\nCon **PTC**, el JavaScript de `eval` llama tus tools de Python directamente:\n\n- Solo las tools que pongas en la **allowlist** `ptc=[\"query_chinook\"]`. Esa lista es la frontera de seguridad.\n- En JS aparecen como `tools.<nombreEnCamelCase>(input)`: `query_chinook` → `tools.queryChinook`. Son `async`: usa `await`.\n- Devuelven **strings**; si tu tool devuelve JSON, usa `JSON.parse`.\n- Los resultados intermedios se quedan en variables de JS. Al modelo solo le llega el valor final del `eval`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "PTC: tres consultas en un solo eval",
+   "contenido": "import json\nimport sqlite3\nfrom pathlib import Path\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom langchain_quickjs import CodeInterpreterMiddleware\nfrom langchain.tools import tool\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\nDB_PATH = Path(__file__).resolve().parent / \"chinook.db\"\n\n\n@tool\ndef query_chinook(sql: str) -> str:\n    \"\"\"Ejecuta un SELECT en la base Chinook. Devuelve las filas como JSON.\"\"\"\n    conn = sqlite3.connect(DB_PATH)\n    conn.row_factory = sqlite3.Row\n    try:\n        return json.dumps([dict(row) for row in conn.execute(sql).fetchall()])\n    finally:\n        conn.close()\n\n\ncodigo_js = \"\"\"\nconst artista = JSON.parse(await tools.queryChinook({ sql: `\n  SELECT Artist.ArtistId, Artist.Name, SUM(il.UnitPrice * il.Quantity) AS rev\n  FROM InvoiceLine il JOIN Track USING(TrackId) JOIN Album USING(AlbumId)\n  JOIN Artist USING(ArtistId)\n  GROUP BY Artist.ArtistId ORDER BY rev DESC LIMIT 1` }))[0];\n\nconst album = JSON.parse(await tools.queryChinook({ sql: `\n  SELECT Album.AlbumId, Album.Title, SUM(il.UnitPrice * il.Quantity) AS rev\n  FROM InvoiceLine il JOIN Track USING(TrackId) JOIN Album USING(AlbumId)\n  WHERE Album.ArtistId = ${artista.ArtistId}\n  GROUP BY Album.AlbumId ORDER BY rev DESC LIMIT 1` }))[0];\n\nconst track = JSON.parse(await tools.queryChinook({ sql: `\n  SELECT Track.TrackId, Track.Name, SUM(il.Quantity) AS vendidos\n  FROM InvoiceLine il JOIN Track USING(TrackId)\n  WHERE Track.AlbumId = ${album.AlbumId}\n  GROUP BY Track.TrackId ORDER BY vendidos DESC LIMIT 1` }))[0];\n\n`${artista.Name} / ${album.Title} / ${track.Name} (${track.vendidos} vendidos)`\n\"\"\"\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"eval\", {\"code\": codigo_js}, \"1\"),\n    AIMessage(content=\"Listo.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    tools=[query_chinook],\n    middleware=[CodeInterpreterMiddleware(ptc=[\"query_chinook\"])],\n)\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Artista top, su mejor álbum y su track más vendido\"}]})\nprint(\"eval:\", r[\"messages\"][-2].content)\nprint(\"Llamadas al modelo:\", len(modelo.vistos))\nprint(\"Tipos de mensaje:\", [m.type for m in r[\"messages\"]])",
+   "notas": "Usa `chinook.db` (cópiala de `m2/` junto al script). Cada consulta usa el id que devolvió la anterior. Salida real:\n`eval: <result>Iron Maiden / The X Factor / The Aftermath (2 vendidos)</result>`\n`Llamadas al modelo: 2`\n`Tipos de mensaje: ['human', 'ai', 'tool', 'ai']`\nHubo tres `query_chinook`, pero ninguna dejó su propio `ToolMessage`: solo hay uno, el del `eval`. Con tool calls normales serían cuatro llamadas al modelo y tres resultados completos en el contexto.",
+   "resaltar": [
+    53,
+    82
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Intérprete vs shell",
+   "contenido": "| | Intérprete (`eval`) | Shell (`execute`) |\n|---|---|---|\n| Lenguaje | JavaScript (QuickJS) | Cualquier comando o runtime instalado |\n| Paquetes | Ninguno; solo la librería estándar | Los del entorno (`pip install`) |\n| Archivos y red | No directo; solo por tools en `ptc` | Sí (según el sandbox) |\n| Infraestructura | Dentro del proceso del agente | Shell local o un sandbox externo |\n| De dónde sale | `middleware=[CodeInterpreterMiddleware()]` | `backend=` con shell |\n| Mejor para | Cálculos, loops, orquestar tools (PTC) | Scripts, tests, builds, instalar cosas |\n\nRegla corta: lógica y orquestación → intérprete. Paquetes, archivos desde código o comandos → sandbox."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "La tool está en tools= pero no en ptc=",
+   "contenido": "Mismo `query_chinook` del paso 10, pero el middleware va **sin** `ptc=[...]`. El guion pide un `eval` que la llama desde JavaScript:\n\n```python\nimport json\nimport sqlite3\nfrom pathlib import Path\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom langchain_quickjs import CodeInterpreterMiddleware\nfrom langchain.tools import tool\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\nDB_PATH = Path(__file__).resolve().parent / \"chinook.db\"\n\n\n@tool\ndef query_chinook(sql: str) -> str:\n    \"\"\"Ejecuta un SELECT en la base Chinook. Devuelve las filas como JSON.\"\"\"\n    conn = sqlite3.connect(DB_PATH)\n    conn.row_factory = sqlite3.Row\n    try:\n        return json.dumps([dict(row) for row in conn.execute(sql).fetchall()])\n    finally:\n        conn.close()\n\ncodigo_js = \"\"\"\nconst filas = JSON.parse(await tools.queryChinook({ sql: \"SELECT COUNT(*) AS n FROM Artist\" }));\n`Artistas: ${filas[0].n}`\n\"\"\"\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"eval\", {\"code\": codigo_js}, \"1\"),\n    AIMessage(content=\"Listo.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    tools=[query_chinook],\n    middleware=[CodeInterpreterMiddleware()],  # sin ptc=[...]\n)\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"¿Cuántos artistas hay?\"}]})\nprint(\"eval:\", r[\"messages\"][-2].content)\n```\n\n¿Qué devuelve el `eval`?",
+   "respuesta": "Salida real: `<error type=\"ReferenceError\">tools is not defined ...`.\nPasar la tool en `tools=` la hace visible **al modelo** como tool normal. Para que el **JavaScript** la pueda llamar tiene que estar en la allowlist `ptc`. Sin allowlist, el objeto `tools` ni siquiera existe dentro de QuickJS."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "LocalShell: execute fuera de root_dir",
+   "contenido": "El agente del paso 4, con el mismo `root_dir`, pero ahora el guion pide `execute` con un comando que sube un nivel (Windows usa `type`; en Mac o Linux sería `cat ../fuera/secreto.txt`):\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom pathlib import Path\nfrom deepagents import create_deep_agent\nfrom deepagents.backends import LocalShellBackend\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\n\n\nbase = Path(__file__).parent / \"trabajo\"\nproyecto = base / \"proyecto\"\nproyecto.mkdir(parents=True, exist_ok=True)\n(base / \"fuera\").mkdir(exist_ok=True)\n(base / \"fuera\" / \"secreto.txt\").write_text(\"clave-falsa-123\", encoding=\"utf-8\")\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"execute\", {\"command\": r\"type ..\\fuera\\secreto.txt\"}, \"1\"),\n    AIMessage(content=\"Fin.\"),\n])\n\n# El modelo es de guion: el shell solo corre lo que está escrito arriba\nagent = create_deep_agent(model=modelo, backend=LocalShellBackend(root_dir=str(proyecto)))\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Lee el secreto\"}]})\nprint(\"execute:\", r[\"messages\"][-2].content)\n```\n\n¿Qué devuelve `execute`?",
+   "respuesta": "Salida real: `clave-falsa-123` y `[Command succeeded with exit code 0]`.\n`read_file` rechazó `/../fuera/secreto.txt` en el paso 4, pero `execute` no pasa por esa revisión: le entrega el texto a tu shell, que arranca en `root_dir` y se puede salir con `..`. `root_dir` limita las tools de archivos, no el shell. Por eso un LLM real con `LocalShellBackend` podría leer tu `.env`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "eval y la red",
+   "contenido": "Agente con `CodeInterpreterMiddleware()` y nada más. El guion pide este `eval`:\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom langchain_quickjs import CodeInterpreterMiddleware\n\n\nclass ModeloConGuion(BaseChatModel):\n    \"\"\"Hace de LLM: devuelve, en orden, los mensajes de su guion.\"\"\"\n    guion: list\n    vistos: list = []\n    tools: list = []\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        self.tools = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.vistos.append(messages)\n        msg = self.guion[len(self.vistos) - 1]\n        return ChatResult(generations=[ChatGeneration(message=msg)])\n\n\ndef llamar(nombre, args, id):\n    \"\"\"Un AIMessage que pide una tool, como lo haría el LLM.\"\"\"\n    return AIMessage(content=\"\", tool_calls=[{\"name\": nombre, \"args\": args, \"id\": id}])\n\ncodigo_js = \"\"\"\nconst r = await fetch(\"https://example.com\");\nr.status\n\"\"\"\n\nmodelo = ModeloConGuion(guion=[\n    llamar(\"eval\", {\"code\": codigo_js}, \"1\"),\n    AIMessage(content=\"Listo.\"),\n])\n\nagent = create_deep_agent(model=modelo, middleware=[CodeInterpreterMiddleware()])\n\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Revisa example.com\"}]})\nprint(\"eval:\", r[\"messages\"][-2].content)\n```\n\n¿Qué devuelve?",
+   "respuesta": "Salida real: `<error type=\"ReferenceError\">fetch is not defined ...`.\nQuickJS solo trae la librería estándar de JavaScript: no hay `fetch`, ni `fs`, ni Node. La única salida del intérprete hacia afuera son las tools que tú pongas en `ptc`. Si el agente necesita red o paquetes, eso es trabajo de un sandbox con `execute`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: elegir dónde corre el código",
+   "contenido": "Vas a desplegar un agente que recibe repositorios de clientes externos, instala sus dependencias con `pip` y corre `pytest`. ¿Qué le das?\n\nA) `CodeInterpreterMiddleware(ptc=[...])`, porque corre dentro del proceso y no necesita infraestructura.\n\nB) `LocalShellBackend(root_dir=\"/srv/tmp\", virtual_mode=True)`, porque `root_dir` limita lo que pueden tocar los comandos.\n\nC) Un backend de sandbox (p. ej. `LangSmithSandbox`), con el sandbox como tool.\n\nD) `FilesystemBackend` con un permiso `deny` de escritura, porque así el código no puede dañar nada.",
+   "respuesta": "**C.** Hay código no confiable, `pip` y `pytest`: se necesita `execute` **aislado**.\nA: QuickJS solo corre JavaScript, sin `pip` ni archivos. B: `root_dir` no limita a `execute` y no hay aislamiento; nunca en producción. D: `FilesystemBackend` no tiene shell, así que no podría correr nada."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `execute` solo existe si el **backend** tiene shell: un sandbox (aislado) o `LocalShellBackend` (tu máquina, sin aislamiento).\n- `root_dir` y `virtual_mode` limitan las tools de archivos, **no** a `execute`. LocalShell: solo local, con HITL, nunca con input de terceros.\n- El intérprete es `eval` (QuickJS), lo agrega `CodeInterpreterMiddleware`, no el backend: sin archivos, sin red, sin paquetes.\n- Con PTC (`ptc=[...]`), el JS llama tus tools como `tools.camelCase(...)` y al modelo solo le llega el resultado final: menos turnos y menos contexto.\n- Lógica y orquestación → intérprete. Paquetes, tests, comandos → sandbox.\n\nDónde buscarlo en docs: docs.langchain.com → Deep Agents → *Backends* (execution / LocalShellBackend), *Sandboxes* e *Interpreters*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m2/m2.3-sandboxes-and-localshell.html",
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m2/m2.4-interpreter.html",
+  "lca-deepagents/python/m2/m2.3_sandbox_agent.py",
+  "lca-deepagents/python/m2/m2.3_sales_agent.py",
+  "lca-deepagents/python/m2/m2.4_eval_agent.py",
+  "lca-deepagents/python/m2/m2.4_interpreter_agent.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué agrega `execute` y qué agrega `eval` a un Deep Agent?",
+   "reverso": "`execute` lo agrega un backend con shell (sandbox o LocalShell). `eval` lo agrega `CodeInterpreterMiddleware`; no tiene nada que ver con el backend."
+  },
+  {
+   "frente": "`LocalShellBackend(root_dir=X)`: ¿puede `execute` leer un archivo fuera de X?",
+   "reverso": "Sí. `root_dir` limita las tools de archivos; `execute` le pasa el comando a tu shell y un `cd ..` o una ruta absoluta lo saca de X."
+  },
+  {
+   "frente": "¿Por qué un sandbox y no `LocalShellBackend` para un agente en producción?",
+   "reverso": "LocalShell corre con tus permisos y sin aislamiento: puede leer secretos y sus cambios son permanentes. El sandbox aísla el código no confiable."
+  },
+  {
+   "frente": "Con PTC, el `eval` llama 3 tools. ¿Cuántos resultados entran al contexto del modelo?",
+   "reverso": "Uno: el valor final del `eval`. Los resultados intermedios se quedan en variables de JavaScript."
+  },
+  {
+   "frente": "Pasas `query_chinook` en `tools=` pero no en `ptc=`. ¿La puede llamar el JavaScript de `eval`?",
+   "reverso": "No. El modelo sí la ve como tool normal, pero dentro de QuickJS solo existen las tools de la allowlist `ptc`."
+  },
+  {
+   "frente": "¿Puede `eval` hacer `fetch` o leer un archivo?",
+   "reverso": "No directamente: QuickJS solo trae la librería estándar de JS. Solo puede salir a través de las tools que pongas en `ptc`."
+  }
+ ]
+}

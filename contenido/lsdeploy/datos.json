@@ -1,0 +1,336 @@
+{
+ "nombre": "06 Introduction to LangSmith Deployment",
+ "siguiente": "0.A",
+ "modulos": [
+  {
+   "n": 0,
+   "nombre": "Arranque"
+  },
+  {
+   "n": 1,
+   "nombre": "Desplegar tu agente"
+  },
+  {
+   "n": 2,
+   "nombre": "Conectarte con tu agente"
+  },
+  {
+   "n": 3,
+   "nombre": "La UI de Deployment"
+  },
+  {
+   "n": 4,
+   "nombre": "Memoria"
+  },
+  {
+   "n": 5,
+   "nombre": "Auth multi-tenant"
+  },
+  {
+   "n": 6,
+   "nombre": "Deploy de un Deep Agent"
+  }
+ ],
+ "misiones": [
+  {
+   "id": "0.A",
+   "modulo": 0,
+   "titulo": "Bienvenida y setup",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Welcome",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75497192-welcome",
+     "min": 3
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Getting set up python",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/75025171-getting-set-up-python"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.A",
+   "modulo": 1,
+   "titulo": "Conceptos y el agente",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 1 introduction",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75497576-module-1-introduction"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 1 concepts",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74983830-module-1-concepts"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 the agent",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74150859-lesson-1-the-agent"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.B",
+   "modulo": 1,
+   "titulo": "Deploy y usar el tutor",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 deploy",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74150872-lesson-2-deploy"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 use the tutor",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74150880-lesson-3-use-the-tutor"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.A",
+   "modulo": 2,
+   "titulo": "Conectarte y assistants",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 2 introduction",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75497634-module-2-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 connecting",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74150928-lesson-1-connecting"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 assistants",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/75135721-lesson-2-assistants"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.B",
+   "modulo": 2,
+   "titulo": "Conectar la UI y custom routes",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 connecting the ui",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74150940-lesson-3-connecting-the-ui"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 4 custom routes",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74292325-lesson-4-custom-routes"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.A",
+   "modulo": 3,
+   "titulo": "Recorrido por la UI",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 3 introduction",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75497902-module-3-introduction"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Ui walkthrough",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75435083-ui-walkthrough",
+     "min": 6
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.A",
+   "modulo": 4,
+   "titulo": "Memoria: checkpointer, Store y storage APIs",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 4 introduction",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75498254-module-4-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 memory in langgraph",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74983882-lesson-1-memory-in-langgraph"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 accessing storage",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74983893-lesson-2-accessing-storage"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "4.B",
+   "modulo": 4,
+   "titulo": "Backends de Deep Agents",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 memory in deep agents",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74983900-lesson-3-memory-in-deep-agents"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.A",
+   "modulo": 5,
+   "titulo": "Qué es auth y authentication",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 5 introduction",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75498382-module-5-introduction"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 introduction to auth",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74701101-lesson-1-introduction-to-auth"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 authentication",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74701502-lesson-2-authentication"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.B",
+   "modulo": 5,
+   "titulo": "Authorization: conversaciones privadas",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 authorization",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74737783-lesson-3-authorization"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "5.C",
+   "modulo": 5,
+   "titulo": "Auth provider y auth en el tutor",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 4 auth provider",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74738914-lesson-4-auth-provider"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 5 auth on tutor",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/74750927-lesson-5-auth-on-tutor"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "6.A",
+   "modulo": 6,
+   "titulo": "Deploy sin código con la CLI de deepagents",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 6 introduction",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75498502-module-6-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 1 deploying without coding using the deepagents cli",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/75136002-lesson-1-deploying-without-coding-using-the-deepagents-cli"
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 2 exercise deploy the tutor agent",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/75136026-lesson-2-exercise-deploy-the-tutor-agent"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "6.B",
+   "modulo": 6,
+   "titulo": "Tu propia UI",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Lesson 3 bring your own ui",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/multimedia/75136167-lesson-3-bring-your-own-ui"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Conclusion",
+     "url": "https://academy.langchain.com/courses/take/langsmith-deployment/lessons/75498803-conclusion",
+     "min": 1
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  }
+ ],
+ "proyecto": null,
+ "hilos": [],
+ "sesiones": [],
+ "hojas": {},
+ "banco": [],
+ "examenes": []
+}

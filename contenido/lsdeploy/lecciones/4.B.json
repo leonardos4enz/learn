@@ -1,0 +1,137 @@
+{
+ "mision_id": "4.B",
+ "titulo": "Backends de Deep Agents",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Un Deep Agent trabaja con **archivos**: lee `AGENTS.md`, abre skills con `read_file`, escribe notas con `write_file`. En tu laptop eso es el disco. En una deployment no es tan simple:\n\n- El disco del contenedor se reemplaza en cada revisión y no se comparte entre contenedores.\n- Una nota del alumno debería seguir ahí la semana próxima, en cualquier thread.\n- Una nota de trabajo de una tarea solo importa dentro de esa conversación.\n\n¿Dónde viven entonces los \"archivos\" de un Deep Agent desplegado? La respuesta de `deepagents` es el **backend**: la misma interfaz de archivos, apoyada en uno de los tres almacenamientos que viste en 4.A."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué guarda el tutor en cada almacenamiento",
+   "contenido": "`deep_tutor` usa los tres:\n\n| Almacenamiento | Qué guarda | Quién escribe | Quién lee |\n|---|---|---|---|\n| Checkpointer | La conversación de cada thread | LangGraph, solo | LangGraph, solo |\n| Store | El perfil del alumno (nombre, email, metas) | La UI en `/register` | El agente en cada llamada al modelo |\n| Filesystem local | Las lecciones (`skills/`) y `AGENTS.md` | El build de la imagen | El agente, por el backend |\n\nLas lecciones son de **solo lectura** y vienen en la imagen: justo el uso seguro del filesystem. El perfil cambia y tiene que verse en todos los threads: va en el Store."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente del tutor",
+   "contenido": "\"\"\"\nDeep Tutor Agent\n\nTutor agent using create_deep_agent with FilesystemBackend.\n\nPersonality and teaching guidelines are loaded from AGENTS.md via MemoryMiddleware.\nModule skills are loaded from /skills/ via SkillsMiddleware (progressive disclosure).\nThe dynamic prompt injects per-session context: student name, module, and goals.\n\nAssistant context (set per assistant in LangSmith):\n- module_id:       which module to load (e.g. \"module-1\")\n- store_namespace: student's Store namespace (derived from email, e.g. \"jane@example_com\")\n\"\"\"\n\nimport asyncio\nfrom dataclasses import dataclass\nfrom pathlib import Path\n\nfrom deepagents import create_deep_agent\nfrom deepagents.backends.filesystem import FilesystemBackend\nfrom deepagents.middleware.permissions import FilesystemPermission\nfrom langchain.agents.middleware import ModelRequest, dynamic_prompt\nfrom langchain.chat_models import init_chat_model\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\n\n# ---------------------------------------------------------------------------\n# Model\n# ---------------------------------------------------------------------------\nmodel = init_chat_model(\"anthropic:claude-sonnet-4-6\")\n# model = init_chat_model(\"openai:gpt-4o\")\n# model = init_chat_model(\"google_genai:gemini-2.5-flash\")\n\n\n# ---------------------------------------------------------------------------\n# Context schema\n# ---------------------------------------------------------------------------\n@dataclass\nclass ContextSchema:\n    module_id: str = \"module-1\"\n    store_namespace: str = \"\"  # derived from student email\n\n\n# ---------------------------------------------------------------------------\n# Dynamic system prompt\n# ---------------------------------------------------------------------------\n@dynamic_prompt\nasync def tutor_prompt(request: ModelRequest) -> str:\n    module_id = request.runtime.context.module_id\n    store_namespace = request.runtime.context.store_namespace\n    student_name = \"Student\"\n    goals = \"\"\n\n    if store_namespace and request.runtime.store:\n        item = await request.runtime.store.aget((store_namespace,), key=\"profile\")\n        if item is not None:\n            profile = item.value\n            student_name = f\"{profile.get('first_name', '')} {profile.get('last_name', '')}\".strip() or \"Student\"\n            goals = profile.get(\"goals\", \"\")\n\n    goals_line = f\"\\n\\nThe student's goals: {goals}\" if goals else \"\"\n    return (\n        f\"Your student's name is {student_name}. \"\n        f\"They are working on {module_id}.{goals_line}\\n\\n\"\n        f\"On your first response, read /skills/{module_id}/SKILL.md. \"\n        f\"That file contains your teaching instructions — follow them. \"\n        f\"When you need to answer a factual question, read /skills/{module_id}/information.md.\"\n    )\n\n\n# ---------------------------------------------------------------------------\n# MCP tools\n# ---------------------------------------------------------------------------\n_mcp_client = MultiServerMCPClient({\n    \"docs\": {\n        \"url\": \"https://docs.langchain.com/mcp\",\n        \"transport\": \"http\",\n    }\n})\nmcp_tools = asyncio.run(_mcp_client.get_tools())\n\n\n# ---------------------------------------------------------------------------\n# Agent\n# ---------------------------------------------------------------------------\nbackend = FilesystemBackend(\n    root_dir=Path(__file__).parent.parent,\n    virtual_mode=True,\n)\n\ngraph = create_deep_agent(\n    model=model,\n    tools=[*mcp_tools],\n    middleware=[tutor_prompt],\n    backend=backend,\n    memory=[\"/AGENTS.md\"],\n    skills=[\"/skills/\"],\n    permissions=[\n        FilesystemPermission(operations=[\"write\"], paths=[\"/skills/**\"], mode=\"deny\"),\n    ],\n    context_schema=ContextSchema,\n)",
+   "notas": "`python/deep_tutor/agent/agent.py` del curso. **No se corrió aquí**: al importarlo llama al MCP público de docs y el modelo pide `ANTHROPIC_API_KEY`.\nMira tres cosas: `tutor_prompt` lee el perfil del Store en **cada** llamada al modelo (`request.runtime.store.aget`); el `backend` es un `FilesystemBackend` anclado a la carpeta del proyecto; y el permiso niega escribir en `/skills/**`.\n`ContextSchema` es el `context_schema` de LangGraph: lo que cambia por assistant.",
+   "resaltar": [
+    54,
+    85,
+    98
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo único que viene del context",
+   "contenido": "En `tutor_prompt`, del `context` solo salen dos cosas: `module_id` y `store_namespace`.\n\n`store_namespace` es lo **mínimo** que tiene que venir del context: es la llave para encontrar los datos del alumno. Con ella, el nombre y las metas salen del Store.\n\n¿Por qué no poner el nombre y las metas directo en el context del assistant? Porque el context se fija al crear el assistant. Si el alumno cambia sus metas, habría que actualizar cada assistant. El Store se lee en cada llamada al modelo: el cambio se ve en la siguiente respuesta, sin tocar nada más.\n\nEs la idea de 4.A aplicada: el context dice *dónde* buscar; el Store guarda *qué* hay."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "BackendProtocol: una interfaz, tres lugares",
+   "contenido": "`deepagents` define `BackendProtocol`: operaciones de archivos (`ls`, `read`, `write`, `edit`, `grep`, `glob`, `download_files`…). Las tools (`read_file`, `write_file`) y los middleware llaman a esos métodos sin saber qué hay detrás.\n\n| Backend | Se apoya en | Alcance | ¿Sobrevive al redeploy? |\n|---|---|---|---|\n| `FilesystemBackend` | Disco del contenedor | Contenedor | No: viene en la imagen |\n| `StoreBackend` | LangGraph Store | Toda la deployment | Sí |\n| `StateBackend` | State del agente (checkpointer) | Un thread | Sí, dentro del thread |\n\nCambiar de backend cambia **dónde** quedan los datos, no **cómo** los pide el agente. Esto lo viste en el M2 del curso de Deep Agents."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Los backends sin LLM",
+   "contenido": "from pathlib import Path\nfrom deepagents.backends.filesystem import FilesystemBackend\nfrom deepagents.backends.store import StoreBackend\nfrom langgraph.store.memory import InMemoryStore\n\nROOT = Path(r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/deep_tutor\")\n\nfs = FilesystemBackend(root_dir=ROOT, virtual_mode=True)\nprint(\"fs ls /skills/ ->\", [e[\"path\"] for e in fs.ls(\"/skills/\").entries])\nr = fs.read(\"/skills/module-1/SKILL.md\", limit=3)\nprint(\"fs read ->\", r.error, repr(r.file_data[\"content\"][:120]) if r.file_data else None)\ntry:\n    fs.read(\"/../agent/agent.py\")\nexcept ValueError as e:\n    print(\"fs fuera de root ->\", e)\n\nstore = InMemoryStore()\nsb = StoreBackend(namespace=lambda rt: (\"jane_doe\", \"filesystem\"), store=store)\nprint(\"store write ->\", sb.write(\"/notes/plan.md\", \"Repasar m4\").error)\nprint(\"store ls / ->\", sb.ls(\"/\").entries)\nprint(\"store read ->\", sb.read(\"/notes/plan.md\").file_data)\nprint(\"items en el Store:\", [(i.namespace, i.key) for i in store.search((\"jane_doe\",))])",
+   "notas": "Corre en el `.venv` de Deep Agents (deepagents 0.7; el curso fija 0.5.9, la interfaz es la misma). Salida real:\n`fs ls /skills/ -> ['/skills/module-1/', ... '/skills/module-6/']`\n`fs read -> None '---\\nname: module-1\\ndescription: Teaching instructions for Module 1 ...'`\n`fs fuera de root -> Path traversal not allowed` → `virtual_mode=True` ancla `/` a `root_dir`.\n`store ls / -> [{'path': '/notes/', 'is_dir': True, ...}]`\n`items en el Store: [(('jane_doe', 'filesystem'), '/notes/plan.md')]` → con `StoreBackend`, un \"archivo\" es un item del Store: el namespace sale de la función y la key es la ruta.",
+   "resaltar": [
+    8,
+    18,
+    22
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "StateBackend contra StoreBackend entre threads",
+   "contenido": "from langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.store.memory import InMemoryStore\nfrom deepagents import create_deep_agent\nfrom deepagents.backends.state import StateBackend\nfrom deepagents.backends.store import StoreBackend\n\n\nclass Scripted(BaseChatModel):\n    script: list = []\n    i: int = 0\n    @property\n    def _llm_type(self): return \"scripted\"\n    def bind_tools(self, tools, **kw): return self\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        m = self.script[self.i]; self.i += 1\n        return ChatResult(generations=[ChatGeneration(message=m)])\n\n\ndef write(path):\n    return AIMessage(content=\"\", tool_calls=[{\"name\": \"write_file\", \"args\": {\"file_path\": path, \"content\": \"Repasar m4\"}, \"id\": \"w\"}])\n\ndef read(path):\n    return AIMessage(content=\"\", tool_calls=[{\"name\": \"read_file\", \"args\": {\"file_path\": path}, \"id\": \"r\"}])\n\nfor nombre, backend in [(\"StateBackend\", StateBackend()),\n                        (\"StoreBackend\", StoreBackend(namespace=lambda rt: (\"jane_doe\",)))]:\n    model = Scripted(script=[write(\"/notes.md\"), AIMessage(\"ok\"), read(\"/notes.md\"), AIMessage(\"ok\")])\n    agent = create_deep_agent(model=model, backend=backend,\n                              checkpointer=MemorySaver(), store=InMemoryStore())\n    agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"anota\"}]}, {\"configurable\": {\"thread_id\": \"A\"}})\n    r = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"lee\"}]}, {\"configurable\": {\"thread_id\": \"B\"}})\n    tool_msg = [m for m in r[\"messages\"] if m.type == \"tool\"][-1]\n    print(f\"{nombre}: thread B lee /notes.md ->\", tool_msg.content[:80].replace(\"\\n\", \" \"))",
+   "notas": "Un modelo **falso** (`Scripted`) dicta las tool calls: en el thread A escribe `/notes.md`; en el thread B lo lee. Salida real:\n`StateBackend: thread B lee /notes.md -> Error: File '/notes.md' not found`\n`StoreBackend: thread B lee /notes.md -> 1  Repasar m4`\n`StateBackend` guarda los archivos en el state del agente: viajan con el checkpointer, **por thread**. `StoreBackend` los guarda en el Store: los ve cualquier thread con el mismo namespace.",
+   "resaltar": [
+    28,
+    29,
+    34
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Del agente al almacenamiento",
+   "contenido": "graph TD\n  T[tools read_file / write_file] --> P[BackendProtocol]\n  M[MemoryMiddleware y SkillsMiddleware] --> P\n  P --> F[FilesystemBackend: disco del contenedor]\n  P --> S[StoreBackend: Store, toda la deployment]\n  P --> ST[StateBackend: state del thread]\n  class P clave",
+   "notas": "Las tools y los middleware solo hablan con `BackendProtocol`.\nEl backend que pasas a `create_deep_agent(backend=...)` decide a cuál de los tres almacenamientos de 4.A llega cada lectura y escritura."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "AGENTS.md, skills y el permiso de solo lectura",
+   "contenido": "from pathlib import Path\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom deepagents.backends.filesystem import FilesystemBackend\nfrom deepagents.middleware.permissions import FilesystemPermission\n\nROOT = Path(r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/deep_tutor\")\nSEEN = []\n\nclass Scripted(BaseChatModel):\n    script: list = []\n    i: int = 0\n    @property\n    def _llm_type(self): return \"scripted\"\n    def bind_tools(self, tools, **kw): return self\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        SEEN.append(messages)\n        m = self.script[self.i]; self.i += 1\n        return ChatResult(generations=[ChatGeneration(message=m)])\n\nmodel = Scripted(script=[\n    AIMessage(content=\"\", tool_calls=[{\"name\": \"read_file\", \"args\": {\"file_path\": \"/skills/module-1/SKILL.md\", \"limit\": 3}, \"id\": \"r1\"}]),\n    AIMessage(content=\"\", tool_calls=[{\"name\": \"write_file\", \"args\": {\"file_path\": \"/skills/module-1/SKILL.md\", \"content\": \"hackeado\"}, \"id\": \"w1\"}]),\n    AIMessage(content=\"Listo.\"),\n])\nagent = create_deep_agent(\n    model=model,\n    backend=FilesystemBackend(root_dir=ROOT, virtual_mode=True),\n    memory=[\"/AGENTS.md\"],\n    skills=[\"/skills/\"],\n    permissions=[FilesystemPermission(operations=[\"write\"], paths=[\"/skills/**\"], mode=\"deny\")],\n)\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Empecemos el module-1\"}]})\nsystem = SEEN[0][0].text\nprint(\"AGENTS.md en el system prompt:\", \"LangChain\" in system and \"# \" in system, \"| largo:\", len(system))\nprint(\"Nombres de skills en el prompt:\", [s for s in [\"module-1\", \"module-6\"] if s in system])\nprint(\"Texto de information.md en el prompt:\", \"Reference Material\" in system)\nfor m in r[\"messages\"]:\n    if m.type == \"tool\":\n        print(f\"tool {m.name}:\", m.content[:150].replace(\"\\n\", \" | \"))\nprint(\"SKILL.md sigue intacto:\", (ROOT / \"skills/module-1/SKILL.md\").read_text(encoding=\"utf-8\").startswith(\"---\"))",
+   "notas": "El tutor de verdad, con un modelo falso que pide leer un skill y luego escribir encima. Salida real:\n`AGENTS.md en el system prompt: True | largo: 9138` · `Nombres de skills en el prompt: ['module-1', 'module-6']`\n`Texto de information.md en el prompt: False`\n`tool read_file: 1  --- | 2  name: module-1 | ...` · `tool write_file: Error: permission denied for write on /skills/module-1/SKILL.md`\n`SKILL.md sigue intacto: True`",
+   "resaltar": [
+    31,
+    32,
+    33
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "MemoryMiddleware y SkillsMiddleware",
+   "contenido": "`create_deep_agent` arma dos middleware que cargan archivos por el backend:\n\n- **`memory=[\"/AGENTS.md\"]` → MemoryMiddleware**: mete el contenido completo de `AGENTS.md` en el system prompt de **cada** llamada. Es la personalidad del tutor.\n- **`skills=[\"/skills/\"]` → SkillsMiddleware**: hace `ls` y `download_files` para encontrar cada `SKILL.md`, pero al prompt solo mete **nombre y descripción**. El contenido completo lo lee el agente cuando lo necesita, con `read_file`. Eso es *progressive disclosure*: el modelo sabe que el skill existe sin pagar sus tokens.\n\nEn el paso 9 lo viste: los nombres `module-1…module-6` están en el prompt, pero el texto de `information.md` no.\n\n`tutor_prompt` le dice al agente qué skill leer en su primer turno: `/skills/{module_id}/SKILL.md`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: notas del alumno en una deployment",
+   "contenido": "Quieres que tu Deep Agent desplegado guarde notas del alumno en `/notes/` y que el alumno las vea en cualquier conversación, también después del próximo deploy. Hoy usa `FilesystemBackend`. ¿Qué cambias?\n\nA) Nada: el disco del contenedor es permanente.\nB) `StateBackend`, porque se guarda con el checkpointer.\nC) `StoreBackend` (por ejemplo, para la ruta `/notes/`), con un namespace por alumno.\nD) Pedir las notas por el SDK con `client.files.read`.",
+   "respuesta": "**C.** El Store vive en el Postgres de la deployment: lo ven todos los threads y sobrevive a las revisiones. Con un namespace por alumno, cada uno ve lo suyo.\nA: lo escrito en el disco en runtime se pierde al cambiar de contenedor o de revisión. B: `StateBackend` es por thread; otra conversación no lo ve. D: el SDK no llega al filesystem y no existe `client.files`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Variación: StateBackend en el mismo thread",
+   "contenido": "Tomas el código del paso 7 y cambias solo la lectura: ahora el agente lee `/notes.md` en el **mismo** thread A donde lo escribió:\n\n```python\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.store.memory import InMemoryStore\nfrom deepagents import create_deep_agent\nfrom deepagents.backends.state import StateBackend\nfrom deepagents.backends.store import StoreBackend\n\n\nclass Scripted(BaseChatModel):\n    script: list = []\n    i: int = 0\n    @property\n    def _llm_type(self): return \"scripted\"\n    def bind_tools(self, tools, **kw): return self\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        m = self.script[self.i]; self.i += 1\n        return ChatResult(generations=[ChatGeneration(message=m)])\n\n\ndef write(path):\n    return AIMessage(content=\"\", tool_calls=[{\"name\": \"write_file\", \"args\": {\"file_path\": path, \"content\": \"Repasar m4\"}, \"id\": \"w\"}])\n\ndef read(path):\n    return AIMessage(content=\"\", tool_calls=[{\"name\": \"read_file\", \"args\": {\"file_path\": path}, \"id\": \"r\"}])\n\nfor nombre, backend in [(\"StateBackend\", StateBackend()),\n                        (\"StoreBackend\", StoreBackend(namespace=lambda rt: (\"jane_doe\",)))]:\n    model = Scripted(script=[write(\"/notes.md\"), AIMessage(\"ok\"), read(\"/notes.md\"), AIMessage(\"ok\")])\n    agent = create_deep_agent(model=model, backend=backend,\n                              checkpointer=MemorySaver(), store=InMemoryStore())\n    agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"anota\"}]}, {\"configurable\": {\"thread_id\": \"A\"}})\n    r = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"lee\"}]}, {\"configurable\": {\"thread_id\": \"A\"}})\n    tool_msg = [m for m in r[\"messages\"] if m.type == \"tool\"][-1]\n    print(f\"{nombre}: thread A lee /notes.md ->\", tool_msg.content[:80].replace(\"\\n\", \" \"))\n```\n\n¿Qué imprime cada backend?",
+   "respuesta": "Salida real: `StateBackend: thread A lee /notes.md -> 1  Repasar m4` y `StoreBackend: thread A lee /notes.md -> 1  Repasar m4`.\nDentro del mismo thread los dos encuentran el archivo: `StateBackend` lo tiene en el state de A (guardado por el checkpointer). La diferencia solo aparece **entre** threads, como en el paso 7."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "El admin cambia las metas a mitad de la conversación",
+   "contenido": "En el agente del paso 3, un alumno lleva 20 minutos en el thread del module-2. Mientras tanto, un admin corre `client.store.put_item((\"jane@example_com\",), key=\"profile\", value={..., \"goals\": \"Prepararme para el examen LCAE\"})`. El alumno manda otro mensaje. ¿El tutor ya ve las metas nuevas? ¿Por qué?",
+   "respuesta": "Sí. `tutor_prompt` es un `@dynamic_prompt`: se ejecuta antes de **cada** llamada al modelo y lee el perfil del Store en ese momento. No hay copia guardada en el assistant ni en el thread. Lo único que tiene que seguir igual es el `store_namespace` del context, para encontrar el mismo item.",
+   "ref": 3
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El tutor reparte: conversación en el **checkpointer**, perfil en el **Store**, lecciones de solo lectura en el **filesystem** de la imagen.\n- `store_namespace` es lo mínimo que viene del context; el resto del perfil se lee del Store en cada llamada al modelo.\n- `BackendProtocol` es una interfaz de archivos; `FilesystemBackend` (contenedor), `StoreBackend` (deployment) y `StateBackend` (thread) deciden dónde quedan.\n- `MemoryMiddleware` pone `AGENTS.md` completo en el prompt; `SkillsMiddleware` solo nombres y descripciones (*progressive disclosure*).\n- En una deployment, escribe en el filesystem solo lo que puedes perder; lo que debe durar va al Store.\n\n**Dónde buscarlo en docs:** docs.langchain.com → Deep Agents → *Backends* (y *Skills*, *Memory*)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m4/m4.3-deepagents-backends.html",
+  "lca-deployment/python/deep_tutor/agent/agent.py",
+  "lca-deployment/thinkific/src/m4/m4.3-deepagents-backends.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué las lecciones del tutor pueden vivir en el filesystem y el perfil del alumno no?",
+   "reverso": "Las lecciones son de solo lectura y vienen en la imagen. El perfil cambia y debe verse en todos los threads y sobrevivir al redeploy: va al Store."
+  },
+  {
+   "frente": "Con StateBackend, el agente escribe /notes.md en el thread A. ¿Lo ve en el thread B?",
+   "reverso": "No. StateBackend guarda los archivos en el state del agente, que es por thread. Con StoreBackend sí lo vería."
+  },
+  {
+   "frente": "Cambias FilesystemBackend por StoreBackend. ¿Qué cambia en las tools y los middleware?",
+   "reverso": "Nada: llaman a los mismos métodos de BackendProtocol (ls, read, write...). Solo cambia dónde quedan los datos."
+  },
+  {
+   "frente": "¿Qué mete SkillsMiddleware en el system prompt y por qué no más?",
+   "reverso": "Solo nombre y descripción de cada skill. El contenido se lee con read_file cuando hace falta (progressive disclosure): ahorra tokens."
+  },
+  {
+   "frente": "¿Por qué store_namespace tiene que venir del context y el nombre del alumno no?",
+   "reverso": "Es la llave para encontrar el perfil en el Store. Con ella, nombre y metas se leen del Store en cada llamada y siempre están al día."
+  },
+  {
+   "frente": "¿Qué hace virtual_mode=True en FilesystemBackend?",
+   "reverso": "Ancla las rutas a root_dir: /skills/ es la carpeta skills del proyecto, y salir de root_dir (path traversal) se rechaza."
+  }
+ ]
+}

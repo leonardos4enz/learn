@@ -1,0 +1,102 @@
+{
+ "mision_id": "4.C",
+ "titulo": "Map-reduce dinámico",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 4.A las ramas estaban escritas en los edges: dos búsquedas, dos nodes, dos `add_edge`. El número de ramas lo fijabas tú al armar el grafo.\n\nPero muchas veces el número sale de los **datos**: un LLM te da una lista de subtemas y quieres un chiste por cada uno. Pueden ser 3 o pueden ser 7; no lo sabes cuando compilas.\n\nEso es **map-reduce**:\n\n- **Map**: una rama por elemento, todas en paralelo.\n- **Reduce**: juntar los resultados de todas las ramas en un paso final."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La pieza nueva: Send",
+   "contenido": "Un conditional edge normalmente devuelve el **nombre** del siguiente node. Ahora puede devolver una **lista de `Send`**:\n\n```python\nSend(\"generate_joke\", {\"subject\": s})\n```\n\nCada `Send` crea una tarea del node `generate_joke` con **ese** input. Tres `Send` = tres tareas en el mismo superstep.\n\nEl input del `Send` no tiene que parecerse al state del grafo: es el state privado de esa rama. Aquí cada rama recibe solo su `subject`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Map-reduce de chistes, sin LLM",
+   "contenido": "import operator\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.types import Send\n\n# Sin LLM: subtemas y chistes \"de mentira\" para ver solo la mecánica\nSUBTEMAS = {\n    \"animals\": [\"mammals\", \"reptiles\", \"birds\"],\n    \"programming\": [\"python\", \"javascript\", \"rust\", \"sql\", \"git\"],\n}\n\nclass OverallState(TypedDict):\n    topic: str\n    subjects: list\n    jokes: Annotated[list, operator.add]  # aquí se juntan los chistes de todas las ramas\n    best_selected_joke: str\n\nclass JokeState(TypedDict):\n    subject: str  # el state privado de cada rama: solo su subtema\n\ndef generate_topics(state: OverallState):\n    return {\"subjects\": SUBTEMAS[state[\"topic\"]]}\n\ndef continue_to_jokes(state: OverallState):\n    # Map: un Send por subtema. Cuántos hay se sabe hasta este momento.\n    return [Send(\"generate_joke\", {\"subject\": s}) for s in state[\"subjects\"]]\n\ndef generate_joke(state: JokeState):\n    return {\"jokes\": [f\"Chiste sobre {state['subject']}\"]}\n\ndef best_joke(state: OverallState):\n    # Reduce: aquí el notebook le pide al LLM el mejor; nosotros elegimos el más corto\n    return {\"best_selected_joke\": min(state[\"jokes\"], key=len)}\n\nbuilder = StateGraph(OverallState)\nbuilder.add_node(\"generate_topics\", generate_topics)\nbuilder.add_node(\"generate_joke\", generate_joke)\nbuilder.add_node(\"best_joke\", best_joke)\nbuilder.add_edge(START, \"generate_topics\")\nbuilder.add_conditional_edges(\"generate_topics\", continue_to_jokes, [\"generate_joke\"])\nbuilder.add_edge(\"generate_joke\", \"best_joke\")\nbuilder.add_edge(\"best_joke\", END)\napp = builder.compile()\n\nfor s in app.stream({\"topic\": \"animals\"}):\n    print(s)",
+   "notas": "Los subtemas y los chistes son de mentira (un dict y un f-string) para ver solo la mecánica.\n`continue_to_jokes` es la función del conditional edge: devuelve un `Send` por subtema.\nSalida real:\n```\n{'generate_topics': {'subjects': ['mammals', 'reptiles', 'birds']}}\n{'generate_joke': {'jokes': ['Chiste sobre mammals']}}\n{'generate_joke': {'jokes': ['Chiste sobre reptiles']}}\n{'generate_joke': {'jokes': ['Chiste sobre birds']}}\n{'best_joke': {'best_selected_joke': 'Chiste sobre birds'}}\n```",
+   "resaltar": [
+    16,
+    27,
+    41
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo compilado tiene UN generate_joke",
+   "contenido": "graph TD\n  S([START]) --> generate_topics\n  generate_topics -.-> generate_joke\n  generate_joke --> best_joke\n  best_joke --> E([END])\n  class generate_joke clave",
+   "notas": "Esto es lo que dibuja `app.get_graph()`: un solo `generate_joke`, con un edge punteado (condicional).\nLas copias no existen al compilar: aparecen al correr, una por cada `Send`.\nEl tercer argumento de `add_conditional_edges`, `[\"generate_joke\"]`, solo le dice al grafo a qué nodes **puede** ir ese edge."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué hace cada pieza",
+   "contenido": "- **`generate_topics`**: escribe la lista `subjects`. Aquí se decide N.\n- **`continue_to_jokes`** (map): lee `subjects` y crea N `Send`.\n- **`generate_joke`**: recibe `JokeState` (`{\"subject\": ...}`), no el `OverallState`. Escribe en `jokes`.\n- **`jokes`** lleva `operator.add`: las N tareas escriben esa key en el mismo superstep, como las ramas de 4.A.\n- **`best_joke`** (reduce): corre **una vez**, en el superstep siguiente, con los N chistes ya juntos."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "La versión del notebook, con LLM",
+   "contenido": "En el notebook las tres funciones llaman a `gpt-4o` con `with_structured_output`: `generate_topics` pide 3 subtemas (`Subjects`), `generate_joke` pide un chiste (`Joke`) y `best_joke` pide el **id** del mejor (`BestJoke`). La forma del grafo es idéntica.\n\nSalida del notebook original (no la corrí aquí):\n\n```\n{'generate_topics': {'subjects': ['mammals', 'reptiles', 'birds']}}\n{'generate_joke': {'jokes': [\"Why don't mammals ever get lost? ...\"]}}\n{'generate_joke': {'jokes': [\"Why don't alligators like fast food? ...\"]}}\n{'generate_joke': {'jokes': [\"Why do birds fly south for the winter? ...\"]}}\n{'best_joke': {'best_selected_joke': \"Why don't alligators like fast food? Because they can't catch it!\"}}\n```"
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: cinco subtemas",
+   "contenido": "Es el map-reduce de chistes del paso 3 sin tocar el grafo: solo cambias el input a `{\"topic\": \"programming\"}`, y `SUBTEMAS[\"programming\"]` tiene 5 elementos. Código completo:\n\n```python\nimport operator\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.types import Send\n\n# Sin LLM: subtemas y chistes \"de mentira\" para ver solo la mecánica\nSUBTEMAS = {\n    \"animals\": [\"mammals\", \"reptiles\", \"birds\"],\n    \"programming\": [\"python\", \"javascript\", \"rust\", \"sql\", \"git\"],\n}\n\nclass OverallState(TypedDict):\n    topic: str\n    subjects: list\n    jokes: Annotated[list, operator.add]  # aquí se juntan los chistes de todas las ramas\n    best_selected_joke: str\n\nclass JokeState(TypedDict):\n    subject: str  # el state privado de cada rama: solo su subtema\n\ndef generate_topics(state: OverallState):\n    return {\"subjects\": SUBTEMAS[state[\"topic\"]]}\n\ndef continue_to_jokes(state: OverallState):\n    # Map: un Send por subtema. Cuántos hay se sabe hasta este momento.\n    return [Send(\"generate_joke\", {\"subject\": s}) for s in state[\"subjects\"]]\n\ndef generate_joke(state: JokeState):\n    return {\"jokes\": [f\"Chiste sobre {state['subject']}\"]}\n\ndef best_joke(state: OverallState):\n    # Reduce: aquí el notebook le pide al LLM el mejor; nosotros elegimos el más corto\n    return {\"best_selected_joke\": min(state[\"jokes\"], key=len)}\n\nbuilder = StateGraph(OverallState)\nbuilder.add_node(\"generate_topics\", generate_topics)\nbuilder.add_node(\"generate_joke\", generate_joke)\nbuilder.add_node(\"best_joke\", best_joke)\nbuilder.add_edge(START, \"generate_topics\")\nbuilder.add_conditional_edges(\"generate_topics\", continue_to_jokes, [\"generate_joke\"])\nbuilder.add_edge(\"generate_joke\", \"best_joke\")\nbuilder.add_edge(\"best_joke\", END)\napp = builder.compile()\n\nfor s in app.stream({\"topic\": \"programming\"}):\n    print(s)\n```\n\n¿Cuántas veces corre `generate_joke`? ¿Y `best_joke`?",
+   "respuesta": "`generate_joke` corre **5 veces** y `best_joke` **una**. El número de ramas no se fija al compilar: lo decide `continue_to_jokes` cada vez que corre, según la lista. Salida real: 5 líneas `{'generate_joke': ...}` (python, javascript, rust, sql, git) y luego `{'best_joke': {'best_selected_joke': 'Chiste sobre sql'}}`. `best_joke` corre una sola vez porque las 5 tareas están en el mismo superstep."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: lista vacía",
+   "contenido": "Al map-reduce de chistes del paso 3 le agregas el tema `\"vacio\": []` a `SUBTEMAS` y haces `app.invoke({\"topic\": \"vacio\"})`. Código completo:\n\n```python\nimport operator\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.types import Send\n\n# Sin LLM: subtemas y chistes \"de mentira\" para ver solo la mecánica\nSUBTEMAS = {\n    \"animals\": [\"mammals\", \"reptiles\", \"birds\"],\n    \"programming\": [\"python\", \"javascript\", \"rust\", \"sql\", \"git\"],\n    \"vacio\": [],\n}\n\nclass OverallState(TypedDict):\n    topic: str\n    subjects: list\n    jokes: Annotated[list, operator.add]  # aquí se juntan los chistes de todas las ramas\n    best_selected_joke: str\n\nclass JokeState(TypedDict):\n    subject: str  # el state privado de cada rama: solo su subtema\n\ndef generate_topics(state: OverallState):\n    return {\"subjects\": SUBTEMAS[state[\"topic\"]]}\n\ndef continue_to_jokes(state: OverallState):\n    # Map: un Send por subtema. Cuántos hay se sabe hasta este momento.\n    return [Send(\"generate_joke\", {\"subject\": s}) for s in state[\"subjects\"]]\n\ndef generate_joke(state: JokeState):\n    return {\"jokes\": [f\"Chiste sobre {state['subject']}\"]}\n\ndef best_joke(state: OverallState):\n    # Reduce: aquí el notebook le pide al LLM el mejor; nosotros elegimos el más corto\n    return {\"best_selected_joke\": min(state[\"jokes\"], key=len)}\n\nbuilder = StateGraph(OverallState)\nbuilder.add_node(\"generate_topics\", generate_topics)\nbuilder.add_node(\"generate_joke\", generate_joke)\nbuilder.add_node(\"best_joke\", best_joke)\nbuilder.add_edge(START, \"generate_topics\")\nbuilder.add_conditional_edges(\"generate_topics\", continue_to_jokes, [\"generate_joke\"])\nbuilder.add_edge(\"generate_joke\", \"best_joke\")\nbuilder.add_edge(\"best_joke\", END)\napp = builder.compile()\n\nprint(app.invoke({\"topic\": \"vacio\"}))\n```\n\n¿Corre `best_joke`? ¿Qué devuelve `invoke`?",
+   "respuesta": "`best_joke` **no** corre. `continue_to_jokes` devuelve `[]`: cero `Send`, cero tareas, y nadie activa a `best_joke`. El grafo se detiene ahí. Salida real: `{'topic': 'vacio', 'subjects': [], 'jokes': []}` (sin `best_selected_joke`). Si un reduce tiene que correr siempre, revisa este caso."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: leer el topic en la rama",
+   "contenido": "En el map-reduce de chistes del paso 3 quieres que cada chiste mencione el tema general, y cambias `generate_joke` (la línea con `# <- cambio`). Código completo:\n\n```python\nimport operator\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.types import Send\n\n# Sin LLM: subtemas y chistes \"de mentira\" para ver solo la mecánica\nSUBTEMAS = {\n    \"animals\": [\"mammals\", \"reptiles\", \"birds\"],\n    \"programming\": [\"python\", \"javascript\", \"rust\", \"sql\", \"git\"],\n}\n\nclass OverallState(TypedDict):\n    topic: str\n    subjects: list\n    jokes: Annotated[list, operator.add]  # aquí se juntan los chistes de todas las ramas\n    best_selected_joke: str\n\nclass JokeState(TypedDict):\n    subject: str  # el state privado de cada rama: solo su subtema\n\ndef generate_topics(state: OverallState):\n    return {\"subjects\": SUBTEMAS[state[\"topic\"]]}\n\ndef continue_to_jokes(state: OverallState):\n    # Map: un Send por subtema. Cuántos hay se sabe hasta este momento.\n    return [Send(\"generate_joke\", {\"subject\": s}) for s in state[\"subjects\"]]\n\ndef generate_joke(state: JokeState):\n    return {\"jokes\": [f\"{state['topic']}: {state['subject']}\"]}  # <- cambio\n\ndef best_joke(state: OverallState):\n    # Reduce: aquí el notebook le pide al LLM el mejor; nosotros elegimos el más corto\n    return {\"best_selected_joke\": min(state[\"jokes\"], key=len)}\n\nbuilder = StateGraph(OverallState)\nbuilder.add_node(\"generate_topics\", generate_topics)\nbuilder.add_node(\"generate_joke\", generate_joke)\nbuilder.add_node(\"best_joke\", best_joke)\nbuilder.add_edge(START, \"generate_topics\")\nbuilder.add_conditional_edges(\"generate_topics\", continue_to_jokes, [\"generate_joke\"])\nbuilder.add_edge(\"generate_joke\", \"best_joke\")\nbuilder.add_edge(\"best_joke\", END)\napp = builder.compile()\n\nprint(app.invoke({\"topic\": \"animals\"}))\n```\n\n¿Qué pasa con `topic = \"animals\"`?",
+   "respuesta": "`KeyError: 'topic'` en la tarea `generate_joke`. La rama recibe **solo** el dict del `Send`, `{\"subject\": s}`, no el `OverallState`. Arreglo: mándalo en el `Send`: `Send(\"generate_joke\", {\"subject\": s, \"topic\": state[\"topic\"]})` (y agrega `topic` a `JokeState`). Es la misma regla que en 4.B: cada pieza solo ve lo que le pasas."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: sin reducer en jokes",
+   "contenido": "En el map-reduce de chistes del paso 3 cambias `jokes: Annotated[list, operator.add]` por `jokes: list` (la línea con `# <- sin reducer`) y agregas un tema `\"uno\": [\"cats\"]`. El grafo compila. Pruebas dos casos: `\"uno\"` (un subtema) y `\"animals\"` (tres). Código completo:\n\n```python\nimport operator\nfrom typing import Annotated\nfrom typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\nfrom langgraph.types import Send\n\n# Sin LLM: subtemas y chistes \"de mentira\" para ver solo la mecánica\nSUBTEMAS = {\n    \"animals\": [\"mammals\", \"reptiles\", \"birds\"],\n    \"programming\": [\"python\", \"javascript\", \"rust\", \"sql\", \"git\"],\n    \"uno\": [\"cats\"],\n}\n\nclass OverallState(TypedDict):\n    topic: str\n    subjects: list\n    jokes: list  # <- sin reducer\n    best_selected_joke: str\n\nclass JokeState(TypedDict):\n    subject: str  # el state privado de cada rama: solo su subtema\n\ndef generate_topics(state: OverallState):\n    return {\"subjects\": SUBTEMAS[state[\"topic\"]]}\n\ndef continue_to_jokes(state: OverallState):\n    # Map: un Send por subtema. Cuántos hay se sabe hasta este momento.\n    return [Send(\"generate_joke\", {\"subject\": s}) for s in state[\"subjects\"]]\n\ndef generate_joke(state: JokeState):\n    return {\"jokes\": [f\"Chiste sobre {state['subject']}\"]}\n\ndef best_joke(state: OverallState):\n    # Reduce: aquí el notebook le pide al LLM el mejor; nosotros elegimos el más corto\n    return {\"best_selected_joke\": min(state[\"jokes\"], key=len)}\n\nbuilder = StateGraph(OverallState)\nbuilder.add_node(\"generate_topics\", generate_topics)\nbuilder.add_node(\"generate_joke\", generate_joke)\nbuilder.add_node(\"best_joke\", best_joke)\nbuilder.add_edge(START, \"generate_topics\")\nbuilder.add_conditional_edges(\"generate_topics\", continue_to_jokes, [\"generate_joke\"])\nbuilder.add_edge(\"generate_joke\", \"best_joke\")\nbuilder.add_edge(\"best_joke\", END)\napp = builder.compile()\n\n# Caso 1: un solo subtema\nprint(app.invoke({\"topic\": \"uno\"}))\n\n# Caso 2: tres subtemas\nprint(app.invoke({\"topic\": \"animals\"}))\n```\n\n¿Qué pasa en cada uno?",
+   "respuesta": "1. **Funciona**: `{'topic': 'uno', 'subjects': ['cats'], 'jokes': ['Chiste sobre cats'], 'best_selected_joke': 'Chiste sobre cats'}`.\n2. **Truena**: `InvalidUpdateError: At key 'jokes': Can receive only one value per step.`\nCon un solo `Send` hay un solo valor. Como N se decide al correr, el error solo sale cuando los datos traen 2 o más: compilar bien no prueba nada."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Map-reduce**: map = una rama por elemento, en paralelo; reduce = un node que junta todo.\n- Un conditional edge que devuelve una lista de **`Send(node, input)`** crea N tareas **al correr**. El grafo compilado tiene un solo node.\n- Cada tarea recibe **solo** su input del `Send`, no el state del grafo.\n- La key donde escriben las N tareas necesita **reducer**: es fan-in en un mismo superstep, como en 4.A.\n- El reduce corre una vez. Con cero `Send` no corre nada después."
+  }
+ ],
+ "fuentes": [
+  "module-4/map-reduce.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿En qué momento se decide cuántas ramas crea `Send`: al compilar o al correr?",
+   "reverso": "Al correr. La función del conditional edge devuelve un `Send` por elemento; el grafo compilado tiene un solo node destino."
+  },
+  {
+   "frente": "¿Qué state recibe el node destino de un `Send(\"generate_joke\", {\"subject\": s})`?",
+   "reverso": "Solo `{\"subject\": s}`. No ve el state del grafo: si lee otra key, `KeyError`. Lo que necesite, va en el `Send`."
+  },
+  {
+   "frente": "Map-reduce sin reducer en la key de resultados: ¿por qué puede pasar tus pruebas y fallar después?",
+   "reverso": "Con 1 `Send` hay un solo valor y funciona. Con 2 o más, `InvalidUpdateError`. N depende de los datos."
+  },
+  {
+   "frente": "Hay 5 `Send` a `generate_joke`, y `generate_joke → best_joke`. ¿Cuántas veces corre `best_joke`?",
+   "reverso": "Una. Las 5 tareas están en el mismo superstep; `best_joke` corre en el siguiente con todo ya junto."
+  },
+  {
+   "frente": "La función del conditional edge devuelve `[]` (cero `Send`). ¿Qué pasa?",
+   "reverso": "No se activa ningún node: el grafo termina ahí y el reduce no corre."
+  },
+  {
+   "frente": "¿Cuándo usas `Send` en vez de varios `add_edge` en paralelo (4.A)?",
+   "reverso": "Cuando el número de ramas sale de los datos y no lo sabes al armar el grafo. Con ramas fijas y conocidas bastan los edges."
+  }
+ ]
+}

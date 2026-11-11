@@ -1,0 +1,99 @@
+{
+ "mision_id": "4.B",
+ "titulo": "Subagents dinámicos",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 4.A el editor llamaba `task` 4 veces: 4 géneros caben en la cabeza del modelo. Ahora el trabajo es revisar\n**1,000 transcripts**, la misma tarea en cada uno.\n\nSi el modelo lleva la cuenta, nada garantiza que llegue al 1,000: puede negarse, partir en rangos y perder el hilo,\no parar en el 75 y decir \"listo\". Su contexto se va llenando mientras tanto.\n\nEl problema no es el subagent. Es **quién enumera la lista**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Orquestación programática",
+   "contenido": "La idea de *dynamic subagents*: en vez de que el modelo emita `task` turno por turno, **escribe un script** que lo hace:\n\n```python\n# el modelo enumera y tiene que recordar dónde va\ntask(description=\"resume el transcript 1 de 1,000\")\ntask(description=\"resume el transcript 2 de 1,000\")\n\n# escrito una vez, lo corre el código: el loop es la garantía\nfor t in transcripts:\n    task(description=f\"resume {t}\")\n```\n\n`task` es **el mismo**. Cambia dónde vive la decisión de seguir: en la memoria del modelo o en un `for`.\nEs la técnica *recursive language models* (RLM): partir, llamar, combinar. LangChain la llama *recursive agents*."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dónde corre ese script",
+   "contenido": "En el intérprete de 2.B: `CodeInterpreterMiddleware` (QuickJS) agrega la tool `eval`, que corre **JavaScript** sin\nred ni disco.\n\n- Con `ptc=[...]` el JS puede llamar esas tools como `await tools.readFile({...})` (nombre en **camelCase**).\n- Con `subagents=True` (el **default**) aparece además una función global `await task({description, subagentType})`\n  que llama **la misma** tool `task`: cada llamada es una corrida nueva y aislada del subagent.\n- El middleware agrega al system prompt una pista: si el usuario dice **\"workflow\"**, escribe código que despache\n  subagents. Es una instrucción de prompt, no un interruptor."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Ejemplo resuelto: un workflow sobre 5 libros",
+   "contenido": "import json\nimport re\nfrom pathlib import Path\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom deepagents import create_deep_agent\nfrom deepagents.backends import FilesystemBackend\nfrom langchain_quickjs import CodeInterpreterMiddleware\n\n\nclass Guion(BaseChatModel):\n    \"\"\"Modelo falso del agente principal: devuelve sus respuestas en orden.\"\"\"\n    guion: list\n    i: int = 0\n\n    @property\n    def _llm_type(self):\n        return \"guion\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        r = self.guion[self.i]\n        self.i += 1\n        return ChatResult(generations=[ChatGeneration(message=r)])\n\n\nclass Escaner(BaseChatModel):\n    \"\"\"Modelo falso del subagent: busca palabras modernas en el texto que recibe.\"\"\"\n    llamadas: int = 0\n\n    @property\n    def _llm_type(self):\n        return \"escaner\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        self.llamadas += 1\n        texto = messages[-1].content\n        modernas = (\"smartwatch\", \"pager\", \"phone\", \"espresso\")\n        hallazgos = []\n        for linea in texto.splitlines():\n            linea = re.sub(r\"^\\s*\\d+\\s+\", \"\", linea)  # quita el número de línea de read_file\n            for frase in linea.split(\". \"):\n                if any(w in frase for w in modernas):\n                    hallazgos.append(frase.strip(\" .\"))\n        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=json.dumps(hallazgos)))])\n\n\n# Un manuscrito de 5 libros, en una carpeta temporal.\nDATA = Path(__file__).resolve().parent / \"data_b1\"\nDATA.mkdir(exist_ok=True)\n(DATA / \"manuscrito.txt\").write_text(\n    \"=== LIBRO 1 ===\\nAchilles sat by the ships. Patroclus adjusted his smartwatch.\\n\"\n    \"=== LIBRO 2 ===\\nThe Greeks prayed to Zeus. The sea was dark.\\n\"\n    \"=== LIBRO 3 ===\\nHector checked his pager. Troy burned.\\n\"\n    \"=== LIBRO 4 ===\\nOdysseus sailed home. The wind was cold.\\n\"\n    \"=== LIBRO 5 ===\\nDido made espresso for Aeneas. Carthage slept.\\n\",\n    encoding=\"utf-8\",\n)\n\nescaner = Escaner()\nbook_scanner = {\n    \"name\": \"book-scanner\",\n    \"description\": \"Revisa un libro y devuelve un JSON con las frases anacrónicas.\",\n    \"system_prompt\": \"Busca frases anacrónicas. Devuelve solo un JSON array.\",\n    \"model\": escaner,\n}\n\n# El código que el modelo principal \"escribe\" en la tool eval.\nCODIGO = r\"\"\"\nconst raw = await tools.readFile({file_path: \"/manuscrito.txt\"});\nconst partes = raw.split(/=== (LIBRO \\d+) ===/).slice(1);\nconst libros = [];\nfor (let i = 0; i < partes.length; i += 2) {\n  libros.push({label: partes[i], text: partes[i + 1]});\n}\nconst resultados = await Promise.all(libros.map(async (b) => {\n  const r = await task({\n    description: b.label + \":\\n\" + b.text,\n    subagentType: \"book-scanner\",\n  });\n  return {label: b.label, hallazgos: JSON.parse(r)};\n}));\nJSON.stringify(resultados.filter((r) => r.hallazgos.length > 0));\n\"\"\"\n\nmodelo = Guion(guion=[\n    AIMessage(content=\"\", tool_calls=[{\"name\": \"eval\", \"args\": {\"code\": CODIGO}, \"id\": \"e1\"}]),\n    AIMessage(content=\"Reporte listo.\"),\n])\n\nagent = create_deep_agent(\n    model=modelo,\n    middleware=[CodeInterpreterMiddleware(ptc=[\"read_file\"])],\n    subagents=[book_scanner],\n    backend=FilesystemBackend(root_dir=DATA, virtual_mode=True),\n)\n\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Run a workflow to find every corrupted sentence.\"}]})\nfor m in result[\"messages\"]:\n    print(m.type, \"|\", m.content[:300] if isinstance(m.content, str) else m.content)\nprint(\"Llamadas al subagent:\", escaner.llamadas)",
+   "notas": "Dos modelos falsos: `Guion` (el principal) pide **una** `eval` con el JS de `CODIGO`; `Escaner` (el subagent)\nbusca palabras modernas en el texto que recibe, sin LLM. Salida real:\n```\nhuman | Run a workflow to find every corrupted sentence.\nai | \ntool | <result>[{\"label\":\"LIBRO 1\",\"hallazgos\":[\"Patroclus adjusted his smartwatch\"]},{\"label\":\"LIBRO 3\",\"hallazgos\":[\"Hector checked his pager\"]},{\"label\":\"LIBRO 5\",\"hallazgos\":[\"Dido made espresso for Aeneas\"]}]</result>\nai | Reporte listo.\nLlamadas al subagent: 5\n```\nUna sola tool call del modelo; el `for`/`map` del JS despachó **5** subagents. `read_file` devuelve el texto con\nnúmero de línea al inicio: por eso el `Escaner` los quita con `re.sub`.",
+   "resaltar": [
+    77,
+    84,
+    100
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Quién llama a quién",
+   "contenido": "graph LR\n  M[modelo principal] -->|1 tool call: eval| E[intérprete QuickJS]\n  E -->|tools.readFile| F[(/manuscrito.txt)]\n  E -->|task x5| S[book-scanner]\n  S -->|JSON por libro| E\n  E -->|un solo result| M\n  class E clave",
+   "notas": "El archivo nunca entra al contexto del modelo principal: lo tiene el JS. Cada `book-scanner` ve solo su libro.\nAl modelo vuelve **un** `<result>` con lo agregado. Compáralo con PTC de 2.B: misma idea, pero en vez de tools\nnormales, el script llama subagents."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El lab real: el manuscrito de 60 libros",
+   "contenido": "# python/m4/m4_3_manuscript_agent.py\n\"\"\"Module 4 · Lesson 3: Dynamic subagents, \"The Corrupted Manuscript\" lab.\n\nA handful of anachronistic sentences have been spliced into a combined,\npublic-domain corpus of the Iliad, Odyssey, and Aeneid (data/epic_corpus.txt;\nsee data/prepare_corpus.py for how it was built). The corpus is far too\nlarge for one context window, so the main agent is given the interpreter and\na `book-scanner` subagent: it writes a workflow that reads the manuscript,\nsplits it on the normalized \"=== EPIC BOOK N ===\" headers, and dispatches one\nscanner call per book, collecting whatever each one flags.\n\nThe corpus never enters the model's own context. Only `book-scanner`'s short,\ndistilled findings do: the interpreter holds the 2MB file, the model never\nsees more than one book's worth of text (inside a subagent call) at a time.\n\"\"\"\n\nfrom pathlib import Path\n\nfrom deepagents import FilesystemPermission, create_deep_agent\nfrom deepagents.backends import FilesystemBackend\nfrom langchain_quickjs import CodeInterpreterMiddleware\n\nfrom models import model, strong_model\n\nDATA_DIR = Path(__file__).resolve().parent / \"data\"\n\n# --- The book-scanner subagent ----------------------------------------------\nSCANNER_PROMPT = \"\"\"You are proofreading one book of an ancient Greek or Roman\nepic (Iliad, Odyssey, or Aeneid) for anachronistic sentences that a mischievous\neditor spliced in: sentences referencing anything that couldn't exist in the\nBronze Age or classical antiquity (phones, vending machines, wristwatches,\nespresso machines, and the like).\n\nYou will be given the book's label and its full text.\n\nReturn ONLY a JSON array of the exact anachronistic sentences you find, quoted\nverbatim from the text (no paraphrasing, no partial quotes). Return `[]` if you\nfind none. Most books have none; don't force a match.\"\"\"\n\nbook_scanner = {\n    \"name\": \"book-scanner\",\n    \"description\": (\n        \"Scan one book of the manuscript for anachronistic sentences. \"\n        \"Delegate one book per call, passing that book's label and full text.\"\n    ),\n    \"system_prompt\": SCANNER_PROMPT,\n    \"model\": model,  # cheaper Haiku 4.5: this is a narrow, repeated task\n}\n\n\n# --- The main agent ----------------------------------------------------------\nMANUSCRIPT_PROMPT = \"\"\"You have access to a manuscript at /epic_corpus.txt: a\ncombined public-domain translation of the Iliad, Odyssey, and Aeneid. A\nmischievous editor spliced a handful of anachronistic sentences into it.\n\nThe manuscript is split into 60 books, each starting with a line formatted\nexactly as \"=== EPIC BOOK N ===\" (e.g. \"=== ILIAD BOOK 9 ===\").\n\nRun a workflow that reads the manuscript, splits it into its 60 books, and\ndispatches one book-scanner subagent call per book, batching 30 books per\nPromise.all round (2 rounds total) rather than the smaller batches shown in\nyour tool guidance. Never read a book's full text into your own context; let\nthe interpreter hold the file, and let each subagent hold only its own book.\nCollect every subagent's findings into one final report, grouped by\n\"EPIC BOOK N\", listing the anachronistic sentence(s) found in that book\n(omit books with no findings).\"\"\"\n\n# The scanner only needs read access to the one manuscript file; no writes.\nmanuscript_permissions = [\n    FilesystemPermission(operations=[\"read\"], paths=[\"/epic_corpus.txt\"], mode=\"allow\"),\n    FilesystemPermission(operations=[\"read\", \"write\"], paths=[\"/**\"], mode=\"deny\"),\n]\n\nagent = create_deep_agent(\n    model=strong_model,\n    middleware=[CodeInterpreterMiddleware(ptc=[\"read_file\", \"grep\"])],\n    system_prompt=MANUSCRIPT_PROMPT,\n    subagents=[book_scanner],\n    backend=FilesystemBackend(root_dir=DATA_DIR, virtual_mode=True),\n    permissions=manuscript_permissions,\n)",
+   "notas": "Archivo del curso `m4/m4_3_manuscript_agent.py`. No se corre aquí: necesita `ANTHROPIC_API_KEY`, tarda 5–10 min y\ncuesta ~$2–3 con Sonnet. Salida del material oficial (resumida): `All 60 books were scanned in two parallel batches of\n30 subagents each` ... `Summary: 14 anachronistic sentences across 11 books.` y `Self-check: 14/14`.\nFíjate en el prompt: pide **\"Run a workflow\"** y fija la forma (2 rondas de 30). El backend solo deja **leer**\n`/epic_corpus.txt`.",
+   "resaltar": [
+    59,
+    76
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Cuidado con el HITL",
+   "contenido": "`interrupt_on={\"task\": True}` pausa los `task` que el **modelo** llama directo. Un `task()` lanzado desde el JS de\n`eval` **no pasa** por ese gate: corre dentro de la `eval` que ya se aprobó (o que no tenía gate).\n\nLo comprobé con el ejemplo del paso 4:\n\n| Gate | ¿Se pausó? | Llamadas al subagent |\n|---|---|---|\n| `interrupt_on={\"task\": True}` | No | 5 |\n| `interrupt_on={\"eval\": True}` | Sí, antes de correr el JS | 0 |\n\nPara aprobar una orquestación, el gate va en **`eval`**. Los gates dentro del spec de cada subagent sí se respetan."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Pausa o no pausa?",
+   "contenido": "Tomas el ejemplo del paso 4 y solo cambias cómo se crea el agente y cómo se invoca (agregas\n`from langgraph.checkpoint.memory import MemorySaver`):\n\n```python\nagent = create_deep_agent(\n    model=modelo,\n    middleware=[CodeInterpreterMiddleware(ptc=[\"read_file\"])],\n    subagents=[book_scanner],\n    backend=FilesystemBackend(root_dir=DATA, virtual_mode=True),\n    interrupt_on={\"task\": True},\n    checkpointer=MemorySaver(),\n)\n\nresult = agent.invoke(\n    {\"messages\": [{\"role\": \"user\", \"content\": \"Run a workflow to find every corrupted sentence.\"}]},\n    {\"configurable\": {\"thread_id\": \"1\"}},\n)\nprint(\"¿Se pausó?\", \"__interrupt__\" in result)\nprint(\"Llamadas al subagent:\", escaner.llamadas)\n```\n\n¿Qué imprime?",
+   "respuesta": "Salida real: `¿Se pausó? False` y `Llamadas al subagent: 5`.\nEl modelo no llamó `task`: llamó `eval`. Los 5 `task()` salieron del JS, por dentro, sin pasar por el gate de la\ntool `task`. Con `interrupt_on={\"eval\": True}` sí se pausa antes de correr el script (0 llamadas al subagent).",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: la palabra mágica",
+   "contenido": "Tu agente tiene `CodeInterpreterMiddleware()` y un subagent `reviewer`. El usuario escribe:\n\"Revisa estos 3 archivos y dime el riesgo principal\". No usa la palabra \"workflow\". ¿Qué es lo más probable?\n\n- A) Falla: sin \"workflow\" la función `task()` no existe en el intérprete.\n- B) El modelo decide libremente: puede llamar `task` directo, `eval` o hacerlo él; nada lo obliga.\n- C) El SDK detecta que son pocos archivos y llama `task` 3 veces por su cuenta.\n- D) Se lanza un workflow igual, porque `subagents=True` siempre genera el código.",
+   "respuesta": "**B.** \"workflow\" es una **pista en el system prompt** que el modelo suele seguir, no un interruptor. `task()` existe en\nel intérprete con `subagents=True` (default) diga lo que diga el usuario (A no). El SDK nunca decide la orquestación\npor su cuenta (C no) ni escribe el script (D no): el script lo escribe el modelo, y por eso su forma puede variar entre\ncorridas. Si quieres una forma fija, descríbela en el system prompt o en una skill, como hace el lab (\"2 rondas de 30\")."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- *Dynamic subagents* = el modelo escribe un script en `eval` que llama `task()` en un loop. El `task` es el mismo.\n- Con N grande, la **cobertura la garantiza el código**, no la memoria del modelo; el corpus no entra a su contexto.\n- `subagents=True` es el default de `CodeInterpreterMiddleware`; \"workflow\" en el pedido es una pista de prompt.\n- Las tools dentro del JS van en camelCase (`tools.readFile`) y solo las de `ptc=[...]`.\n- HITL: un gate en `task` no frena los `task()` del script. Para aprobar la orquestación, gatea `eval`.\n\nRelación: es PTC (2.B) aplicado a subagents, y el aislamiento de 4.A se mantiene en cada llamada.\nDónde buscarlo en docs: docs.langchain.com → Deep Agents → *Subagents*; blog *Introducing Dynamic Subagents*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m4/m4.3-dynamic-subagents.html",
+  "python/m4/m4_3_manuscript_agent.py",
+  "python/m4/m4.3_run_manuscript.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Con 1,000 items, ¿por qué un loop en `eval` es mejor que dejar que el modelo llame `task` turno por turno?",
+   "reverso": "Porque la cobertura la garantiza el código. El modelo puede parar antes, perder la cuenta o llenar su contexto."
+  },
+  {
+   "frente": "¿Un `task()` llamado desde el JS de `eval` es distinto de la tool `task`?",
+   "reverso": "No. Es un puente a la misma tool: misma corrida aislada del subagent. Solo cambia quién la llama."
+  },
+  {
+   "frente": "Pones `interrupt_on={\"task\": True}` y el modelo lanza 60 `task()` desde `eval`. ¿Cuántas aprobaciones te pide?",
+   "reverso": "Ninguna. El gate de `task` solo atrapa llamadas directas del modelo. Para aprobar la orquestación, gatea `eval`."
+  },
+  {
+   "frente": "¿Qué hace la palabra \"workflow\" en el pedido del usuario?",
+   "reverso": "Es una pista que el middleware pone en el system prompt para que el modelo escriba código con `task()`. No es un interruptor."
+  },
+  {
+   "frente": "¿Cómo llama el JS de `eval` a la tool `read_file`?",
+   "reverso": "`await tools.readFile({...})`: en camelCase, y solo si está en `ptc=[...]`."
+  }
+ ]
+}

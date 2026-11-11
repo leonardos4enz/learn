@@ -1,0 +1,135 @@
+{
+ "mision_id": "3.B",
+ "titulo": "Pausa para aprobar",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Tu agente tiene una tool peligrosa: borrar archivos, pagar, mandar un correo. El LLM decide solo\ncuándo usarla. Si se equivoca, ya no hay vuelta atrás.\n\nQuieres que el grafo **se detenga justo antes** de ese node, te muestre qué va a hacer y espere tu\n\"sí\". Eso es *human-in-the-loop*, y el notebook da tres motivos: **aprobar** una acción,\n**depurar** (volver atrás) y **editar** el state.\n\nEsta lección es la primera: aprobar. La herramienta se llama *breakpoint*, y vas a ver que no tiene\nnada de magia: funciona porque el grafo ya guarda su state en cada paso."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo",
+   "contenido": "flowchart LR\n  S((START)) --> planear --> herramienta_peligrosa --> E((END))\n  class herramienta_peligrosa clave",
+   "notas": "`planear` decide la acción (en un agente real, el LLM con su tool call).\n`herramienta_peligrosa` la ejecuta. El breakpoint va **antes** de ese node.\nEs el mismo esquema que `assistant → tools` del agente del M1, sin LLM."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Compilar con interrupt_before",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    pedido: str\n    accion: str\n    resultado: str\n\ndef planear(state: State):\n    print(\"---planear---\")\n    return {\"accion\": f\"borrar la carpeta '{state['pedido']}'\"}\n\ndef herramienta_peligrosa(state: State):\n    print(\"---herramienta_peligrosa---\")\n    return {\"resultado\": f\"Hecho: {state['accion']}\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"planear\", planear)\nbuilder.add_node(\"herramienta_peligrosa\", herramienta_peligrosa)\nbuilder.add_edge(START, \"planear\")\nbuilder.add_edge(\"planear\", \"herramienta_peligrosa\")\nbuilder.add_edge(\"herramienta_peligrosa\", END)\n\ngraph = builder.compile(interrupt_before=[\"herramienta_peligrosa\"], checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\n\nfor event in graph.stream({\"pedido\": \"fotos_viejas\"}, thread, stream_mode=\"values\"):\n    print(event)\n\nstate = graph.get_state(thread)\nprint(\"next:\", state.next)",
+   "notas": "Dos cosas en `compile`: `interrupt_before` con el nombre del node, y un `checkpointer`.\n`MemorySaver` guarda el state en memoria, por thread (`thread_id`).\n`get_state(thread).next` dice qué node toca después.\nEn el notebook es `interrupt_before=[\"tools\"]` sobre el agente con `ToolNode`.",
+   "resaltar": [
+    25,
+    32
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: se detuvo",
+   "contenido": "```\n{'pedido': 'fotos_viejas'}\n---planear---\n{'pedido': 'fotos_viejas', 'accion': \"borrar la carpeta 'fotos_viejas'\"}\nnext: ('herramienta_peligrosa',)\n```\n\n`planear` corrió y el stream **terminó** sin error. `herramienta_peligrosa` no corrió: no hay\n`resultado` ni se imprimió `---herramienta_peligrosa---`.\n\n`next: ('herramienta_peligrosa',)` es la prueba de la pausa: el grafo sabe qué le falta, pero no\nlo hizo. En el notebook, con el LLM, lo último que se ve es el `AIMessage` con el tool call\n`multiply(a=2, b=3)` y `state.next` es `('tools',)`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "¿Dónde vive la pausa?",
+   "contenido": "No hay un proceso esperando. El grafo simplemente **dejó de correr**.\n\nLo que queda es el **checkpoint**: después de cada paso, el checkpointer guarda el state del\nthread y qué node sigue. Pausar = parar el loop con un checkpoint cuyo `next` está pendiente.\nReanudar = cargar ese checkpoint y seguir.\n\nPor eso el breakpoint necesita el checkpointer: sin él no hay nada de dónde seguir. Es la misma\nmemoria de corto plazo que viste en el curso 01 con `create_agent(..., checkpointer=InMemorySaver())`:\nel `thread_id` identifica la conversación guardada."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Reanudar con None",
+   "contenido": "for event in graph.stream(None, thread, stream_mode=\"values\"):\n    print(event)\n\nprint(\"next:\", graph.get_state(thread).next)",
+   "notas": "Se corre después del bloque anterior, en el mismo script o notebook.\nInput `None` significa \"no traigo nada nuevo: sigue desde el último checkpoint de este thread\".\nEl thread es el mismo `{\"configurable\": {\"thread_id\": \"1\"}}`.",
+   "resaltar": [
+    1
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: siguió desde donde quedó",
+   "contenido": "```\n{'pedido': 'fotos_viejas', 'accion': \"borrar la carpeta 'fotos_viejas'\"}\n---herramienta_peligrosa---\n{'pedido': 'fotos_viejas', 'accion': \"borrar la carpeta 'fotos_viejas'\", 'resultado': \"Hecho: borrar la carpeta 'fotos_viejas'\"}\nnext: ()\n```\n\nEl primer chunk es el state guardado, que `values` vuelve a emitir. Luego corre **solo**\n`herramienta_peligrosa`: `planear` no se repite. `next: ()` significa que el grafo terminó.\n\nEn el notebook pasa igual: re-emite el `AIMessage` con el tool call, corre `tools` (sale `6`) y el\n`assistant` contesta \"The result of multiplying 2 and 3 is 6.\""
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Aprobar o cancelar",
+   "contenido": "thread = {\"configurable\": {\"thread_id\": \"3\"}}\n\nfor event in graph.stream({\"pedido\": \"descargas\"}, thread, stream_mode=\"values\"):\n    print(event)\n\naccion = graph.get_state(thread).values[\"accion\"]\naprobado = input(f\"¿Ejecuto '{accion}'? (si/no): \")\n\nif aprobado.lower() == \"si\":\n    for event in graph.stream(None, thread, stream_mode=\"values\"):\n        print(event)\nelse:\n    print(\"Cancelado. La herramienta no corrió.\")",
+   "notas": "Se corre después del primer bloque (el que define `graph`). Usa un thread nuevo, el `\"3\"`.\nLee la acción pendiente del state y te pregunta. Solo si dices `si` reanuda con `None`.\nSi dices `no`, simplemente no reanudas: la tool nunca corre.",
+   "resaltar": [
+    7,
+    9
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real del aprobar",
+   "contenido": "Con `si`:\n```\n{'pedido': 'descargas', 'accion': \"borrar la carpeta 'descargas'\"}\n¿Ejecuto 'borrar la carpeta 'descargas''? (si/no): si\n{'pedido': 'descargas', 'accion': \"borrar la carpeta 'descargas'\"}\n---herramienta_peligrosa---\n{'pedido': 'descargas', 'accion': \"borrar la carpeta 'descargas'\", 'resultado': \"Hecho: borrar la carpeta 'descargas'\"}\n```\nCon `no`:\n```\nCancelado. La herramienta no corrió.\n```\nCancelar no es una llamada especial. El checkpoint se queda ahí, con `next` pendiente, hasta que\nalguien reanude ese thread (o nunca)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Prueba: sin checkpointer",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    pedido: str\n    accion: str\n    resultado: str\n\ndef planear(state: State):\n    print(\"---planear---\")\n    return {\"accion\": f\"borrar la carpeta '{state['pedido']}'\"}\n\ndef herramienta_peligrosa(state: State):\n    print(\"---herramienta_peligrosa---\")\n    return {\"resultado\": f\"Hecho: {state['accion']}\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"planear\", planear)\nbuilder.add_node(\"herramienta_peligrosa\", herramienta_peligrosa)\nbuilder.add_edge(START, \"planear\")\nbuilder.add_edge(\"planear\", \"herramienta_peligrosa\")\nbuilder.add_edge(\"herramienta_peligrosa\", END)\n\ngraph = builder.compile(interrupt_before=[\"herramienta_peligrosa\"])  # sin checkpointer\n\nfor event in graph.stream({\"pedido\": \"fotos_viejas\"}, stream_mode=\"values\"):\n    print(event)\n\nprint(\"== intento reanudar ==\")\ntry:\n    for event in graph.stream(None, stream_mode=\"values\"):\n        print(event)\nexcept Exception as ex:\n    print(type(ex).__name__, ex)",
+   "notas": "El mismo grafo, pero compilado **sin** `checkpointer`.\nSalida real: se detiene igual después de `planear`, pero al intentar reanudar:\n`EmptyInputError Received no input for __start__`.\nParó, pero no guardó nada: no hay checkpoint del cual seguir.",
+   "resaltar": [
+    24,
+    31
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Con el servidor",
+   "contenido": "En el notebook, contra `langgraph dev`, el `agent.py` del servidor **no** tiene breakpoint. El\nSDK lo pasa por corrida: `client.runs.stream(thread_id, \"agent\", input=..., interrupt_before=[\"tools\"])`,\ny luego reanuda con `input=None` en el mismo thread. Salida del notebook original: se detiene\ncon el tool call `multiply` y, al reanudar, sale el `ToolMessage` con `6`.\n\nAhí no compilas con `MemorySaver` porque el Agent Server ya trae su propia\npersistencia: cada thread se guarda en su base de datos."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué hay en el state durante la pausa?",
+   "contenido": "En el thread `\"1\"` del paso 3, justo después de la primera corrida (antes de reanudar), haces\n`graph.get_state(thread).values`. ¿Aparece la key `resultado`?",
+   "respuesta": "**No.** `interrupt_before` detiene el grafo **antes** de `herramienta_peligrosa`, así que ese node no\ncorrió y nadie escribió `resultado`. El state tiene `pedido` y `accion`, y `next` es\n`('herramienta_peligrosa',)`.",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Reanudar en otro thread",
+   "contenido": "Es el grafo del paso 3, pausado en el thread `\"1\"`. Al final, en vez de reanudar ese thread, reanudas con `None` en el thread `\"2\"`, que nunca se usó. ¿Qué pasa en la última línea?\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    pedido: str\n    accion: str\n    resultado: str\n\ndef planear(state: State):\n    print(\"---planear---\")\n    return {\"accion\": f\"borrar la carpeta '{state['pedido']}'\"}\n\ndef herramienta_peligrosa(state: State):\n    print(\"---herramienta_peligrosa---\")\n    return {\"resultado\": f\"Hecho: {state['accion']}\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"planear\", planear)\nbuilder.add_node(\"herramienta_peligrosa\", herramienta_peligrosa)\nbuilder.add_edge(START, \"planear\")\nbuilder.add_edge(\"planear\", \"herramienta_peligrosa\")\nbuilder.add_edge(\"herramienta_peligrosa\", END)\n\ngraph = builder.compile(interrupt_before=[\"herramienta_peligrosa\"], checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"pedido\": \"fotos_viejas\"}, thread, stream_mode=\"values\"):\n    print(event)\nprint(\"next del thread 1:\", graph.get_state(thread).next)\n\n# Reanudar con None... pero en OTRO thread, que nunca se usó\notro = {\"configurable\": {\"thread_id\": \"2\"}}\nfor event in graph.stream(None, otro, stream_mode=\"values\"):\n    print(event)\n```",
+   "respuesta": "Error: `EmptyInputError: Received no input for __start__`. `None` quiere decir \"sigue desde el\ncheckpoint de **este** thread\", y el `\"2\"` no tiene ninguno. La pausa vive en el checkpoint del\nthread `\"1\"`, no en el grafo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Input nuevo en un thread pausado",
+   "contenido": "Es el grafo del paso 3: el thread `\"1\"` queda pausado antes de `herramienta_peligrosa` (iba a borrar `fotos_viejas`). En vez de `None`, le pasas un input nuevo al mismo thread. ¿Se borra `fotos_viejas`? ¿Qué `next` sale al final?\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import StateGraph, START, END\n\nclass State(TypedDict):\n    pedido: str\n    accion: str\n    resultado: str\n\ndef planear(state: State):\n    print(\"---planear---\")\n    return {\"accion\": f\"borrar la carpeta '{state['pedido']}'\"}\n\ndef herramienta_peligrosa(state: State):\n    print(\"---herramienta_peligrosa---\")\n    return {\"resultado\": f\"Hecho: {state['accion']}\"}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"planear\", planear)\nbuilder.add_node(\"herramienta_peligrosa\", herramienta_peligrosa)\nbuilder.add_edge(START, \"planear\")\nbuilder.add_edge(\"planear\", \"herramienta_peligrosa\")\nbuilder.add_edge(\"herramienta_peligrosa\", END)\n\ngraph = builder.compile(interrupt_before=[\"herramienta_peligrosa\"], checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"pedido\": \"fotos_viejas\"}, thread, stream_mode=\"values\"):\n    print(event)\nprint(\"next:\", graph.get_state(thread).next)\n\nprint(\"== input nuevo en el mismo thread ==\")\nfor event in graph.stream({\"pedido\": \"tareas\"}, thread, stream_mode=\"values\"):\n    print(event)\nprint(\"next:\", graph.get_state(thread).next)\n```",
+   "respuesta": "**No.** Un input nuevo empieza otra corrida desde `START`: corre `planear` con `pedido='tareas'` y se\nvuelve a detener antes de la herramienta, ahora con `accion=\"borrar la carpeta 'tareas'\"`, y `next` es\notra vez `('herramienta_peligrosa',)` (salida real). La acción pendiente vieja se descarta (el primer chunk\ntodavía la muestra, porque el input se combina con el state guardado, pero `planear` la sobrescribe).\nPara *continuar* la pausa se pasa `None`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `compile(interrupt_before=[\"node\"], checkpointer=...)` detiene el grafo **antes** de ese node. `get_state(thread).next` muestra lo pendiente.\n- La pausa no es un estado especial: el grafo paró y quedó un **checkpoint** con `next` pendiente. Sin checkpointer, para pero no se puede reanudar.\n- `graph.stream(None, thread)` reanuda desde el último checkpoint de **ese** thread. Un input nuevo empieza otra corrida.\n- Aprobar = reanudar; cancelar = no reanudar.\n- Es la memoria por `thread_id` del `create_agent` del curso 01, usada para pausar. Con el SDK, `interrupt_before` se puede pasar por corrida."
+  }
+ ],
+ "fuentes": [
+  "module-3/breakpoints.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué `interrupt_before` necesita un checkpointer para servir de algo?",
+   "reverso": "Pausar es parar el loop dejando un **checkpoint** con `next` pendiente. Sin checkpointer el grafo para igual, pero no queda nada de dónde reanudar."
+  },
+  {
+   "frente": "Después de un breakpoint, ¿qué significa pasar `None` como input a `graph.stream(None, thread)`?",
+   "reverso": "\"No traigo input nuevo: sigue desde el último checkpoint de este thread\". Corre lo que estaba en `next`; lo anterior no se repite."
+  },
+  {
+   "frente": "El grafo está pausado antes de `tools`. ¿Cómo sabes, sin mirar la salida, que está pausado y qué falta?",
+   "reverso": "`graph.get_state(thread).next`: si no está vacío, hay un node pendiente (aquí `('tools',)`). `()` significa que terminó."
+  },
+  {
+   "frente": "¿Cómo \"cancelas\" una acción detenida por un breakpoint?",
+   "reverso": "No reanudando. No hay llamada de cancelar: el checkpoint se queda con `next` pendiente y la tool nunca corre."
+  },
+  {
+   "frente": "Un thread está pausado antes de la tool. ¿Qué cambia si lo corres con un input nuevo en vez de `None`?",
+   "reverso": "Un input nuevo empieza otra corrida desde `START`: se descarta la acción pendiente y el grafo vuelve a planear y a pausar."
+  },
+  {
+   "frente": "Con `interrupt_before=[\"tools\"]`, ¿el node `tools` ya corrió cuando ves la pausa?",
+   "reverso": "No. Se detiene **antes**: ves el tool call que el LLM propuso, pero la tool no se ejecutó. Por eso sirve para aprobar."
+  }
+ ]
+}

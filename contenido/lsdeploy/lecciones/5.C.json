@@ -1,0 +1,143 @@
+{
+ "mision_id": "5.C",
+ "titulo": "Auth provider y auth en el tutor",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En 5.A y 5.B los usuarios eran un dict fijo: `\"alice-token\" → user1`. Sirve para aprender, pero en producción necesitas:\n\n- que la gente se registre con email y contraseña, y que las contraseñas se guarden bien;\n- tokens que caduquen y que puedas revocar;\n- no guardar credenciales en tu Agent Server.\n\nEso lo hace un **auth provider** (proveedor de identidad): Supabase, Auth0, Clerk, Firebase. Esta lección cambia el dict por Supabase y después muestra cómo queda la auth dentro del tutor completo.\n\n**Supabase es opcional:** necesita una cuenta externa. Puedes entender y aprobar todo esto sin crearla; aquí el código se verifica con valores falsos y las salidas de Supabase vienen del material oficial."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Tres componentes",
+   "contenido": "1. **Client application** (tu UI): pide email y contraseña, se los manda al proveedor, recibe un **JWT** y lo adjunta a cada request: `Authorization: Bearer <jwt>`.\n2. **Auth provider**: guarda las cuentas, hace el login y **emite** JWT firmados.\n3. **Agent Server** (tu deployment): **valida** el JWT en `@auth.authenticate` y aplica `@auth.on`. Nunca emite tokens ni guarda contraseñas.\n\nEs el mismo patrón que la auth por defecto de LangSmith: ahí tu `LANGSMITH_API_KEY` hace de token y LangSmith hace de proveedor.\n\nSupabase tiene dos keys:\n- **Publishable key**: va en el cliente; sirve para pedir el login.\n- **Secret key**: solo en el servidor; el Agent Server la usa para preguntarle a Supabase si un token es válido. Nunca va al navegador."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El flujo con un proveedor",
+   "contenido": "graph LR\n  C[Cliente] -->|1 email y password| P[Auth provider]\n  P -->|2 JWT firmado| C\n  C -->|3 request + Bearer JWT| S[Agent Server]\n  S -->|4 ¿es válido?| P\n  P -->|5 id y email| S\n  S --> O[6 auth.on filtra por owner]\n  class S clave",
+   "notas": "Pasos 1–2: login, una vez. Pasos 3–6: **en cada request**.\nEl paso 4 es la validación por *round-trip* (ida y vuelta al proveedor) que usa el curso. La otra opción (verificar la firma localmente) se ve en el paso 5."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué hay dentro de un JWT",
+   "contenido": "import base64, json\n\ndef b64url(d: dict) -> str:\n    return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b\"=\").decode()\n\n# Un JWT de juguete con la forma de los de Supabase (la firma es falsa)\nheader = {\"alg\": \"HS256\", \"typ\": \"JWT\"}\npayload = {\"sub\": \"9f3a1b2c-uuid-de-supabase\", \"email\": \"jane@example.com\", \"exp\": 1794000000}\ntoken = f\"{b64url(header)}.{b64url(payload)}.firma-falsa\"\nprint(token)\n\n# Cualquiera puede LEER el payload: no está cifrado, solo codificado\nsegmento = token.split(\".\")[1]\nsegmento += \"=\" * (-len(segmento) % 4)        # base64 necesita relleno\nprint(json.loads(base64.urlsafe_b64decode(segmento)))",
+   "notas": "Un JWT son tres partes en base64url separadas por puntos: header, payload (los *claims*: id, email, expiración) y firma. Salida real:\n`eyJhbGciOiAiSFMyNTYi...firma-falsa`\n`{'sub': '9f3a1b2c-uuid-de-supabase', 'email': 'jane@example.com', 'exp': 1794000000}`\nEl payload **no está cifrado**: cualquiera lo lee. Lo que protege es la **firma**: solo el proveedor puede firmar, así que cambiar el payload invalida el token.\n`-len(segmento) % 4` calcula cuántos `=` faltan para que base64 lo acepte.",
+   "resaltar": [
+    9,
+    15
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dos formas de validar un JWT",
+   "contenido": "| | Round-trip a `/auth/v1/user` (lo que usa el curso) | Firma local con JWKS |\n|---|---|---|\n| Cómo | En cada request, el servidor le pregunta al proveedor | El servidor baja las llaves públicas (JWKS) y verifica la firma él solo |\n| Latencia | Una llamada de red más por request | Sin red extra |\n| Revocación | **Inmediata**: si desactivas al usuario, el siguiente request falla | El token sigue valiendo hasta que expira (`exp`) |\n\nNo hay una correcta: cambias latencia por revocación inmediata. El examen suele preguntar justo este *trade-off*."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lab 4: authenticate con Supabase",
+   "contenido": "import os\nimport httpx\nfrom langgraph_sdk import Auth\n\nauth = Auth()\n\nSUPABASE_URL = os.environ[\"SUPABASE_URL\"]\nSUPABASE_SECRET_KEY = os.environ[\"SUPABASE_SECRET_KEY\"]\n\n\n@auth.authenticate\nasync def get_current_user(authorization: str | None) -> Auth.types.MinimalUserDict:\n    if not authorization:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Missing token\")\n    scheme, _, token = authorization.partition(\" \")\n    if scheme.lower() != \"bearer\":\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Invalid scheme\")\n    try:\n        print(\"➡️ @auth.authenticate: calling Supabase to validate token\")\n        async with httpx.AsyncClient() as client:\n            response = await client.get(\n                f\"{SUPABASE_URL}/auth/v1/user\",  # Supabase authentication endpoint\n                headers={\n                    \"Authorization\": authorization,      # verifies the user\n                    \"apiKey\": SUPABASE_SECRET_KEY,      # authenticates this handler to Supabase\n                },\n            )\n            response.raise_for_status()\n            user = response.json()\n            print(f\"✅ authenticated: {user['email']}\")\n            return {\n                \"identity\": user[\"id\"],\n                \"email\": user[\"email\"],\n                \"is_authenticated\": True,\n            }\n    except Exception as e:\n        print(f\"❌ authentication failed: {e}\")\n        raise Auth.exceptions.HTTPException(status_code=401, detail=str(e))\n\n\n@auth.on\nasync def add_owner(ctx: Auth.types.AuthContext, value: dict):\n    print(f\"🔒 @auth.on: scoping to owner={ctx.user.identity[:8]}...\")\n    filters = {\"owner\": ctx.user.identity}\n    metadata = value.setdefault(\"metadata\", {})\n    metadata.update(filters)  # written to metadata on write/create actions\n    return filters",
+   "notas": "`python/m5/l4/auth.py`. Solo cambia el **cuerpo** de `@auth.authenticate`: en vez de buscar en un dict, hace `GET {SUPABASE_URL}/auth/v1/user` con el JWT del usuario (`Authorization`) y la **secret key** (`apiKey`). Si Supabase dice que es válido, devuelve `identity` = el UUID del usuario.\n`@auth.on` es **idéntico** al de l3a. `langgraph.json` tampoco cambia.\nSalida del material oficial (requiere cuenta de Supabase): `Bob correctly blocked: 404`, `Alice sees 1 thread(s)`, `Bob sees 0 thread(s)`: el mismo resultado que 5.B, ahora con usuarios reales.",
+   "resaltar": [
+    22,
+    25,
+    32
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Lab 5: la auth del tutor",
+   "contenido": "\"\"\"\nAuth handler for the tutor deployment.\n\nWires Supabase JWT validation (@auth.authenticate) and per-user resource\nscoping (@auth.on, @auth.on.store) on top of the tutor agent.\n\"\"\"\nimport os\nimport httpx\nfrom langgraph_sdk import Auth\n\nauth = Auth()\n\nSUPABASE_URL = os.environ[\"SUPABASE_URL\"]\nSUPABASE_SECRET_KEY = os.environ[\"SUPABASE_SECRET_KEY\"]\n\n\ndef email_to_namespace(email: str) -> str:\n    \"\"\"Same conversion used by the UI's `email_to_namespace`.\"\"\"\n    return email.replace(\".\", \"_\")\n\n\n@auth.authenticate\nasync def get_current_user(authorization: str | None) -> Auth.types.MinimalUserDict:\n    \"\"\"Validate JWT against Supabase and return the authenticated user.\"\"\"\n    if not authorization:\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Missing token\")\n    scheme, _, token = authorization.partition(\" \")\n    if scheme.lower() != \"bearer\":\n        raise Auth.exceptions.HTTPException(status_code=401, detail=\"Invalid scheme\")\n    try:\n        print(\"➡️ @auth.authenticate: calling Supabase to validate token\")\n        async with httpx.AsyncClient() as client:\n            response = await client.get(\n                f\"{SUPABASE_URL}/auth/v1/user\",  # Supabase authentication endpoint\n                headers={\n                    \"Authorization\": authorization,      # verifies the user\n                    \"apiKey\": SUPABASE_SECRET_KEY,      # authenticates this handler to Supabase\n                },\n            )\n            response.raise_for_status()\n            user = response.json()\n            print(f\"✅ authenticated: {user['email']}\")\n            return {\n                \"identity\": user[\"id\"],\n                \"email\": user[\"email\"],\n                \"is_authenticated\": True,\n            }\n    except Exception as e:\n        print(f\"❌ authentication failed: {e}\")\n        raise Auth.exceptions.HTTPException(status_code=401, detail=str(e))\n\n\n@auth.on\nasync def add_owner(ctx: Auth.types.AuthContext, value: dict):\n    \"\"\"Stamp `owner` on writes; return same filter so reads scope to this user.\"\"\"\n    print(f\"🔒 @auth.on: scoping to owner={ctx.user.identity[:8]}...\")\n    filters = {\"owner\": ctx.user.identity}\n    metadata = value.setdefault(\"metadata\", {})\n    metadata.update(filters)  # written to metadata on write/create actions\n    return filters\n\n\n@auth.on.store()\nasync def on_store(ctx: Auth.types.AuthContext, value: dict):\n    \"\"\"Only allow access to the namespace matching the caller's email.\n\n    The UI builds the namespace via email.replace(\".\", \"_\") — same here.\n    \"\"\"\n    expected = email_to_namespace(ctx.user[\"email\"])\n    namespace = value[\"namespace\"]\n    print(f\"📦 @auth.on.store: {ctx.user['email']} → namespace[0]={namespace[0]}\")\n    assert namespace[0] == expected, \"Not authorized\"",
+   "notas": "`python/m5/l5/auth.py`, el tutor real con auth. Tres handlers:\n- `@auth.authenticate`: igual que l4 (Supabase).\n- `@auth.on` global: marca y filtra por `owner` = UUID. Cubre threads y assistants, así la pestaña *Resources* solo muestra lo tuyo.\n- `@auth.on.store()`: el Store del tutor está indexado por **email**, no por UUID. El handler convierte el email del usuario al namespace (`.` → `_`) y exige que `namespace[0]` coincida.",
+   "resaltar": [
+    17,
+    63,
+    72
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Probar los handlers del tutor sin Supabase",
+   "contenido": "\"\"\"Corre los handlers de m5/l5/auth.py con el handle_event del Agent Server, sin servidor y SIN Supabase real.\"\"\"\nimport asyncio, json, os\n\nos.environ.update({\n    \"REDIS_URI\": \"redis://fake:6379\", \"DATABASE_URI\": \"postgres://fake\",\n    # Valores FALSOS: 127.0.0.1:9 no tiene ningún servidor; la key no existe.\n    \"SUPABASE_URL\": \"http://127.0.0.1:9\", \"SUPABASE_SECRET_KEY\": \"sb_secret_FALSA\",\n})\nL5 = r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/m5/l5/auth.py\"\nos.environ[\"LANGGRAPH_AUTH\"] = json.dumps({\"path\": L5 + \":auth\"})\n\nfrom langgraph_sdk import Auth\nfrom langgraph_api.auth.custom import _get_handler, get_auth_instance, handle_event, normalize_user\nfrom starlette.exceptions import HTTPException\n\nauth = get_auth_instance()\n# Lo que devolvería @auth.authenticate si Supabase validara el JWT de Jane:\njane = {\"identity\": \"9f3a1b2c-uuid-de-supabase\", \"email\": \"jane@example.com\"}\n\n\nasync def request(user, resource, action, value):\n    ctx = Auth.types.AuthContext(user=normalize_user(user), permissions=[], resource=resource, action=action)\n    name = _get_handler(auth, ctx).__name__\n    try:\n        filtro = await handle_event(ctx, value)\n        print(f\"{resource}.{action} {value.get('namespace', '')} [{name}] -> permitido, filtro={filtro}\")\n    except HTTPException as e:\n        print(f\"{resource}.{action} {value.get('namespace', '')} [{name}] -> HTTP {e.status_code}: {e.detail}\")\n\n\nasync def main():\n    await request(jane, \"threads\", \"create\", {\"thread_id\": \"t\", \"metadata\": {}})\n    await request(jane, \"store\", \"get\", {\"namespace\": (\"jane@example_com\",), \"key\": \"profile\"})\n    await request(jane, \"store\", \"get\", {\"namespace\": (\"bob@example_com\",), \"key\": \"profile\"})\n    await request(jane, \"store\", \"get\", {\"namespace\": (\"9f3a1b2c-uuid-de-supabase\",), \"key\": \"profile\"})\n    # @auth.authenticate contra un \"Supabase\" que no responde\n    try:\n        await auth._authenticate_handler(authorization=\"Bearer eyJ.falso.jwt\")\n    except Auth.exceptions.HTTPException as e:\n        print(\"authenticate ->\", e.status_code, e.detail)\n\nasyncio.run(main())",
+   "notas": "Mismo método que en 5.B: el `handle_event` del Agent Server, sin servidor. Las variables de Supabase son **falsas**. Salida real:\n`threads.create [add_owner] -> permitido, filtro={'owner': '9f3a1b2c-uuid-de-supabase'}`\n`store.get ('jane@example_com',) [on_store] -> permitido` · `('bob@example_com',) -> HTTP 403` · `('9f3a1b2c-uuid-de-supabase',) -> HTTP 403`\n`authenticate -> 401 All connection attempts failed`: si el proveedor no responde, nadie entra.",
+   "resaltar": [
+    18,
+    38
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Identidad de auth contra identidad de datos",
+   "contenido": "Supabase identifica a Jane con un **UUID** (`identity`). El tutor, desde el módulo 4, guarda su perfil en el namespace `(\"jane@example_com\",)`, derivado del **email**.\n\nPodrías migrar el Store a UUIDs, pero el curso no cambia los datos: el `@auth.on.store()` hace de **puente**. Recalcula el namespace a partir de `ctx.user[\"email\"]` y lo compara con el que pide el request. Por eso en el paso 8 Jane recibe 403 incluso con su propio UUID como namespace: el Store no está indexado por UUID.\n\nPara threads y assistants sí se usa el UUID (`owner`). Cada recurso usa la identidad con la que está indexado."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Los cinco archivos que cambian en el tutor",
+   "contenido": "| Archivo | Cambio |\n|---|---|\n| `auth.py` | Nuevo: Supabase + `owner` + regla del Store |\n| `langgraph.json` | `\"auth\": {\"path\": \"./auth.py:auth\"}` y `\"env\": \".env\"` local (las keys de Supabase del lab) |\n| `ui/agent_client.py` | `create_client(url, jwt=None)`: con JWT manda `Authorization: Bearer <jwt>`; sin JWT usa la LangSmith API key |\n| `ui/app.py` | `/register` y `/login` llaman a Supabase (`/auth/v1/signup`, `/auth/v1/token?grant_type=password`) y devuelven el JWT; `/chat` y `/resources` lo reenvían |\n| `ui/index.html` | Campos de contraseña; guarda el JWT en `localStorage` y lo manda en cada llamada |\n\n`localStorage` sobrevive al refresh, pero cualquier JavaScript de la página lo puede leer (riesgo de XSS); en producción se suele preferir una cookie HTTP-only."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: cambiar de proveedor",
+   "contenido": "Tu deployment usa Supabase con el `auth.py` del lab 4. La empresa decide pasar a Auth0. ¿Qué tienes que cambiar?\n\nA) Solo `@auth.on`, porque Auth0 manda otro formato de owner.\nB) `@auth.authenticate`, `@auth.on` y el grafo.\nC) Solo `@auth.authenticate` (la llamada al proveedor y los campos de su respuesta).\nD) Solo `langgraph.json`, apuntando a Auth0.",
+   "respuesta": "**C.** `@auth.on` solo usa `ctx.user.identity` (y, en el tutor, `ctx.user[\"email\"]`), que salen de lo que devuelve `@auth.authenticate`. Si el nuevo authenticate devuelve el mismo dict, nada más cambia.\nA: el owner lo pones tú, no el proveedor. B: el grafo no sabe de proveedores. D: `langgraph.json` apunta a tu `auth.py`, no al proveedor.",
+   "ref": 6
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Variación: otros namespaces de Jane",
+   "contenido": "Cambias las pruebas del paso 8 por estas tres:\n\n```python\n\"\"\"Corre los handlers de m5/l5/auth.py con el handle_event del Agent Server, sin servidor y SIN Supabase real.\"\"\"\nimport asyncio, json, os\n\nos.environ.update({\n    \"REDIS_URI\": \"redis://fake:6379\", \"DATABASE_URI\": \"postgres://fake\",\n    # Valores FALSOS: 127.0.0.1:9 no tiene ningún servidor; la key no existe.\n    \"SUPABASE_URL\": \"http://127.0.0.1:9\", \"SUPABASE_SECRET_KEY\": \"sb_secret_FALSA\",\n})\nL5 = r\"C:/ruta/a/tus/cursos/06 Introduction to LangSmith Deployment/lca-deployment/python/m5/l5/auth.py\"\nos.environ[\"LANGGRAPH_AUTH\"] = json.dumps({\"path\": L5 + \":auth\"})\n\nfrom langgraph_sdk import Auth\nfrom langgraph_api.auth.custom import _get_handler, get_auth_instance, handle_event, normalize_user\nfrom starlette.exceptions import HTTPException\n\nauth = get_auth_instance()\n# Lo que devolvería @auth.authenticate si Supabase validara el JWT de Jane:\njane = {\"identity\": \"9f3a1b2c-uuid-de-supabase\", \"email\": \"jane@example.com\"}\n\n\nasync def request(user, resource, action, value):\n    ctx = Auth.types.AuthContext(user=normalize_user(user), permissions=[], resource=resource, action=action)\n    name = _get_handler(auth, ctx).__name__\n    try:\n        filtro = await handle_event(ctx, value)\n        print(f\"{resource}.{action} {value.get('namespace', '')} [{name}] -> permitido, filtro={filtro}\")\n    except HTTPException as e:\n        print(f\"{resource}.{action} {value.get('namespace', '')} [{name}] -> HTTP {e.status_code}: {e.detail}\")\n\n\nasync def main():\n    await request(jane, \"threads\", \"create\", {\"thread_id\": \"t\", \"metadata\": {}})\n    await request(jane, \"store\", \"get\", {\"namespace\": (\"jane@example_com\",), \"key\": \"profile\"})\n    await request(jane, \"store\", \"put\", {\"namespace\": (\"jane@example_com\", \"notes\"), \"key\": \"n1\", \"value\": {}})\n    await request(jane, \"store\", \"get\", {\"namespace\": (\"jane@example.com\",), \"key\": \"profile\"})\n\nasyncio.run(main())\n```\n\n¿Qué pasa con el `put` en `(\"jane@example_com\", \"notes\")` y con el `get` en `(\"jane@example.com\",)`?",
+   "respuesta": "Salida real: el `put` en `('jane@example_com', 'notes')` → **permitido**; el `get` en `('jane@example.com',)` → **HTTP 403: Not authorized**.\nEl handler solo revisa `namespace[0]`: cualquier sub-namespace que empiece con `jane@example_com` es de Jane. En el segundo, `namespace[0]` lleva el punto sin convertir (`jane@example.com` ≠ `jane@example_com`), así que el `assert` falla. La convención tiene que ser la misma en la UI y en el handler."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: revocar un acceso",
+   "contenido": "A las 10:00 desactivas en el proveedor la cuenta de un empleado que se fue. Su JWT expira a las 11:00. A las 10:05 manda un request a tu deployment. ¿Qué afirmación es correcta?\n\nA) Con validación por round-trip a `/auth/v1/user`, el request falla con 401; con verificación local por JWKS, pasa hasta las 11:00.\nB) En los dos casos falla: la firma ya no es válida.\nC) En los dos casos pasa hasta las 11:00.\nD) Con round-trip pasa, porque el token no expiró; con JWKS falla.",
+   "respuesta": "**A.** El round-trip le pregunta al proveedor en cada request, y el proveedor ya sabe que la cuenta está desactivada. La verificación local solo revisa firma y `exp`: la firma sigue siendo válida, así que el token funciona hasta que expira.\nB: desactivar la cuenta no cambia la firma de un token ya emitido. C ignora la revocación inmediata. D está al revés."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Tres componentes: el **cliente** obtiene el JWT, el **proveedor** lo emite, el **Agent Server** solo lo valida.\n- Un JWT se puede leer (no está cifrado); lo que protege es la firma.\n- Validar por **round-trip** da revocación inmediata a costa de latencia; por **JWKS** es más rápido, pero un token revocado vale hasta su `exp`.\n- Secret key solo en el servidor; publishable key en el cliente.\n- Cambiar de proveedor solo cambia `@auth.authenticate`; los `@auth.on` siguen igual.\n- En el tutor, `@auth.on.store()` une la identidad de auth (UUID) con la de datos (namespace por email).\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Auth* / *Connect an authentication provider* (tutorial de custom auth)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m5/m5.4-auth-provider.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m5/m5.5-tutor-auth.html",
+  "lca-deployment/python/m5/l4/auth.py",
+  "lca-deployment/python/m5/l4/client.py",
+  "lca-deployment/python/m5/l4/setup.py",
+  "lca-deployment/python/m5/l5/auth.py",
+  "lca-deployment/python/m5/l5/langgraph.json",
+  "lca-deployment/python/m5/l5/ui/app.py",
+  "lca-deployment/python/m5/l5/ui/agent_client.py",
+  "lca-deployment/thinkific/src/m5/m5.4-auth-provider.md",
+  "lca-deployment/thinkific/src/m5/m5.5-tutor-auth.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Quién emite el JWT y quién lo valida?",
+   "reverso": "Lo emite el auth provider. El Agent Server solo lo valida en @auth.authenticate; nunca guarda contraseñas ni emite tokens."
+  },
+  {
+   "frente": "Validar con round-trip al proveedor contra verificar la firma con JWKS: ¿qué ganas y qué pierdes?",
+   "reverso": "Round-trip: revocación inmediata, pero una llamada de red por request. JWKS: sin red extra, pero un token revocado vale hasta que expira."
+  },
+  {
+   "frente": "¿Por qué la secret key de Supabase no puede ir en el navegador?",
+   "reverso": "Con ella el servidor consulta a Supabase en nombre de tu app. En el cliente basta la publishable key, que solo sirve para pedir el login."
+  },
+  {
+   "frente": "Un JWT no está cifrado. ¿Qué impide que alguien cambie su email en el payload?",
+   "reverso": "La firma: solo el proveedor puede firmar. Cambiar el payload invalida la firma y el token se rechaza."
+  },
+  {
+   "frente": "En el tutor con auth, ¿por qué @auth.on.store() compara con el email y no con identity?",
+   "reverso": "El Store del tutor está indexado por namespace derivado del email; identity es el UUID de Supabase. El handler hace de puente."
+  },
+  {
+   "frente": "Pasas de Supabase a Auth0. ¿Qué handler reescribes?",
+   "reverso": "Solo @auth.authenticate. Los @auth.on dependen de lo que authenticate devuelve, no del proveedor."
+  }
+ ]
+}

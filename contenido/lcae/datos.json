@@ -1,0 +1,118 @@
+{
+ "nombre": "LCAE · Certificación",
+ "siguiente": "P.0",
+ "modulos": [
+  {
+   "n": 1,
+   "nombre": "Examen de práctica"
+  },
+  {
+   "n": 2,
+   "nombre": "Examen real"
+  }
+ ],
+ "misiones": [
+  {
+   "id": "P.0",
+   "modulo": 1,
+   "titulo": "Cómo es el examen",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Get started",
+     "url": "https://academy.langchain.com/courses/take/lcae-practice-exam/multimedia/77826049-get-started"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "P.1",
+   "modulo": 1,
+   "titulo": "Práctica: Build (después de Deep Agents)",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "quiz",
+     "titulo": "Section 1 build",
+     "url": "https://academy.langchain.com/courses/take/lcae-practice-exam/quizzes/77795516-section-1-build"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "P.2",
+   "modulo": 1,
+   "titulo": "Práctica: Test (después de Reliable Agents)",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "quiz",
+     "titulo": "Section 2 test",
+     "url": "https://academy.langchain.com/courses/take/lcae-practice-exam/quizzes/77796672-section-2-test"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "P.3",
+   "modulo": 1,
+   "titulo": "Práctica: Monitor (después de Monitoring)",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "quiz",
+     "titulo": "Section 4 monitor",
+     "url": "https://academy.langchain.com/courses/take/lcae-practice-exam/quizzes/77825260-section-4-monitor"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "P.4",
+   "modulo": 1,
+   "titulo": "Práctica: Deploy (después de LangSmith Deployment)",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "quiz",
+     "titulo": "Section 3 deploy",
+     "url": "https://academy.langchain.com/courses/take/lcae-practice-exam/quizzes/77824698-section-3-deploy"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "X.1",
+   "modulo": 2,
+   "titulo": "Registrarte y presentar el examen",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "lectura",
+     "titulo": "Página de la certificación y guía del examen",
+     "url": "https://academy.langchain.com/pages/certifications-lcae"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  }
+ ],
+ "proyecto": null,
+ "hilos": [],
+ "sesiones": [],
+ "hojas": {},
+ "banco": [],
+ "examenes": []
+}

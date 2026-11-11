@@ -1,0 +1,107 @@
+{
+ "mision_id": "0.A",
+ "titulo": "Bienvenida: trazas grabadas y el upload",
+ "modulo": "0",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Monitorear un agente en producción pide **tráfico real**: cientos de trazas con costos, errores, threads y usuarios distintos. Tú no tienes un agente en producción, y montar uno solo para practicar cuesta tiempo y tokens.\n\nEl curso lo resuelve así: trae **trazas pregrabadas** (archivos `.json`) y un script que las **sube** a un proyecto de LangSmith como si acabaran de pasar. Todo lo demás (dashboards, alertas, online evals, Insights) pasa en la **UI de LangSmith**, no en tu código.\n\nEsta lección es el mapa del curso y el porqué del script de subida. Es el dominio **Monitor** del examen LCAE (25 %)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El mapa del curso",
+   "contenido": "| Módulo | Pregunta que contesta | Herramienta de LangSmith |\n|---|---|---|\n| 1. Costo | ¿Cuánto gasto y quién lo gasta? | Cost tracking, Monitor tab, Group by |\n| 2. Product analytics | ¿De qué hablan los usuarios? | **Insights** (plan Plus) |\n| 3. Calidad | ¿Está lento, falla, el usuario está contento? | Alertas, feedback, online evals por thread, A/B |\n| 4. Seguridad | ¿Me atacan? ¿Filtré datos? | Online evals LLM-as-judge, dashboards, alerta a PagerDuty |\n| 5. Capstone | Todo junto sobre un agente de soporte | — |\n\nCada módulo trae un **lab** (subes trazas y lees dashboards) y un **quiz** en Academy. Los quizzes los haces solo: son buena práctica para el examen."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Setup: lo que necesitas y dónde va cada key",
+   "contenido": "```bash\ngit clone --depth 1 https://github.com/langchain-ai/lca-production-monitoring.git\ncd lca-production-monitoring/python\nuv sync                       # crea .venv (pide Python ==3.12.0 exacto: uv lo descarga)\nuv run python env_utils.py    # revisa versión, paquetes y keys\n```\n\nDos lugares distintos para keys:\n\n- **Tu `.env`** (lo editas tú): `LANGSMITH_API_KEY`, `LANGSMITH_TRACING`, `LANGSMITH_PROJECT`, `OPENAI_API_KEY`. Los scripts lo leen con `load_dotenv()` **sin** `override`: si la variable ya existe en tu shell, gana la de la shell.\n- **LangSmith > Settings > Integrations > Provider Secrets**: la key del proveedor (OpenAI, etc.). La usan **Insights y los online evaluators**, que corren en los servidores de LangSmith, no en tu máquina.\n\nOjo: la página dice `pip install -r requirements.txt`, pero el repo no trae ese archivo. Usa `uv sync`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué hace el upload (1): corre el tiempo y cambia los ids",
+   "contenido": "from datetime import datetime\nfrom langsmith import uuid7\n\n# Tres runs \"grabados\": una raíz (sin parent) y dos hijos\nruns = [\n    {\"id\": \"r1\", \"trace_id\": \"r1\", \"parent_run_id\": None, \"name\": \"ACME Support\",\n     \"start_time\": \"2026-03-13T10:00:28\"},\n    {\"id\": \"c1\", \"trace_id\": \"r1\", \"parent_run_id\": \"r1\", \"name\": \"ChatOpenAI\",\n     \"start_time\": \"2026-03-13T10:00:29\"},\n    {\"id\": \"c2\", \"trace_id\": \"r1\", \"parent_run_id\": \"r1\", \"name\": \"query_database\",\n     \"start_time\": \"2026-03-13T10:00:33\"},\n]\n\n# 1) Corrimiento de tiempo: la run más reciente queda en \"ahora\"\nlatest = max(datetime.fromisoformat(r[\"start_time\"]) for r in runs)\nahora = datetime(2026, 11, 11, 18, 0, 0)          # fijo para que la salida no cambie\ntime_delta = ahora - latest\nprint(\"Corrimiento:\", time_delta)\n\n# 2) Ids nuevos: en la raíz, id y trace_id reciben EL MISMO uuid7\nid_map = {}\nfor run in runs:\n    if run[\"parent_run_id\"] is None:\n        nuevo = str(uuid7())\n        id_map[run[\"id\"]] = nuevo\n        id_map[run[\"trace_id\"]] = nuevo\nfor run in runs:\n    for field in (\"id\", \"parent_run_id\"):\n        viejo = run.get(field)\n        if viejo and viejo not in id_map:\n            id_map[viejo] = str(uuid7())\n\nfor run in runs:\n    nuevo_id = id_map[run[\"id\"]]\n    print(run[\"name\"].ljust(15),\n          \"id:\", \"...\" + nuevo_id[-6:],\n          \"| trace:\", \"...\" + id_map[run[\"trace_id\"]][-6:],\n          \"| parent:\", (\"...\" + id_map[run[\"parent_run_id\"]][-6:]) if run[\"parent_run_id\"] else None,\n          \"| start:\", datetime.fromisoformat(run[\"start_time\"]) + time_delta)",
+   "notas": "Es la misma lógica de `module-1/upload_traces.py`, sobre 3 runs de juguete y sin subir nada.\n- **Corrimiento:** suma a todas las fechas la diferencia entre \"ahora\" y la run más reciente. El dashboard muestra \"la última hora\"; trazas de marzo no saldrían.\n- **Ids nuevos con `uuid7`** (ordenables por tiempo). En la raíz, `id` y `trace_id` reciben **el mismo** id: la raíz *es* la traza.\n- Salida real (los ids son aleatorios, cambian en cada corrida):\n```\nCorrimiento: 243 days, 7:59:27\nACME Support    id: ...08888a | trace: ...08888a | parent: None | start: 2026-11-11 17:59:55\nChatOpenAI      id: ...68399d | trace: ...08888a | parent: ...08888a | start: 2026-11-11 17:59:56\nquery_database  id: ...57cd4f | trace: ...08888a | parent: ...08888a | start: 2026-11-11 18:00:00\n```",
+   "resaltar": [
+    17,
+    26
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué hace el upload (2): `dotted_order` arma el árbol",
+   "contenido": "from datetime import datetime\n\n# Una traza ya con ids nuevos: raíz R, hijo A (LLM) y nieto B (tool dentro de A)\ntrace_runs = [\n    {\"id\": \"B\", \"parent_run_id\": \"A\",  \"start_time\": datetime(2026, 11, 11, 18, 0, 2)},\n    {\"id\": \"R\", \"parent_run_id\": None, \"start_time\": datetime(2026, 11, 11, 18, 0, 0)},\n    {\"id\": \"A\", \"parent_run_id\": \"R\",  \"start_time\": datetime(2026, 11, 11, 18, 0, 1)},\n]\n\n# Raíz primero; después los hijos por hora de inicio\ntrace_runs.sort(key=lambda r: (r[\"parent_run_id\"] is not None, r[\"start_time\"]))\n\ndotted_orders = {}\nfor run in trace_runs:\n    ts = run[\"start_time\"].strftime(\"%Y%m%dT%H%M%S%f\") + \"Z\"\n    if run[\"parent_run_id\"] is None:\n        run[\"dotted_order\"] = f\"{ts}{run['id']}\"\n    else:\n        parent_order = dotted_orders.get(run[\"parent_run_id\"], \"\")\n        run[\"dotted_order\"] = f\"{parent_order}.{ts}{run['id']}\"\n    dotted_orders[run[\"id\"]] = run[\"dotted_order\"]\n\nfor run in trace_runs:\n    print(run[\"id\"], \"->\", run[\"dotted_order\"])",
+   "notas": "Cada run lleva un `dotted_order`: la cadena de sus ancestros, cada uno como `<timestamp><id>`, unidos por puntos. Así LangSmith sabe dónde va cada run en el trace tree.\n- El `sort` pone la raíz primero y los hijos por hora de inicio, para que el padre ya tenga su `dotted_order` cuando llega el hijo.\n- Salida real:\n```\nR -> 20261111T180000000000ZR\nA -> 20261111T180000000000ZR.20261111T180001000000ZA\nB -> 20261111T180000000000ZR.20261111T180001000000ZA.20261111T180002000000ZB\n```\nDespués, el script real llama `client.create_run(...)` por cada run y `client.flush()` al final. **No llama a ningún LLM.**",
+   "resaltar": [
+    20
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Del archivo a la UI",
+   "contenido": "graph LR\n  J[traces.json<br/>runs grabados] --> U[upload_traces.py<br/>corre fechas, ids nuevos,<br/>dotted_order]\n  U -->|client.create_run| P[Proyecto ACME-...<br/>en LangSmith]\n  P --> M[Monitor tab<br/>dashboards]\n  P --> E[Online evals<br/>Insights]\n  class U clave",
+   "notas": "Lo único que corre en tu máquina es el upload. Los online evals e Insights se ejecutan en LangSmith y gastan la key de **Provider Secrets**.\nEl `thread_id` que traen algunas trazas en su metadata es el mismo concepto que el `thread_id` del checkpointer de LangGraph: agrupa los turnos de una conversación."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Los comandos de cada lab (con dos arreglos)",
+   "contenido": "Corre cada uno **desde su carpeta** (los scripts abren el `.json` con ruta relativa):\n\n| Lab | Carpeta | Comando |\n|---|---|---|\n| 1 | `module-1` | `uv run python upload_traces.py --project ACME-cost` |\n| 2 | `module-2` | `uv run python upload_traces.py --project ACME-product-analytics --input module2_traces.json` |\n| 3 | `module-3` | `uv run python upload_traces.py --project ACME-quality` |\n| 4 (lección) | `module-4/lesson-1` | `uv run python upload_traces.py --project ACME-security` |\n| 4 (lab) | `module-4/lab` | `uv run python upload_traces.py --project ACME-security` |\n| Capstone | `capstone` | `uv run python upload_csa_traces.py --input capstone_traces.jsonl --project ACME-capstone` |\n\n**Arreglo 1:** en `module-2` el `--input` por defecto es `synthetic_traces.json`, que no existe. Sin `--input module2_traces.json` truena.\n**Arreglo 2:** la página del capstone dice `upload_traces.py`, pero el script se llama `upload_csa_traces.py` y exige `--input` y `--project`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: ¿cuánto gasta el upload?",
+   "contenido": "Corres `uv run python upload_traces.py --project ACME-cost` en `module-1` (200 trazas, 920 runs de LLM grabados). ¿Qué se cobra en tu cuenta de OpenAI por ese comando?\n\n- **A)** El costo de 920 llamadas a `gpt-5-nano`, porque el script vuelve a ejecutar las llamadas.\n- **B)** Nada: el script solo envía los runs ya grabados a LangSmith con `create_run`.\n- **C)** El costo de resumir las 200 trazas, porque LangSmith las resume al recibirlas.\n- **D)** Nada en OpenAI, pero sí en Anthropic, porque el upload usa la `ANTHROPIC_API_KEY`.",
+   "respuesta": "**B.** El script lee el `.json`, corre fechas, cambia ids y llama `client.create_run`: es una escritura a la API de LangSmith, sin LLM.\n- A: los outputs ya vienen grabados; nadie vuelve a llamar al modelo.\n- C: resumir trazas es **Insights**, y solo corre si tú lo lanzas (y usa la key de Provider Secrets).\n- D: `ANTHROPIC_API_KEY` es opcional y no la usa el upload.\nLo que **sí** puede gastar después: los online evaluators que tengas activos en ese proyecto.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Subir dos veces al mismo proyecto",
+   "contenido": "Corres el comando del lab 1 **dos veces** seguidas sobre el mismo proyecto `ACME-cost`. Mira el `id_map` del paso 4: cada corrida genera ids nuevos con `uuid7()`.\n\n¿Cuántas trazas ves en el proyecto: 200 o 400? ¿Qué pasa con el dashboard de costo total?",
+   "respuesta": "**400.** Cada corrida crea un `id_map` nuevo, así que LangSmith recibe 200 trazas con ids que nunca había visto: no las reconoce como repetidas. El costo total del dashboard se **duplica**, y el costo por traza (mediana) queda igual.\nSi te equivocas, borra el proyecto o crea uno nuevo (`--project ACME-cost-2`) y vuelve a subir.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "El comando del lab 2 tal cual",
+   "contenido": "En `module-2/upload_traces.py` el argumento es:\n\n```python\nparser.add_argument(\"--input\", default=\"synthetic_traces.json\", help=\"Input file path\")\n```\n\ny luego `with open(args.input) as f:`. En la carpeta solo existe `module2_traces.json`. ¿Qué pasa si corres `uv run python upload_traces.py --project ACME-product-analytics` sin `--input`?",
+   "respuesta": "Truena antes de subir nada:\n```\nFileNotFoundError: [Errno 2] No such file or directory: 'synthetic_traces.json'\n```\n(lo comprobé abriendo ese nombre en `module-2`). El `default` de `argparse` apunta a un archivo que no viene en el repo. Arreglo: `--input module2_traces.json`. Es un error de **entorno/ruta**, no de LangSmith: tu key no tiene nada que ver."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El curso no instrumenta un agente: **sube trazas grabadas** y todo el trabajo es leer y configurar la UI de LangSmith.\n- El upload corre las fechas a \"ahora\", da ids nuevos (`uuid7`, raíz con `id == trace_id`) y arma el árbol con `dotted_order`. No gasta tokens.\n- Dos tipos de keys: tu `.env` (subir trazas) y **Provider Secrets** en LangSmith (Insights y online evals).\n- Comandos rotos: lab 2 necesita `--input module2_traces.json`; el capstone usa `upload_csa_traces.py --input capstone_traces.jsonl --project ACME-capstone`.\n- Relación: la traza = un `invoke` de tu grafo de LangGraph; el thread = todos los turnos con el mismo `thread_id`.\n\n**Dónde buscarlo en docs:** docs.langchain.com > LangSmith > Observability (tracing, threads)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/production-monitoring/module-0/Getting_Started_python.html",
+  "lca-production-monitoring/python/module-1/upload_traces.py",
+  "lca-production-monitoring/python/module-2/upload_traces.py",
+  "lca-production-monitoring/python/capstone/upload_csa_traces.py",
+  "lca-production-monitoring/python/pyproject.toml",
+  "lca-production-monitoring/python/env_utils.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué `upload_traces.py` corre todas las fechas hacia \"ahora\"?",
+   "reverso": "Porque los dashboards y alertas miran ventanas recientes (la última hora, 7 días). Con las fechas originales, las trazas no saldrían en el Monitor."
+  },
+  {
+   "frente": "Subes el mismo `traces.json` dos veces al mismo proyecto. ¿Qué pasa con el costo total?",
+   "reverso": "Se duplica: cada corrida genera ids nuevos con `uuid7`, así que LangSmith ve 400 trazas distintas. La mediana por traza no cambia."
+  },
+  {
+   "frente": "¿Por qué Insights y los online evals necesitan una key en Provider Secrets si ya tienes `OPENAI_API_KEY` en tu `.env`?",
+   "reverso": "Porque corren en los servidores de LangSmith, no en tu máquina. Tu `.env` solo lo leen los scripts locales."
+  },
+  {
+   "frente": "¿Qué tienen de especial `id` y `trace_id` en la run raíz?",
+   "reverso": "Son iguales: la raíz es la traza. Los hijos tienen su propio `id` y el `trace_id` de la raíz."
+  },
+  {
+   "frente": "El lab 2 truena con `FileNotFoundError: synthetic_traces.json`. ¿Cuál es la causa y el arreglo?",
+   "reverso": "El `default` de `--input` apunta a un archivo que no existe. Pasa `--input module2_traces.json` desde la carpeta `module-2`."
+  }
+ ]
+}

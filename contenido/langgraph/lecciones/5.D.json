@@ -1,0 +1,138 @@
+{
+ "mision_id": "5.D",
+ "titulo": "Agente que decide qué recordar",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Los chatbots de 5.A a 5.C escriben memoria en **cada** turno, aunque digas \"gracias\". Eso gasta una llamada extra al LLM y llena el Store de basura. Además siempre escriben el mismo tipo de memoria.\n\n`task_mAIstro` es un agente de ToDos que **decide** cuándo y qué recordar. Maneja tres memorias: el **perfil** del usuario (semántica), su lista de **ToDos** (colección) y sus **instrucciones** sobre cómo quiere los ToDos (memoria procedural: cómo hacer las cosas)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Los dos schemas",
+   "contenido": "from datetime import datetime\nfrom typing import Literal, Optional\nfrom pydantic import BaseModel, Field\n\nclass Profile(BaseModel):\n    \"\"\"This is the profile of the user you are chatting with\"\"\"\n    name: Optional[str] = Field(description=\"The user's name\", default=None)\n    location: Optional[str] = Field(description=\"The user's location\", default=None)\n    job: Optional[str] = Field(description=\"The user's job\", default=None)\n    connections: list[str] = Field(\n        description=\"Personal connection of the user, such as family members, friends, or coworkers\",\n        default_factory=list\n    )\n    interests: list[str] = Field(\n        description=\"Interests that the user has\", \n        default_factory=list\n    )\n\nclass ToDo(BaseModel):\n    task: str = Field(description=\"The task to be completed.\")\n    time_to_complete: Optional[int] = Field(description=\"Estimated time to complete the task (minutes).\")\n    deadline: Optional[datetime] = Field(\n        description=\"When the task needs to be completed by (if applicable)\",\n        default=None\n    )\n    solutions: list[str] = Field(\n        description=\"List of specific, actionable solutions (e.g., specific ideas, service providers, or concrete options relevant to completing the task)\",\n        min_items=1,\n        default_factory=list\n    )\n    status: Literal[\"not started\", \"in progress\", \"done\", \"archived\"] = Field(\n        description=\"Current status of the task\",\n        default=\"not started\"\n    )\n",
+   "notas": "- `Profile` (perfil): todo `Optional` o con default; no hay que inventar valores (compáralo con 5.B).\n- `ToDo` (colección): cada tarea es un Item aparte en `(\"todo\", user_id)`.\n- `min_items` es sintaxis vieja de Pydantic (hoy `min_length`); en la versión instalada solo da un warning.",
+   "resaltar": [
+    5,
+    19
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La decisión es un tool",
+   "contenido": "from typing import Literal, TypedDict\nfrom langchain_core.messages import AIMessage\nfrom langgraph.graph import END, MessagesState\n\nclass UpdateMemory(TypedDict):\n    \"\"\" Decision on what memory type to update \"\"\"\n    update_type: Literal['user', 'todo', 'instructions']\n\ndef route_message(state: MessagesState) -> Literal[END, \"update_todos\", \"update_instructions\", \"update_profile\"]:\n    \"\"\"Reflect on the memories and chat history to decide whether to update the memory collection.\"\"\"\n    message = state['messages'][-1]\n    if len(message.tool_calls) == 0:\n        return END\n    else:\n        tool_call = message.tool_calls[0]\n        if tool_call['args']['update_type'] == \"user\":\n            return \"update_profile\"\n        elif tool_call['args']['update_type'] == \"todo\":\n            return \"update_todos\"\n        elif tool_call['args']['update_type'] == \"instructions\":\n            return \"update_instructions\"\n        else:\n            raise ValueError\n\ndef ai(update_type=None):\n    calls = [] if update_type is None else [{\"name\": \"UpdateMemory\", \"args\": {\"update_type\": update_type}, \"id\": \"c1\"}]\n    return {\"messages\": [AIMessage(content=\"\", tool_calls=calls)]}\n\nfor t in [None, \"user\", \"todo\", \"instructions\"]:\n    print(t, \"->\", route_message(ai(t)))\ntry:\n    route_message(ai(\"calendar\"))\nexcept ValueError:\n    print(\"calendar -> ValueError\")\n",
+   "notas": "- `UpdateMemory` es un tool que **no hace nada**: solo sirve para que el LLM anuncie qué memoria quiere actualizar.\n- `route_message` lee ese tool call y elige el node. Es el mismo patrón que `tools_condition` del router (1.A).\n- En el notebook recibe también `config` y `store`; aquí lo dejé solo con `state` para probarlo sin LLM.\nSalida real:\n```\nNone -> __end__\nuser -> update_profile\ntodo -> update_todos\ninstructions -> update_instructions\ncalendar -> ValueError\n```",
+   "resaltar": [
+    7,
+    15
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El node que decide",
+   "contenido": "def task_mAIstro(state: MessagesState, config: RunnableConfig, store: BaseStore):\n\n    \"\"\"Load memories from the store and use them to personalize the chatbot's response.\"\"\"\n    \n    # Get the user ID from the config\n    user_id = config[\"configurable\"][\"user_id\"]\n\n    # Retrieve profile memory from the store\n    namespace = (\"profile\", user_id)\n    memories = store.search(namespace)\n    if memories:\n        user_profile = memories[0].value\n    else:\n        user_profile = None\n\n    # Retrieve task memory from the store\n    namespace = (\"todo\", user_id)\n    memories = store.search(namespace)\n    todo = \"\\n\".join(f\"{mem.value}\" for mem in memories)\n\n    # Retrieve custom instructions\n    namespace = (\"instructions\", user_id)\n    memories = store.search(namespace)\n    if memories:\n        instructions = memories[0].value\n    else:\n        instructions = \"\"\n    \n    system_msg = MODEL_SYSTEM_MESSAGE.format(user_profile=user_profile, todo=todo, instructions=instructions)\n\n    # Respond using memory as well as the chat history\n    response = model.bind_tools([UpdateMemory], parallel_tool_calls=False).invoke([SystemMessage(content=system_msg)]+state[\"messages\"])\n\n    return {\"messages\": [response]}\n",
+   "notas": "Función de la celda del grafo del notebook.\n- Lee las **tres** memorias del Store y las mete en el system prompt.\n- `bind_tools([UpdateMemory], parallel_tool_calls=False)`: como máximo un tool call por respuesta, así `route_message` solo mira `tool_calls[0]`.\n- El prompt le dice cuándo usar cada `update_type` y que tienda a actualizar los ToDos sin pedir permiso.",
+   "resaltar": [
+    32
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El node que actualiza los ToDos",
+   "contenido": "def update_todos(state: MessagesState, config: RunnableConfig, store: BaseStore):\n\n    \"\"\"Reflect on the chat history and update the memory collection.\"\"\"\n    \n    # Get the user ID from the config\n    user_id = config[\"configurable\"][\"user_id\"]\n\n    # Define the namespace for the memories\n    namespace = (\"todo\", user_id)\n\n    # Retrieve the most recent memories for context\n    existing_items = store.search(namespace)\n\n    # Format the existing memories for the Trustcall extractor\n    tool_name = \"ToDo\"\n    existing_memories = ([(existing_item.key, tool_name, existing_item.value)\n                          for existing_item in existing_items]\n                          if existing_items\n                          else None\n                        )\n\n    # Merge the chat history and the instruction\n    TRUSTCALL_INSTRUCTION_FORMATTED=TRUSTCALL_INSTRUCTION.format(time=datetime.now().isoformat())\n    updated_messages=list(merge_message_runs(messages=[SystemMessage(content=TRUSTCALL_INSTRUCTION_FORMATTED)] + state[\"messages\"][:-1]))\n\n    # Initialize the spy for visibility into the tool calls made by Trustcall\n    spy = Spy()\n    \n    # Create the Trustcall extractor for updating the ToDo list \n    todo_extractor = create_extractor(\n    model,\n    tools=[ToDo],\n    tool_choice=tool_name,\n    enable_inserts=True\n    ).with_listeners(on_end=spy)\n\n    # Invoke the extractor\n    result = todo_extractor.invoke({\"messages\": updated_messages, \n                                    \"existing\": existing_memories})\n\n    # Save the memories from Trustcall to the store\n    for r, rmeta in zip(result[\"responses\"], result[\"response_metadata\"]):\n        store.put(namespace,\n                  rmeta.get(\"json_doc_id\", str(uuid.uuid4())),\n                  r.model_dump(mode=\"json\"),\n            )\n        \n    # Respond to the tool call made in task_mAIstro, confirming the update\n    tool_calls = state['messages'][-1].tool_calls\n\n    # Extract the changes made by Trustcall and add the the ToolMessage returned to task_mAIstro\n    todo_update_msg = extract_tool_info(spy.called_tools, tool_name)\n    return {\"messages\": [{\"role\": \"tool\", \"content\": todo_update_msg, \"tool_call_id\":tool_calls[0]['id']}]}\n",
+   "notas": "- Es el `write_memory` de 5.C (Trustcall con `enable_inserts=True`), ahora como node de un tool.\n- `state[\"messages\"][:-1]` quita el último mensaje: el AIMessage con el tool call `UpdateMemory`, que no aporta datos.\n- Devuelve un **ToolMessage** con el mismo `tool_call_id`: así el LLM sabe que su tool se ejecutó.\n- `update_profile` es igual sin inserts; `update_instructions` reescribe un texto, como en 5.A.",
+   "resaltar": [
+    24,
+    52,
+    53
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Ver qué hizo Trustcall por dentro",
+   "contenido": "from dotenv import load_dotenv\nload_dotenv(\"module-1/studio/.env\")\nfrom pydantic import BaseModel, Field\nfrom trustcall import create_extractor\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage, AIMessage\n\nclass Memory(BaseModel):\n    content: str = Field(description=\"The main content of the memory. For example: User expressed interest in learning about French.\")\n\n# Spy: recorre los runs internos de Trustcall y guarda los tool calls de cada llamada al modelo\nclass Spy:\n    def __init__(self):\n        self.called_tools = []\n\n    def __call__(self, run):\n        q = [run]\n        while q:\n            r = q.pop()\n            if r.child_runs:\n                q.extend(r.child_runs)\n            if r.run_type == \"chat_model\":\n                self.called_tools.append(\n                    r.outputs[\"generations\"][0][0][\"message\"][\"kwargs\"][\"tool_calls\"]\n                )\n\nspy = Spy()\nmodel = ChatOpenAI(model=\"gpt-4o-mini\", temperature=0)\ntrustcall_extractor = create_extractor(model, tools=[Memory], tool_choice=\"Memory\", enable_inserts=True)\ntrustcall_extractor_see_all_tool_calls = trustcall_extractor.with_listeners(on_end=spy)\n\nexisting_memories = [(\"0\", \"Memory\", {\"content\": \"Lance had a nice bike ride in San Francisco this morning.\"})]\nupdated_conversation = [AIMessage(content=\"That's great, did you do after?\"),\n                        HumanMessage(content=\"I went to Tartine and ate a croissant.\"),\n                        AIMessage(content=\"What else is on your mind?\"),\n                        HumanMessage(content=\"I was thinking about my Japan, and going back this winter!\")]\n\nresult = trustcall_extractor_see_all_tool_calls.invoke({\"messages\": updated_conversation,\n                                                        \"existing\": existing_memories})\nfor call_group in spy.called_tools:\n    for call in call_group:\n        print(call[\"name\"], call[\"args\"])\n",
+   "notas": "- `with_listeners(on_end=spy)`: al terminar, LangChain le pasa al `Spy` el árbol de runs, y el `Spy` junta los tool calls de cada llamada al modelo.\n- `extract_tool_info` del notebook convierte esa lista en el texto del ToolMessage.\nSalida real:\n```\nPatchDoc {'json_doc_id': '0', 'planned_edits': '...', 'patches': [{'op': 'replace', 'path': '/content', 'value': '...'}]}\nMemory {'content': 'I was thinking about my Japan, and going back this winter!'}\n```\nAquí ves el JSON Patch de 5.B: el tool interno `PatchDoc`.",
+   "resaltar": [
+    30,
+    42
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Armar el grafo",
+   "contenido": "# Create the graph + all nodes\nbuilder = StateGraph(MessagesState)\n\n# Define the flow of the memory extraction process\nbuilder.add_node(task_mAIstro)\nbuilder.add_node(update_todos)\nbuilder.add_node(update_profile)\nbuilder.add_node(update_instructions)\nbuilder.add_edge(START, \"task_mAIstro\")\nbuilder.add_conditional_edges(\"task_mAIstro\", route_message)\nbuilder.add_edge(\"update_todos\", \"task_mAIstro\")\nbuilder.add_edge(\"update_profile\", \"task_mAIstro\")\nbuilder.add_edge(\"update_instructions\", \"task_mAIstro\")\n\n# Store for long-term (across-thread) memory\nacross_thread_memory = InMemoryStore()\n\n# Checkpointer for short-term (within-thread) memory\nwithin_thread_memory = MemorySaver()\n\n# We compile the graph with the checkpointer and store\ngraph = builder.compile(checkpointer=within_thread_memory, store=across_thread_memory)\n",
+   "notas": "- Cada node de memoria **vuelve** a `task_mAIstro`: es un loop ReAct, como el agente de 1.3.\n- Por eso el LLM puede leer el ToolMessage y contestarle al usuario.\n- Mismo `compile` de siempre: checkpointer para el thread, store para la memoria larga.",
+   "resaltar": [
+    10,
+    11
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo",
+   "contenido": "graph TD\n  START([START]) --> task_mAIstro\n  task_mAIstro -.-> update_profile\n  task_mAIstro -.-> update_todos\n  task_mAIstro -.-> update_instructions\n  task_mAIstro -.-> END([END])\n  update_profile --> task_mAIstro\n  update_todos --> task_mAIstro\n  update_instructions --> task_mAIstro\n  class task_mAIstro clave",
+   "notas": "- Las flechas punteadas son el conditional edge `route_message`.\n- Si el LLM no llama `UpdateMemory`, va directo a `END`: **no** se escribe memoria.\n- Compáralo con 5.A–5.C, donde `write_memory` corría siempre."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real (gpt-4o-mini)",
+   "contenido": "Thread 1, user \"Lance\":\n```\n> My name is Lance. I live in SF with my wife. I have a 1 year old daughter.\nAI tool_call: {'update_type': 'user'}\nTOOL: updated profile\n> My wife asked me to book swim lessons for the baby.\nAI tool_call: {'update_type': 'todo'}\nTOOL: New ToDo created: {'task': 'Book swim lessons for the baby', 'time_to_complete': 30, ...}\n> For the swim lessons, I need to get that done by end of November.\nAI tool_call: {'update_type': 'todo'}\nTOOL: Document 7fbdb0b7-... updated: Plan: Update the deadline ... Added content: 2026-11-30T23:59:59\n```\nPerfil guardado: `{'name': 'Lance', 'location': 'SF', 'job': None, 'connections': ['wife', '1 year old daughter'], 'interests': []}`.\n\nThread 2: \"I have 30 minutes, what tasks can I get done?\" contestó con la tarea de natación y su deadline. Todo salió del Store."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "\"Gracias\"",
+   "contenido": "En el thread 1 del agente (el grafo del paso 7, que usa el `route_message` del paso 3) escribes solo \"Gracias\". ¿Qué nodes corren y cuántas veces se llama al LLM?",
+   "respuesta": "Solo `task_mAIstro` y luego `END`: una llamada (lo corrí: el único node fue `task_mAIstro`, sin tool call). Si el LLM no emite `UpdateMemory`, `route_message` devuelve `END` y nadie toca el Store. En 5.A–5.C serían dos llamadas (responder y `write_memory`) en cada turno. Ese es el beneficio de que la memoria sea un tool: el LLM decide, aunque también puede decidir mal.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos cosas a la vez",
+   "contenido": "Escribes en un solo mensaje: \"Me mudé a Austin y tengo que renovar mi licencia\". Eso toca el perfil **y** los ToDos. Mira cómo llama al modelo el node `task_mAIstro` del paso 4. ¿Cuántos tool calls puede hacer en esa respuesta, y cómo se actualizan las dos memorias?",
+   "respuesta": "Un tool call por respuesta, por `parallel_tool_calls=False`. Primero hace, por ejemplo, `update_type='user'` → `update_profile` → vuelve a `task_mAIstro`. Ahí el LLM ve el ToolMessage y puede hacer otro tool call con `'todo'` → `update_todos` → vuelve. El loop permite varias actualizaciones, una por vuelta. Lo corrí con \"I just moved to Austin and I need to renew my driver's license\": `task_mAIstro` → `update_profile` → `task_mAIstro` → `update_todos` → `task_mAIstro` → END. Quedó `location: 'Austin'` y el ToDo \"Renew driver's license in Austin\". Que dé las dos vueltas lo decide el LLM.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "El reporte del Spy",
+   "contenido": "En mi corrida, al agregar el ToDo de la cerradura Yale, el ToolMessage decía `Document 7fbdb0b7... updated` (el ToDo de natación) con el contenido de la cerradura. Ese texto sale de lo que junta el `Spy` del paso 6. Pero al leer el Store, el ToDo de natación seguía igual. ¿Cómo puede ser?",
+   "respuesta": "El `Spy` guarda los tool calls de **todas** las llamadas al modelo dentro de Trustcall, incluidas propuestas de patch que Trustcall no aplicó en el resultado final. Por eso el reporte las incluye aunque no hayan quedado. El ToolMessage dice lo que el modelo **propuso**, no lo que quedó guardado. La verdad está en el Store.",
+   "ref": 6
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El agente escribe memoria solo cuando el LLM llama al tool `UpdateMemory`; `route_message` elige qué memoria actualizar.\n- Tres memorias en tres namespaces: perfil (semántica), ToDos (colección) e instrucciones (procedural).\n- Cada node de memoria devuelve un ToolMessage y vuelve al LLM: es el loop ReAct de 1.3 con la memoria como tool.\n- El `Spy` con `with_listeners` muestra los `PatchDoc` internos de Trustcall, pero reporta propuestas, no el estado final.\n- En Deep Agents (M3.3) la idea se repite: el agente decide qué escribir en su memoria larga usando tools."
+  }
+ ],
+ "fuentes": [
+  "module-5/memory_agent.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué cambia entre `write_memory` en cada turno (5.A–5.C) y la memoria como tool (5.D)?",
+   "reverso": "Antes se escribía siempre, con una llamada extra al LLM. En 5.D el LLM decide con el tool `UpdateMemory`; si no lo llama, no se toca el Store."
+  },
+  {
+   "frente": "El tool `UpdateMemory` no ejecuta nada. ¿Para qué sirve entonces?",
+   "reverso": "Es una señal: el LLM indica qué memoria actualizar (`user`, `todo` o `instructions`) y `route_message` lo manda al node correcto."
+  },
+  {
+   "frente": "¿Por qué `update_todos` devuelve un mensaje con `role: tool` y el `tool_call_id`?",
+   "reverso": "Porque el AIMessage anterior pidió un tool. El ToolMessage cierra ese tool call y le da al LLM el resultado para que conteste al usuario."
+  },
+  {
+   "frente": "¿Qué efecto tiene `parallel_tool_calls=False` en `task_mAIstro`?",
+   "reverso": "Como máximo un tool call por respuesta. Para actualizar dos memorias, el agente da dos vueltas al loop."
+  },
+  {
+   "frente": "Perfil, ToDos e instrucciones: ¿qué tipo de memoria es cada una?",
+   "reverso": "Perfil: semántica (hechos del usuario, un documento). ToDos: semántica en colección. Instrucciones: procedural (cómo quiere el usuario que se hagan las cosas)."
+  },
+  {
+   "frente": "El ToolMessage dice que Trustcall actualizó un documento, pero el Store no cambió. ¿En cuál confías?",
+   "reverso": "En el Store. El `Spy` junta todos los tool calls que el modelo propuso dentro de Trustcall, aunque no hayan quedado en el resultado final."
+  }
+ ]
+}

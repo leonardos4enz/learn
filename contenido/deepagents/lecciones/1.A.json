@@ -1,0 +1,121 @@
+{
+ "mision_id": "1.A",
+ "titulo": "Qué es un Deep Agent y cómo se corre",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En el curso 01 armaste agentes con `create_agent`: un LLM en un loop que pide tools hasta terminar. Para una tarea corta basta. Para una larga (investigar un tema, revisar 30 archivos, escribir un reporte) le faltan cosas:\n\n- un lugar donde guardar notas y resultados intermedios,\n- una forma de delegar partes del trabajo sin llenar su propio contexto,\n- algo que lo cuide cuando la conversación crece.\n\nPuedes programar todo eso tú con middleware. O usar un **harness** que ya lo trae conectado. Eso es Deep Agents: `create_deep_agent` te da el mismo loop de siempre con esas piezas puestas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "LLM, agente, deep agent",
+   "contenido": "Son tres capas, una dentro de otra:\n\n1. **LLM**: texto entra, texto sale. No actúa.\n2. **Agente**: el LLM en un loop con tools (lo que hiciste en LangGraph M1 y con `create_agent`).\n3. **Deep agent**: ese mismo agente dentro de un harness con piezas incluidas.\n\n| Pieza | ¿Viene sola en la 0.7? |\n|---|---|\n| Filesystem: `ls`, `read_file`, `write_file`, `edit_file`, `delete`, `glob`, `grep` | Sí |\n| `task`: delegar en un subagent | Sí |\n| Resumir el historial cuando crece | Sí |\n| Prompt caching | Sí |\n| `execute` (shell) | Solo con un backend con sandbox (M2) |\n| `write_todos` (planning) | **No**: es opt-in |\n\nOjo: los videos se grabaron antes de la 0.7 y muestran `write_todos` por defecto. Ya no."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente más chico del curso: m1.2_scratch_agent.py",
+   "contenido": "from deepagents import create_deep_agent\n\nfrom models import model\n\nagent = create_deep_agent(model=model)\n\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"What is an LLM?\"}]})\n\nprint(result[\"messages\"][-1].text)",
+   "notas": "Así viene en el repo. `model` sale de `python/models.py` (lo ves en 1.B) y necesita `ANTHROPIC_API_KEY` en `python/.env`.\nSe corre desde la carpeta `python`: `uv run python m1/m1.2_scratch_agent.py` (no con el botón de VS Code).\nSalida del material oficial (Haiku, recortada): `An LLM (Large Language Model) is a type of artificial intelligence system trained on vast amounts of text data...`\nEntra un dict con `messages`; la respuesta es el **último** mensaje de `result[\"messages\"]`.",
+   "resaltar": [
+    5,
+    9
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un LLM de mentira para ver por dentro: guion.py",
+   "contenido": "# guion.py: un \"LLM\" falso que sigue un guion fijo.\n# Sirve para ver qué hace el harness sin API key y sin gastar tokens.\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\n\n\nclass ModeloGuion(BaseChatModel):\n    \"\"\"Devuelve, en orden, los AIMessage de `guion` y anota lo que recibe.\"\"\"\n\n    guion: list[AIMessage] = []\n    llamadas: list = []        # los mensajes que recibió en cada llamada\n    tools_vistas: list = []    # los nombres de las tools que le ofrecieron\n\n    @property\n    def _llm_type(self) -> str:\n        return \"guion\"\n\n    def bind_tools(self, tools, **kwargs):\n        self.tools_vistas = [t[\"name\"] if isinstance(t, dict) else t.name for t in tools]\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        self.llamadas.append(messages)\n        respuesta = self.guion[min(len(self.llamadas), len(self.guion)) - 1]\n        return ChatResult(generations=[ChatGeneration(message=respuesta)])",
+   "notas": "Para mirar qué hace el harness sin gastar tokens usamos un modelo falso: devuelve respuestas escritas de antemano (el `guion`) y anota lo que recibe.\n`bind_tools` es lo que llama el agente para darle las tools al modelo; aquí solo guardamos sus nombres en `tools_vistas`.\n`_generate` es la \"llamada al LLM\": guarda los mensajes en `llamadas` y devuelve el siguiente `AIMessage` del guion.\nGuárdalo junto a los scripts de esta lección; todos hacen `from guion import ModeloGuion`.",
+   "resaltar": [
+    19,
+    23
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El mismo agente, con el modelo de guion",
+   "contenido": "from deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\n\nfrom guion import ModeloGuion\n\nmodel = ModeloGuion(guion=[AIMessage(\"Un LLM es un modelo de lenguaje grande.\")])\n\nagent = create_deep_agent(model=model)\n\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"What is an LLM?\"}]})\n\nprint(\"Tipo:\", type(agent).__name__)\nprint(\"Nodos:\", list(agent.get_graph().nodes))\nprint(\"Tools que vio el modelo:\", model.tools_vistas)\nprint(\"Claves del resultado:\", list(result.keys()))\nprint(\"Mensajes:\", [m.type for m in result[\"messages\"]])\nprint(\"Respuesta:\", result[\"messages\"][-1].text)",
+   "notas": "Salida real (deepagents 0.7):\n`Tipo: CompiledStateGraph`\n`Nodos: ['__start__', 'model', 'tools', 'PatchToolCallsMiddleware.before_agent', '__end__']`\n`Tools que vio el modelo: ['ls', 'read_file', 'write_file', 'edit_file', 'delete', 'glob', 'grep', 'task']`\n`Claves del resultado: ['messages', 'files']` · `Mensajes: ['human', 'ai']`\nNo pasaste ninguna tool y el modelo ya tiene 8. Sin `write_todos` ni `execute`.",
+   "resaltar": [
+    8,
+    14
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo que devuelve create_deep_agent",
+   "contenido": "graph LR\n  S([__start__]) --> P[PatchToolCalls]\n  P --> M[model]\n  M -.-> T[tools]\n  T -.-> M\n  M -.-> E([__end__])\n  class M clave",
+   "notas": "Es la misma forma del ReAct que armaste a mano en LangGraph M1 (`assistant` ⇄ `tools` con `tools_condition`): el modelo decide si pide una tool o termina.\nLas piezas del harness (filesystem, summarization, caching) no son nodos: son **middleware** que corren dentro de `model` y `tools`, como el middleware de `create_agent` del curso 01.\n`PatchToolCalls` corre al inicio de cada `invoke` y repara tool calls que quedaron sin su ToolMessage (por ejemplo, en un hilo que se cortó a medias)."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "No es otro framework: es create_agent con piezas",
+   "contenido": "Por dentro, `create_deep_agent` arma una lista de middleware y llama al `create_agent` de LangChain que ya usaste. Por eso devuelve un `CompiledStateGraph` de LangGraph, y todo lo que sabes sigue igual:\n\n| | LangGraph M1 | `create_agent` (01) | `create_deep_agent` |\n|---|---|---|---|\n| Loop modelo ⇄ tools | a mano | listo | listo |\n| `invoke`, `stream`, `get_state` | sí | sí | sí |\n| `checkpointer` + `thread_id` | sí | sí | sí |\n| Filesystem, `task`, resumen | no | con middleware tuyo | incluidos |\n\nEl estado trae `messages` (como `MessagesState`) y `files`: el filesystem virtual del agente, que verás en M2."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": ".text o .content",
+   "contenido": "from langchain_core.messages import AIMessage\n\nmsg = AIMessage(content=[\n    {\"type\": \"thinking\", \"thinking\": \"El usuario pregunta por LLMs...\", \"signature\": \"x\"},\n    {\"type\": \"text\", \"text\": \"Un LLM es un modelo de lenguaje.\"},\n])\n\nprint(\"content:\", msg.content)\nprint(\"text:\", msg.text)",
+   "notas": "Salida real:\n`content: [{'type': 'thinking', ...}, {'type': 'text', 'text': 'Un LLM es un modelo de lenguaje.'}]`\n`text: Un LLM es un modelo de lenguaje.`\n`.content` son los bloques crudos (aquí uno de razonamiento y uno de texto). `.text` junta solo el texto en un string. Por eso el curso imprime `.text`; usa `.content` cuando quieras ver el razonamiento de un modelo que lo devuelve.",
+   "resaltar": [
+    8,
+    9
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Activar el planning",
+   "contenido": "Tomas el agente del paso 5 y le agregas `TodoListMiddleware`:\n\n```python\nfrom deepagents import create_deep_agent\nfrom langchain.agents.middleware import TodoListMiddleware\nfrom langchain_core.messages import AIMessage\n\nfrom guion import ModeloGuion\n\nmodel = ModeloGuion(guion=[AIMessage(\"Un LLM es un modelo de lenguaje grande.\")])\n\nagent = create_deep_agent(model=model, middleware=[TodoListMiddleware()])\n\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"What is an LLM?\"}]})\n\nprint(\"Tools que vio el modelo:\", model.tools_vistas)\n```\n\n¿Qué lista imprime `Tools que vio el modelo`?",
+   "respuesta": "Salida real: las mismas 8 de antes **más** `write_todos` al final: `['ls', 'read_file', 'write_file', 'edit_file', 'delete', 'glob', 'grep', 'task', 'write_todos']`.\nEn la 0.7 el planning es opt-in: aparece solo si agregas el middleware. `middleware=[...]` se suma al stack del harness, no lo reemplaza. Además, ese middleware agrega su sección `## write_todos` al system prompt."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Cuando el modelo pide una tool",
+   "contenido": "Cambias el guion del paso 5 para que la primera respuesta pida la tool `ls` y la segunda sea texto:\n\n```python\nfrom deepagents import create_deep_agent\nfrom langchain_core.messages import AIMessage\n\nfrom guion import ModeloGuion\n\nmodel = ModeloGuion(guion=[\n    AIMessage(\"\", tool_calls=[{\"name\": \"ls\", \"args\": {\"path\": \"/\"}, \"id\": \"call_1\"}]),\n    AIMessage(\"No hay archivos todavía.\"),\n])\n\nagent = create_deep_agent(model=model)\n\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"¿Qué archivos tienes?\"}]})\n\nprint(\"Mensajes:\", [m.type for m in result[\"messages\"]])\nprint(\"Llamadas al modelo:\", len(model.llamadas))\nprint(\"Resultado de ls:\", repr(result[\"messages\"][2].content))\n```\n\n¿Qué tipos de mensaje quedan en `result[\"messages\"]`, cuántas veces se llamó al modelo y qué devolvió `ls`?",
+   "respuesta": "Salida real: `Mensajes: ['human', 'ai', 'tool', 'ai']`, `Llamadas al modelo: 2`, `Resultado de ls: 'No files found'`.\nEs el loop de siempre: el modelo pide `ls` (AIMessage con `tool_calls`), el nodo `tools` la ejecuta (ToolMessage) y el modelo vuelve a correr con ese resultado. `ls` es un built-in: no lo definiste tú y aun así existe. El filesystem empieza vacío porque vive en el estado del hilo (M2)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: ¿qué es create_deep_agent?",
+   "contenido": "Un compañero dice: \"Deep Agents es un framework aparte; lo que aprendí de LangGraph no me sirve aquí\". Recuerda la salida del paso 5 (`Tipo: CompiledStateGraph`). ¿Qué afirmación es correcta?\n\nA) `create_deep_agent` devuelve un objeto propio que solo corre en LangSmith Cloud.\nB) `create_deep_agent` devuelve un grafo compilado de LangGraph (vía `create_agent`); `invoke`, `checkpointer` y `thread_id` funcionan igual.\nC) Es solo un system prompt muy largo pegado a `create_agent`, sin tools nuevas.\nD) Reemplaza el loop modelo ⇄ tools por un planificador que siempre llama a `write_todos` primero.",
+   "respuesta": "**B.** Por dentro llama a `create_agent` con un stack de middleware y devuelve un `CompiledStateGraph`.\nA no: corre local con `invoke` (el deploy es otro tema, M5–M6). C no: en la 0.7 no hay prompt base grande y sí trae tools (filesystem, `task`). D no: el loop es el mismo y `write_todos` es opt-in.",
+   "ref": 5
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un deep agent es el loop de agente de siempre dentro de un **harness**: filesystem, `task` (subagents), resumen del historial y prompt caching ya incluidos.\n- En la 0.7, `write_todos` es opt-in (`TodoListMiddleware`) y `execute` solo existe con un backend con sandbox.\n- `create_deep_agent` llama a `create_agent` (curso 01) y devuelve un grafo de LangGraph: lo que sabes de `invoke`, `checkpointer` y `thread_id` aplica tal cual.\n- La respuesta es `result[\"messages\"][-1]`; `.text` da el string, `.content` los bloques crudos.\n\nDónde buscarlo en docs: docs.langchain.com → *Deep Agents → Overview* (`/oss/python/deepagents/overview`)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m1/m1.2-running-a-deep-agent.html",
+  "lca-deepagents/python/m1/m1.2_scratch_agent.py",
+  "lca-deepagents/python/models.py",
+  "~/.claude/skills/lca-deepagents/references/m1.1-overview.md",
+  "deepagents 0.7: .venv/Lib/site-packages/deepagents/graph.py"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué le agrega un deep agent a un agente hecho con `create_agent`?",
+   "reverso": "Un harness con piezas ya conectadas: tools de filesystem, `task` para delegar en subagents, resumen del historial y prompt caching. El loop modelo ⇄ tools es el mismo."
+  },
+  {
+   "frente": "¿Por qué lo que sabes de LangGraph sirve tal cual con `create_deep_agent`?",
+   "reverso": "Porque devuelve un `CompiledStateGraph` (llama a `create_agent` por dentro). `invoke`, `stream`, `get_state`, `checkpointer` y `thread_id` funcionan igual."
+  },
+  {
+   "frente": "Creas un deep agent en la 0.7 sin `middleware`. ¿Tiene `write_todos`?",
+   "reverso": "No. El planning es opt-in: aparece si agregas `TodoListMiddleware()` a `middleware=[...]`."
+  },
+  {
+   "frente": "¿Por qué tu deep agent no tiene la tool `execute` por defecto?",
+   "reverso": "`execute` corre comandos de shell y solo existe con un backend que tenga sandbox. Con el backend por defecto (estado del hilo) no hay shell."
+  },
+  {
+   "frente": "Tu modelo devuelve bloques de razonamiento. ¿`.text` o `.content` para mostrar solo la respuesta?",
+   "reverso": "`.text`: junta solo los bloques de texto en un string. `.content` trae los bloques crudos, incluido el razonamiento."
+  }
+ ]
+}

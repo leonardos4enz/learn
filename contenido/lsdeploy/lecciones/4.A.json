@@ -1,0 +1,162 @@
+{
+ "mision_id": "4.A",
+ "titulo": "Memoria: checkpointer, Store y storage APIs",
+ "modulo": "4",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Tu tutor ya está desplegado. Ahora tiene que recordar dos cosas que no son iguales:\n\n1. **La conversación** de cada módulo: lo que el alumno dijo en *este* thread.\n2. **El perfil** del alumno (nombre, metas): tiene que verse en *todos* sus threads y seguir ahí cuando vuelva mañana.\n\nAdemás, la deployment corre en contenedores que se caen, se reemplazan y cambian de imagen con cada revisión. Si guardas algo en el lugar equivocado, se pierde o se mezcla entre threads.\n\nEn esta lección ves los tres lugares donde puede vivir la información de una deployment y cuál usar para qué."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Los tres almacenamientos",
+   "contenido": "| | Checkpointer | Store | Filesystem local |\n|---|---|---|---|\n| Alcance | Toda la deployment, **por thread** | Toda la deployment, **entre threads** | Solo ese contenedor |\n| Vida | Mientras exista el thread | Mientras exista la deployment | Lo que trae la imagen |\n| Si el node falla | Se revierte; reintenta desde el último checkpoint | **Lo escrito se queda** | Se pierde |\n| Nueva revisión | Se conserva | Se conserva | Se reemplaza con la imagen nueva |\n\n*Nueva revisión* = subir una imagen nueva (o cambiar env vars) a la **misma** deployment. La base de datos (Postgres) sigue; solo se borra si borras la deployment.\n\nEl checkpointer ya lo conoces de LangGraph M1: `MemorySaver` + `thread_id`. En una deployment es lo mismo, pero en Postgres."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El Store desde cero",
+   "contenido": "El **Store** es la memoria de largo plazo de LangGraph: un almacén **key-value** compartido por todos los threads.\n\nCada item se identifica con dos cosas:\n- **namespace**: una **tupla** de strings, como una carpeta. Ej.: `(\"jane_doe\",)` o `(\"user1\", \"notes\")`.\n- **key**: un string, como el nombre del archivo. Ej.: `\"profile\"`.\n\nY guarda un **value**: un dict.\n\nLa diferencia clave con el checkpointer: al checkpointer llegas **por `thread_id`**; al Store llegas **por namespace**. Cualquiera que pida ese namespace ve los mismos datos, esté en el thread que esté (o en ninguno).\n\nOjo con la coma: `(\"jane_doe\",)` es una tupla de un elemento; `(\"jane_doe\")` es solo un string."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Las tres operaciones del Store",
+   "contenido": "from langgraph.store.memory import InMemoryStore\n\nstore = InMemoryStore()\nNAMESPACE = (\"john_doe\",)\n\n# put = upsert: namespace + key -> value (un dict)\nstore.put(NAMESPACE, \"profile\", {\"first_name\": \"John\", \"goals\": \"Entender deployments\"})\nstore.put(NAMESPACE, \"sessions\", {\"sessions\": [\"module-1\"]})\n\nitem = store.get(NAMESPACE, \"profile\")\nprint(\"get:\", item.namespace, item.key, item.value)\n\n# Escribir otra vez la misma key reemplaza el valor completo (no hace merge)\nstore.put(NAMESPACE, \"profile\", {\"first_name\": \"John\"})\nprint(\"get otra vez:\", store.get(NAMESPACE, \"profile\").value)\n\n# search lista todo lo que cuelga de un prefijo de namespace\nprint(\"search:\", [(i.key, i.value) for i in store.search(NAMESPACE)])\n\n# Otro namespace es otro \"cajón\"\nprint(\"otro namespace:\", store.get((\"jane_doe\",), \"profile\"))\n\n# Un punto dentro de una etiqueta\ntry:\n    store.put((\"jane@example.com\",), \"profile\", {\"x\": 1})\n    print(\"con punto: se guardó\")\nexcept Exception as e:\n    print(\"con punto:\", type(e).__name__, e)",
+   "notas": "Corre con `InMemoryStore`, la versión en memoria del mismo Store (sin servidor). Salida real:\n`get: ('john_doe',) profile {'first_name': 'John', 'goals': 'Entender deployments'}`\n`get otra vez: {'first_name': 'John'}` → `put` es **upsert**: reemplaza el value completo, no hace merge.\n`search: [('profile', ...), ('sessions', ...)]` · `otro namespace: None`\n`con punto: InvalidNamespaceError ... Namespace labels cannot contain periods ('.')`. Por eso el tutor guarda a `jane@example.com` como `(\"jane@example_com\",)`.",
+   "resaltar": [
+    14,
+    18,
+    25
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Checkpointer y Store en el mismo grafo",
+   "contenido": "from dataclasses import dataclass\nfrom langchain_core.messages import AIMessage\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import END, START, MessagesState, StateGraph\nfrom langgraph.runtime import Runtime\nfrom langgraph.store.memory import InMemoryStore\n\n\n@dataclass\nclass Context:\n    store_namespace: str\n\n\ndef tutor(state: MessagesState, runtime: Runtime[Context]) -> dict:\n    ns = (runtime.context.store_namespace,)\n    item = runtime.store.get(ns, \"profile\")          # leer del Store\n    name = item.value[\"first_name\"] if item else \"Student\"\n    last = state[\"messages\"][-1].content\n    if last.startswith(\"Me llamo \"):\n        name = last.removeprefix(\"Me llamo \")\n        runtime.store.put(ns, \"profile\", {\"first_name\": name})  # escribir al Store\n    n = len(state[\"messages\"])\n    return {\"messages\": [AIMessage(f\"Hola {name}. Este thread lleva {n} mensaje(s).\")]}\n\n\nbuilder = StateGraph(MessagesState, context_schema=Context)\nbuilder.add_node(\"tutor\", tutor)\nbuilder.add_edge(START, \"tutor\")\nbuilder.add_edge(\"tutor\", END)\ngraph = builder.compile(checkpointer=MemorySaver(), store=InMemoryStore())\n\nctx = Context(store_namespace=\"jane_doe\")\nthread_a = {\"configurable\": {\"thread_id\": \"A\"}}\nthread_b = {\"configurable\": {\"thread_id\": \"B\"}}\n\nr = graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Me llamo Jane\"}]}, thread_a, context=ctx)\nprint(\"A1:\", r[\"messages\"][-1].content)\nr = graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Sigo aqui\"}]}, thread_a, context=ctx)\nprint(\"A2:\", r[\"messages\"][-1].content)\nr = graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Hola\"}]}, thread_b, context=ctx)\nprint(\"B1:\", r[\"messages\"][-1].content)",
+   "notas": "Un node lee el perfil del Store (`runtime.store`) y cuenta los mensajes del thread (checkpointer). Salida real:\n`A1: Hola Jane. Este thread lleva 1 mensaje(s).`\n`A2: Hola Jane. Este thread lleva 3 mensaje(s).`\n`B1: Hola Jane. Este thread lleva 1 mensaje(s).`\nEl thread B empieza **sin historial** (checkpointer por thread), pero ya sabe que se llama Jane (Store entre threads).",
+   "resaltar": [
+    16,
+    21,
+    30
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Qué ve cada thread",
+   "contenido": "graph LR\n  A[thread A] --> CA[checkpoints de A]\n  B[thread B] --> CB[checkpoints de B]\n  A --> S[(Store: namespace jane_doe)]\n  B --> S\n  class S clave",
+   "notas": "Cada thread tiene su propia cadena de checkpoints: A no ve los mensajes de B.\nLos dos leen y escriben el **mismo** item del Store porque usan el mismo namespace (`jane_doe`), que viene del `context`, no del thread."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué pasa con el Store si el node falla",
+   "contenido": "from langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import END, START, StateGraph\nfrom langgraph.runtime import Runtime\nfrom langgraph.store.memory import InMemoryStore\nfrom langgraph.types import RetryPolicy\nfrom typing_extensions import TypedDict\n\n\nclass State(TypedDict):\n    count: int\n\n\nintentos = {\"n\": 0}\n\n\ndef contar_visita(state: State, runtime: Runtime) -> dict:\n    ns = (\"jane_doe\",)\n    item = runtime.store.get(ns, \"visitas\")\n    visitas = item.value[\"n\"] if item else 0\n    runtime.store.put(ns, \"visitas\", {\"n\": visitas + 1})   # escribe ANTES de fallar\n    intentos[\"n\"] += 1\n    if intentos[\"n\"] == 1:\n        raise ConnectionError(\"se cayó la red a mitad del node\")\n    return {\"count\": state[\"count\"] + 1}\n\n\nstore = InMemoryStore()\nbuilder = StateGraph(State)\nbuilder.add_node(\"contar_visita\", contar_visita,\n                 retry_policy=RetryPolicy(max_attempts=2, retry_on=ConnectionError, initial_interval=0.01))\nbuilder.add_edge(START, \"contar_visita\")\nbuilder.add_edge(\"contar_visita\", END)\ngraph = builder.compile(checkpointer=MemorySaver(), store=store)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\nout = graph.invoke({\"count\": 0}, config)\nprint(\"state.count:\", out[\"count\"])\nprint(\"intentos del node:\", intentos[\"n\"])\nprint(\"visitas en el Store:\", store.get((\"jane_doe\",), \"visitas\").value)",
+   "notas": "El node escribe al Store y luego falla; el `RetryPolicy` lo reintenta desde el **inicio del node**. Salida real:\n`state.count: 1` · `intentos del node: 2` · `visitas en el Store: {'n': 2}`\nEl state (checkpointer) contó una vez, porque el primer intento se descartó. El Store contó **dos**: la escritura del intento fallido no se revierte. Por eso las escrituras al Store deben ser **idempotentes** (repetirlas da el mismo resultado).",
+   "resaltar": [
+    20,
+    23,
+    30
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El Store desde afuera: el SDK",
+   "contenido": "\"\"\"\nm4 L2 — Part 1: The Store\n\nWrites a student profile to the LangGraph Store and reads it back.\n\nThe Store is cross-thread, deployment-wide persistent storage. Anything written\nhere is immediately visible to all threads and survives redeployment.\n\nSteps:\n  1. Connect to your deployment\n  2. Write a profile to the Store\n  3. Read it back\n  4. List all items in the namespace\n\nRun against a local deployment (default) or pass a cloud URL:\n  uv run python store.py\n  uv run python store.py https://tutor-xyz.us.langgraph.app\n\"\"\"\n\nimport asyncio\nimport os\nimport sys\n\nimport httpx\nfrom dotenv import load_dotenv\nfrom langgraph_sdk import get_client\n\nload_dotenv(override=True)  # prefer .env file\n\n_url_provided = len(sys.argv) > 1\nDEPLOYMENT_URL = sys.argv[1] if _url_provided else \"http://localhost:2024\"\nAPI_KEY = os.environ.get(\"LANGSMITH_API_KEY\", \"\")\n\nCHECK = \"✅\"\nARROW = \"→\"\n\n# Each student's data is stored under their own namespace.\n# The deep_tutor UI builds the namespace from the student's email by replacing\n# `.` with `_` (e.g. jane@example.com -> \"jane@example_com\"). Here we use a\n# hardcoded \"john_doe\" namespace as a stand-in.\nNAMESPACE = (\"john_doe\",)\n\nPROFILE = {\n    \"first_name\": \"John\",\n    \"last_name\": \"Doe\",\n    \"email\": \"john@example.com\",\n    \"goals\": \"Understand how LangGraph deployments work end to end.\",\n}\n\n\nasync def check_connection() -> None:\n    try:\n        async with httpx.AsyncClient() as http:\n            r = await http.get(f\"{DEPLOYMENT_URL}/ok\", timeout=5)\n            r.raise_for_status()\n    except Exception as e:\n        if _url_provided:\n            sys.exit(f\"Cannot reach deployment at {DEPLOYMENT_URL}\\nCheck the URL and try again.\\n{e}\")\n        else:\n            sys.exit(f\"Cannot reach local dev server at {DEPLOYMENT_URL}\\nIs `langgraph dev` running?\\n{e}\")\n\n\nasync def main() -> None:\n    await check_connection()\n\n    # ---------------------------------------------------------------------------\n    # Step 1: Connect to your deployment\n    # ---------------------------------------------------------------------------\n\n    client = get_client(url=DEPLOYMENT_URL, api_key=API_KEY)\n    print(f\"{CHECK} Connected: {DEPLOYMENT_URL}\")\n\n    # ---------------------------------------------------------------------------\n    # Step 2: Write the profile to the Store\n    #\n    # put_item is an upsert — writing the same namespace + key again overwrites.\n    # The write is immediately visible to all threads in the deployment.\n    # ---------------------------------------------------------------------------\n\n    await client.store.put_item(NAMESPACE, key=\"profile\", value=PROFILE)\n    print(f\"{CHECK} Wrote profile to Store under namespace {NAMESPACE!r}\")\n\n    # ---------------------------------------------------------------------------\n    # Step 3: Read it back\n    #\n    # get_item fetches a single item by namespace + key.\n    # ---------------------------------------------------------------------------\n\n    item = await client.store.get_item(NAMESPACE, key=\"profile\")\n    print(f\"\\n{ARROW} Read back:\")\n    for k, v in item[\"value\"].items():\n        print(f\"  {k}: {v}\")\n\n    # ---------------------------------------------------------------------------\n    # Step 4: Search all items in the namespace\n    #\n    # search_items returns everything stored under a namespace prefix.\n    # Useful for listing all data for a student.\n    # ---------------------------------------------------------------------------\n\n    print(f\"\\n{ARROW} All items in namespace {NAMESPACE!r}:\")\n    result = await client.store.search_items(NAMESPACE)\n    for entry in result[\"items\"]:\n        print(f\"  key={entry['key']}  value={entry['value']}\")\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())",
+   "notas": "Es `python/m4/l2/store.py` del curso. Las mismas tres operaciones, pero por **HTTP** contra la deployment: `put_item`, `get_item`, `search_items` (el value llega como dict: `item[\"value\"]`).\n**No se corrió aquí**: necesita un `langgraph dev` o una deployment. Salida del material oficial (m4.2): `Wrote profile to Store under namespace ('john_doe',)`, después las 4 keys del perfil y `key=profile  value={...}`.\nDentro de un node no hay HTTP ni auth: el Store llega directo en `runtime.store`, porque el node ya está dentro de la deployment.",
+   "resaltar": [
+    80,
+    89,
+    102
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El checkpointer desde afuera: leer y también escribir",
+   "contenido": "from langchain_core.messages import AIMessage\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import END, START, MessagesState, StateGraph\n\n\ndef echo(state: MessagesState) -> dict:\n    return {\"messages\": [AIMessage(f\"eco: {state['messages'][-1].content}\")]}\n\n\nbuilder = StateGraph(MessagesState)\nbuilder.add_node(\"echo\", echo)\nbuilder.add_edge(START, \"echo\")\nbuilder.add_edge(\"echo\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\nconfig = {\"configurable\": {\"thread_id\": \"t1\"}}\n\ngraph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"hola\"}]}, config)\n\nstate = graph.get_state(config)                    # = client.threads.get_state\nprint(\"mensajes:\", [m.content for m in state.values[\"messages\"]])\nhistory = list(graph.get_state_history(config))    # = client.threads.get_history\nprint(\"checkpoints:\", len(history))\n\n# = client.threads.update_state: escribe un checkpoint nuevo SIN correr el grafo\ngraph.update_state(config, {\"messages\": [AIMessage(\"nota del admin\")]}, as_node=\"echo\")\nprint(\"mensajes:\", [m.content for m in graph.get_state(config).values[\"messages\"]])\nprint(\"checkpoints:\", len(list(graph.get_state_history(config))))",
+   "notas": "Versión local de lo que hace el SDK sobre un thread (grafo eco, sin LLM). Salida real:\n`mensajes: ['hola', 'eco: hola']` · `checkpoints: 3`\n`mensajes: ['hola', 'eco: hola', 'nota del admin']` · `checkpoints: 4`\nEn la deployment: `client.threads.get_state`, `get_history` y `update_state`. El docstring de `m4/l2/checkpointer.py` dice que desde el SDK el checkpointer es \"read-only\": **es un error del repo**. En `langgraph_sdk` 0.4.12, `update_state` hace `POST /threads/{id}/state` y devuelve el checkpoint nuevo; m4.2 tiene razón.",
+   "resaltar": [
+    19,
+    21,
+    25
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Quién llega a qué",
+   "contenido": "| | Desde el SDK (afuera) | Desde un node (adentro) |\n|---|---|---|\n| Checkpointer | Lee y escribe: `threads.get_state`, `get_history`, `update_state` | Automático: el node recibe el state y lo que devuelve pasa por los reducers |\n| Store | `store.put_item`, `get_item`, `search_items` | `runtime.store.put`, `get`, `search` |\n| Filesystem | **No llega** | Lee y escribe con file I/O |\n\nEl SDK va por HTTP y pasa por la auth (tu API key, o el token del usuario cuando hay custom auth: módulo 5). El filesystem vive dentro del contenedor: no hay endpoint para él. Para cambiarlo, construyes y despliegas otra imagen.\n\nLo escrito en el filesystem en runtime es frágil: un run puede pasar a otro contenedor, y en la siguiente revisión se pierde."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Records: assistants, threads y runs",
+   "contenido": "En el mismo Postgres hay una tercera cosa: los **records**.\n\n| Record | Guarda |\n|---|---|\n| Assistant | `graph_id`, `context`, `config`, metadata |\n| Thread | metadata, status, fechas |\n| Run | `thread_id`, `assistant_id`, status, input, `multitask_strategy` |\n\n`client.runs.wait(thread_id, assistant_id, input)` hace: 1) busca el assistant (su context y config), 2) carga el state del thread (checkpointer), 3) crea el run en `pending`, 4) un worker hace el invoke y agrega checkpoints, 5) el run pasa a `success`.\n\nEl **output no se guarda en el run**: queda en el thread como último checkpoint (`threads.get_state`).\n\n`context` es para tu código (`context_schema`); `config` es para el framework (`recursion_limit`, `tags`)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: una revisión nueva",
+   "contenido": "Un alumno va a mitad de una conversación en el thread A. Durante la conversación, el agente escribió `/tmp/resumen.md` en el disco del contenedor y guardó `{\"goals\": \"...\"}` en el Store. Despliegas una imagen nueva (nueva revisión). ¿Qué sobrevive?\n\nA) Nada: la deployment arranca de cero.\nB) El state del thread A y el item del Store; `/tmp/resumen.md` se pierde.\nC) Solo `/tmp/resumen.md`, porque está en el disco.\nD) El state del thread A, pero el Store se borra porque está ligado a la imagen.",
+   "respuesta": "**B.** Checkpointer y Store viven en el Postgres de la deployment, que sobrevive a las revisiones. El filesystem viene de la imagen: la nueva trae sus propios archivos y lo escrito en runtime se pierde.\nA confunde revisión con borrar la deployment. C es al revés. D: el Store no depende de la imagen."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Variación: una escritura idempotente",
+   "contenido": "Cambias el node del paso 7 para que escriba un valor fijo en vez de sumar. El node sigue fallando la primera vez:\n\n```python\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import END, START, StateGraph\nfrom langgraph.runtime import Runtime\nfrom langgraph.store.memory import InMemoryStore\nfrom langgraph.types import RetryPolicy\nfrom typing_extensions import TypedDict\n\n\nclass State(TypedDict):\n    count: int\n\n\nintentos = {\"n\": 0}\n\n\ndef contar_visita(state: State, runtime: Runtime) -> dict:\n    ns = (\"jane_doe\",)\n    # versión idempotente: escribe un valor fijo, no suma\n\n    runtime.store.put(ns, \"ultima_visita\", {\"dia\": \"2026-11-11\"})   # escribe ANTES de fallar\n    intentos[\"n\"] += 1\n    if intentos[\"n\"] == 1:\n        raise ConnectionError(\"se cayó la red a mitad del node\")\n    return {\"count\": state[\"count\"] + 1}\n\n\nstore = InMemoryStore()\nbuilder = StateGraph(State)\nbuilder.add_node(\"contar_visita\", contar_visita,\n                 retry_policy=RetryPolicy(max_attempts=2, retry_on=ConnectionError, initial_interval=0.01))\nbuilder.add_edge(START, \"contar_visita\")\nbuilder.add_edge(\"contar_visita\", END)\ngraph = builder.compile(checkpointer=MemorySaver(), store=store)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\nout = graph.invoke({\"count\": 0}, config)\nprint(\"state.count:\", out[\"count\"])\nprint(\"intentos del node:\", intentos[\"n\"])\nprint(\"Store:\", [(i.key, i.value) for i in store.search((\"jane_doe\",))])\n```\n\n¿Qué imprime?",
+   "respuesta": "Salida real: `state.count: 1`, `intentos del node: 2`, `Store: [('ultima_visita', {'dia': '2026-11-11'})]`.\nEl node también corrió dos veces y escribió dos veces, pero escribir el mismo valor fijo dos veces deja lo mismo: eso es **idempotente**. Sumar (`n + 1`) no lo es, por eso en el paso 7 salió `{'n': 2}`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Variación: Ana en otro thread",
+   "contenido": "Tomas el grafo del paso 5 y cambias el turno del thread B: Jane ahora dice \"Me llamo Ana\". Después vuelve al thread A:\n\n```python\nfrom dataclasses import dataclass\nfrom langchain_core.messages import AIMessage\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import END, START, MessagesState, StateGraph\nfrom langgraph.runtime import Runtime\nfrom langgraph.store.memory import InMemoryStore\n\n\n@dataclass\nclass Context:\n    store_namespace: str\n\n\ndef tutor(state: MessagesState, runtime: Runtime[Context]) -> dict:\n    ns = (runtime.context.store_namespace,)\n    item = runtime.store.get(ns, \"profile\")          # leer del Store\n    name = item.value[\"first_name\"] if item else \"Student\"\n    last = state[\"messages\"][-1].content\n    if last.startswith(\"Me llamo \"):\n        name = last.removeprefix(\"Me llamo \")\n        runtime.store.put(ns, \"profile\", {\"first_name\": name})  # escribir al Store\n    n = len(state[\"messages\"])\n    return {\"messages\": [AIMessage(f\"Hola {name}. Este thread lleva {n} mensaje(s).\")]}\n\n\nbuilder = StateGraph(MessagesState, context_schema=Context)\nbuilder.add_node(\"tutor\", tutor)\nbuilder.add_edge(START, \"tutor\")\nbuilder.add_edge(\"tutor\", END)\ngraph = builder.compile(checkpointer=MemorySaver(), store=InMemoryStore())\n\nctx = Context(store_namespace=\"jane_doe\")\nthread_a = {\"configurable\": {\"thread_id\": \"A\"}}\nthread_b = {\"configurable\": {\"thread_id\": \"B\"}}\n\nr = graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Me llamo Jane\"}]}, thread_a, context=ctx)\nprint(\"A1:\", r[\"messages\"][-1].content)\nr = graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Sigo aqui\"}]}, thread_a, context=ctx)\nprint(\"A2:\", r[\"messages\"][-1].content)\nr = graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Me llamo Ana\"}]}, thread_b, context=ctx)\nprint(\"B1:\", r[\"messages\"][-1].content)\nr = graph.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Volvi\"}]}, thread_a, context=ctx)\nprint(\"A3:\", r[\"messages\"][-1].content)\n```\n\n¿Qué imprimen `B1` y `A3`?",
+   "respuesta": "Salida real: `B1: Hola Ana. Este thread lleva 1 mensaje(s).` y `A3: Hola Ana. Este thread lleva 5 mensaje(s).`\nEl nombre se guardó en el **Store** (mismo namespace `jane_doe` para los dos threads), así que A también ve \"Ana\". El conteo sale del **checkpointer** de A: 2 turnos anteriores (4 mensajes) + el nuevo mensaje = 5. B no suma nada a A."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: el SDK y el checkpointer",
+   "contenido": "Un admin quiere corregir a mano el state de un thread que se atoró (por ejemplo, agregar un mensaje que aclare algo), **sin** correr el agente. Usa el SDK desde su laptop. ¿Qué opción es correcta?\n\nA) No se puede: desde el SDK el checkpointer es solo lectura.\nB) `client.threads.update_state(thread_id, values=...)`: escribe un checkpoint nuevo.\nC) `client.store.put_item(...)` con el `thread_id` como namespace.\nD) Tiene que redeployar con una imagen que traiga el state corregido.",
+   "respuesta": "**B.** `threads.update_state` hace `POST /threads/{id}/state` y crea un checkpoint nuevo (es lo que usa human-in-the-loop). A es el error del docstring de `checkpointer.py`. C escribe en el Store, que no es el state del thread. D: el state no vive en la imagen."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Checkpointer** = state por thread (lo que llevas desde LangGraph M1). **Store** = key-value por namespace, compartido entre threads. **Filesystem** = lo que trae la imagen, por contenedor.\n- Checkpointer y Store viven en Postgres y sobreviven a nuevas revisiones; lo escrito en el filesystem en runtime se pierde.\n- Si un node falla, el checkpoint se descarta, pero lo escrito al Store se queda: escribe de forma idempotente.\n- Desde el SDK llegas al Store (`put_item`, `get_item`, `search_items`) y al checkpointer (`get_state`, `get_history`, `update_state`, que sí escribe). Al filesystem, no.\n- Un run usa dos ids: `assistant_id` (cómo se comporta) y `thread_id` (qué conversación sigue).\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Agent Server API* (Threads, Store, Runs, Assistants) y LangGraph → *Persistence* (checkpointer y memory store)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m4/m4.1-storage-in-langgraph.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m4/m4.2-storage-apis.html",
+  "https://langchain-ai.github.io/lca-lessons/deployment/m4/m4.4-records.html",
+  "lca-deployment/python/m4/l2/store.py",
+  "lca-deployment/python/m4/l2/checkpointer.py",
+  "lca-deployment/thinkific/src/m4/m4.1-storage-in-langgraph.md",
+  "lca-deployment/thinkific/src/m4/m4.2-storage-apis.md",
+  "lca-deployment/thinkific/src/m4/m4.4-records.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué el perfil del alumno va en el Store y no en el state del thread?",
+   "reverso": "El state (checkpointer) es por thread: otro thread empieza vacío. El Store se busca por namespace y lo ven todos los threads."
+  },
+  {
+   "frente": "Un node escribe al Store y luego falla. ¿Qué pasa con esa escritura?",
+   "reverso": "Se queda. El checkpoint se descarta y el node se reintenta desde el inicio, así que puede escribir otra vez: hace falta idempotencia."
+  },
+  {
+   "frente": "Despliegas una revisión nueva. ¿Qué pasa con threads, Store y archivos escritos en runtime?",
+   "reverso": "Threads y Store se conservan (Postgres de la deployment). Lo escrito en el filesystem en runtime se pierde: la imagen nueva trae sus archivos."
+  },
+  {
+   "frente": "¿Por qué el tutor guarda a jane@example.com en el namespace (\"jane@example_com\",)?",
+   "reverso": "Las etiquetas de un namespace no pueden llevar puntos (el punto es el separador). Se cambia '.' por '_'."
+  },
+  {
+   "frente": "¿Puede el SDK escribir en el checkpointer de un thread?",
+   "reverso": "Sí: threads.update_state crea un checkpoint nuevo. El docstring de checkpointer.py que dice \"read-only\" está mal."
+  },
+  {
+   "frente": "¿Por qué un node usa runtime.store sin API key y el SDK no?",
+   "reverso": "El node ya corre dentro de la deployment (trust boundary): el Store le llega como objeto. El SDK va por HTTP y pasa por la auth."
+  },
+  {
+   "frente": "Después de runs.wait, ¿dónde está el output del run?",
+   "reverso": "En el thread, como último checkpoint (threads.get_state). El record del run solo guarda input, status y tiempos."
+  }
+ ]
+}

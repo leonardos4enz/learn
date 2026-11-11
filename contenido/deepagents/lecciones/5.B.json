@@ -1,0 +1,114 @@
+{
+ "mision_id": "5.B",
+ "titulo": "El Sales Assistant",
+ "modulo": "5",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Ya tienes todas las piezas: subagents, skills, `AGENTS.md`, backends, intérprete, HITL, MCP y `langgraph dev`.\nFalta verlas **juntas** en un proyecto real y saber, para cada comportamiento, **dónde vive**.\n\nEl Sales Assistant trabaja para Jane Peacock, vendedora de Chinook: lee pedidos de cotización (RFQ) de un inbox,\nbusca clientes y precios en la base de datos, calcula el quote, lo hace revisar, deja el borrador para que Jane lo\napruebe, escribe el newsletter semanal y reporta su territorio."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El proyecto: casi todo es texto",
+   "contenido": "```\nsales_assistant/\n├── agent.py         # el único \"cableado\"\n├── langgraph.json   # qué servir: ./agent.py:make_graph\n├── start.sh         # levanta el servidor de correo y langgraph dev\n├── AGENTS.md        # manual de operación (texto)\n├── skills/          # rfq-quote, weekly-newsletter, territory-report (texto)\n├── subagents.py     # los especialistas\n├── tools/           # sql.py, html.py, chart.py, search.py\n├── mcp/             # servidor de correo falso (MCP)\n└── data/chinook.db\n```\n`AGENTS.md` dice quién es Jane y las reglas de la casa (\"el dinero del quote se calcula con el intérprete\").\nCada skill es el paso a paso de una tarea. Cambiar el comportamiento casi siempre es editar texto."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "agent.py completo",
+   "contenido": "# python/m5/sales_assistant/agent.py\n\"\"\"Chinook Sales Assistant.\n\nUses a local FilesystemBackend, a QuickJS code interpreter for arithmetic\nand data prep, and a dedicated chart tool for rendering.\n\nStart with:\n    ./start.sh\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nimport os\nfrom pathlib import Path\n\nfrom deepagents import create_deep_agent\nfrom deepagents.backends import FilesystemBackend\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\nfrom langchain_quickjs import CodeInterpreterMiddleware\nfrom subagents import build_subagents\nfrom tools.chart import render_pie_chart\nfrom tools.html import markdown_to_html\n\nfrom models import strong_model\n\nlogger = logging.getLogger(__name__)\n\nHERE = Path(__file__).resolve().parent\n\nSYSTEM_PROMPT = (\n    \"You are a sales assistant for Jane Peacock, a Sales Support Agent at \"\n    \"Chinook, an online music distributor. Follow your operating manual (loaded \"\n    \"from your memory) and use the matching playbook from /skills/ for each task.\"\n)\n\nMAIL_SERVER = {\"transport\": \"streamable-http\", \"url\": \"http://127.0.0.1:5002/mcp\"}\n\n_enable_search = bool(os.environ.get(\"TAVILY_API_KEY\"))\nif not _enable_search:\n    logger.info(\"TAVILY_API_KEY not set — newsletter research subagent disabled.\")\n\n_backend = FilesystemBackend(root_dir=str(HERE), virtual_mode=True)\n\n\nasync def make_graph():\n    client = MultiServerMCPClient({\"mock-mail\": MAIL_SERVER})\n    mail_tools = await client.get_tools()\n    return create_deep_agent(\n        model=strong_model,\n        tools=[markdown_to_html, render_pie_chart] + mail_tools,\n        system_prompt=SYSTEM_PROMPT,\n        subagents=build_subagents(_backend, enable_search=_enable_search, mail_tools=mail_tools),\n        skills=[\"/skills\"],\n        memory=[\"/AGENTS.md\"],\n        backend=_backend,\n        middleware=[CodeInterpreterMiddleware()],\n        name=\"chinook-sales-assistant\",\n    ).with_config({\"recursion_limit\": 50})",
+   "notas": "Archivo del curso; no lo corrí (pide `ANTHROPIC_API_KEY` y el servidor de correo en el puerto 5002).\n`make_graph` es una **fábrica async**: `langgraph.json` apunta a ella (`./agent.py:make_graph`) porque las tools de\ncorreo solo se conocen al conectarse al MCP en runtime. Mira qué recibe `create_deep_agent`: skills y memoria como\n**rutas** del backend (3.B y 3.C), el intérprete (2.B) y los subagents.",
+   "resaltar": [
+    48,
+    54,
+    55
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "subagents.py completo",
+   "contenido": "# python/m5/subagents.py\n\"\"\"The three specialist subagents for the Chinook Sales Assistant.\n\nThey are built by a function rather than defined at import time because the\nchinook-analyst's MemoryMiddleware needs the *same* filesystem backend the main\nagent uses (so the schema it discovers and the memory it reads point at the same\nfile on disk).\n\n- chinook-analyst — owns the database; reads the schema from its own (pre-filled)\n  AGENTS.md and re-introspects it if it's missing or a name fails; gates\n  new-customer writes behind human approval.\n- inbox-manager   — owns the mail (MCP) tools; gates saving a draft behind\n  human approval. Only present when mail tools were discovered.\n- quote-reviewer  — sanity-checks a drafted quote before it's sent.\n- genre-researcher — researches one genre for the newsletter (parallel fan-out);\n  only present when web search (Tavily) is configured.\n\nWhy the inbox-manager lives in a subagent: the general-purpose subagent (always present)\ninherits the *main* agent's tools, so any gated tool placed on the main agent\ncould be invoked ungated through delegation. Keeping `mail_create_draft` and\n`add_customer` solely on gated specialists means the only path to either write\nruns through its human-approval gate.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom deepagents import FilesystemPermission, MemoryMiddleware\nfrom deepagents.backends.protocol import BackendProtocol\nfrom tools.sql import add_customer, introspect_schema, query_chinook\n\nfrom models import model, strong_model\n\n# Allow all three agent-inbox decisions on the gated write.\n_APPROVE_EDIT_REJECT = {\"allowed_decisions\": [\"approve\", \"edit\", \"reject\"]}\n\n\n# The last paragraph is for weaker models, which tend to guess table names\n# (e.g. \"invoices\" for Invoice); it keeps them on schema-derived names.\nANALYST_PROMPT = \"\"\"You are the chinook-analyst, the data specialist for the \\\nChinook Sales Assistant. You are the only agent that touches the database.\n\nDetailed operating instructions and the database schema live in your memory \\\n(loaded automatically). Follow them. In short: answer with exact figures from \\\n`query_chinook`, learn the schema once with `introspect_schema` and record it \\\nin your memory, and use `add_customer` only when asked to add a genuinely new \\\ncustomer (a human approves that write).\n\nUse only table and column names exactly as they appear in your memory or in \\\n`introspect_schema` output. Chinook names are singular (`Invoice`, not \\\n`invoices`). If a query fails with \"no such table\" or \"no such column\", \\\ncall `introspect_schema` and retry; never guess a name.\"\"\"\n\nINBOX_PROMPT = \"\"\"You are the inbox-manager, the email specialist for the \\\nChinook Sales Assistant. You own Jane's inbox and are the only agent that \\\ntouches it.\n\nYour tools (MCP, prefixed with the server name \"mail\"):\n- `mail_list_messages` — list inbox messages (optionally filtered by a query).\n- `mail_read_message` — read one message in full by id.\n- `mail_create_draft` — save a reply to the drafts folder. It NEVER sends.\n\nWhen asked to find or read mail, return a tight summary the caller can act on \\\n(sender, subject, and the key content) — not the raw dump.\n\nWhen asked to save a draft, just call `mail_create_draft` with the given \\\nrecipient, subject, and body. Saving a draft pauses automatically for Jane to \\\napprove, edit, or reject — that pause IS the approval, so don't ask for \\\npermission in prose first; make the call. Never invent a send tool; you only \\\never create drafts.\"\"\"\n\nREVIEWER_PROMPT = \"\"\"You are the quote-reviewer. You receive a drafted quote — \\\nline items (description, quantity, unit price, line total), any discount, and \\\nthe grand total — and you check it before it goes to the customer.\n\nVerify:\n- The arithmetic: quantity x unit price for each line, and the grand total.\n- Internal consistency: any stated discount is actually applied; nothing is \\\ndouble-counted or missing.\n- Plausibility: unit prices look like catalogue prices (tracks are normally \\\nabout $0.99); totals aren't off by an order of magnitude.\n\nReply concisely: either \"Looks correct\" with a one-line confirmation, or a \\\nshort list of specific corrections. Do not rewrite the customer email — just \\\nreview the numbers and terms.\"\"\"\n\nGENRE_PROMPT = \"\"\"You are a music journalist researching one genre for an \\\nonline music distributor's weekly newsletter.\n\nYou will be given a single genre and a private research folder to work in.\n\nHow to work:\n1. Use internet_search to find recent, noteworthy developments in that genre \\\n   — new releases, notable artists, trends, or events. Run a few searches.\n2. Save the COMPLETE, verbatim output of ALL your searches to a single file \\\n   in the private folder you were given: write_file(\"<your folder>/sources.md\", ...). \\\n   Do NOT summarize or trim. This keeps the bulky material out of the editor's context.\n3. Only then, from what you found, write one tight newsletter segment.\n\nReturn ONLY the finished segment as your reply:\n- A markdown section: a \"## <Genre>\" heading followed by ~120-180 words.\n- Lively but factual; name specific artists and releases.\n- Do NOT paste raw search results into your reply — those live in your files.\"\"\"\n\n\ndef build_subagents(\n    backend: BackendProtocol,\n    *,\n    enable_search: bool,\n    mail_tools: list,\n) -> list[dict]:\n    \"\"\"Return the subagent specs, wired to the shared filesystem backend.\"\"\"\n\n    chinook_analyst = {\n        \"name\": \"chinook-analyst\",\n        \"description\": (\n            \"Query the Chinook database for catalogue prices, customer records, \"\n            \"purchase history, and territory metrics, and add new customers \"\n            \"(with approval). Delegate all database work here.\"\n        ),\n        \"system_prompt\": ANALYST_PROMPT,\n        \"tools\": [query_chinook, introspect_schema, add_customer],\n        \"model\": model,\n        # Per-subagent memory: its own AGENTS.md, on the same backend the main\n        # agent uses, so the schema it writes is the schema it later reads.\n        \"middleware\": [\n            MemoryMiddleware(\n                backend=backend,\n                sources=[\"/agents/chinook-analyst/AGENTS.md\"],\n            )\n        ],\n        # The one gated write — pauses for human approval before inserting.\n        \"interrupt_on\": {\"add_customer\": _APPROVE_EDIT_REJECT},\n    }\n\n    quote_reviewer = {\n        \"name\": \"quote-reviewer\",\n        \"description\": (\n            \"Review a drafted quote (line items, discount, total) for correct \"\n            \"arithmetic and sane pricing before it is sent. Send it the numbers.\"\n        ),\n        \"system_prompt\": REVIEWER_PROMPT,\n        \"model\": strong_model,\n    }\n\n    inbox_manager = {\n        \"name\": \"inbox-manager\",\n        \"description\": (\n            \"Read Jane's inbox and save reply drafts. Delegate any \"\n            \"email work here: finding/reading messages and creating a \"\n            \"draft reply (which pauses for Jane's approval).\"\n        ),\n        \"system_prompt\": INBOX_PROMPT,\n        \"tools\": mail_tools,\n        \"model\": model,\n        \"interrupt_on\": {\"mail_create_draft\": _APPROVE_EDIT_REJECT},\n    }\n\n    subagents = [chinook_analyst, quote_reviewer, inbox_manager]\n\n    if enable_search:\n        from tools.search import internet_search\n\n        genre_researcher = {\n            \"name\": \"genre-researcher\",\n            \"description\": (\n                \"Research one music genre and write a short newsletter segment \"\n                \"about what's new in it. Delegate one genre per call.\"\n            ),\n            \"system_prompt\": GENRE_PROMPT,\n            \"tools\": [internet_search],\n            \"model\": model,\n            \"permissions\": [\n                FilesystemPermission(\n                    operations=[\"read\", \"write\"], paths=[\"/research/**\"], mode=\"allow\"\n                ),\n                FilesystemPermission(\n                    operations=[\"write\"], paths=[\"/**\"], mode=\"deny\"\n                ),\n            ],\n        }\n        subagents.append(genre_researcher)\n\n    return subagents",
+   "notas": "Archivo del curso. Cuatro especialistas: `chinook-analyst` (única con SQL, con su propia memoria y gate en\n`add_customer`), `quote-reviewer` (revisa números), `inbox-manager` (única con correo, gate en `mail_create_draft`) y\n`genre-researcher` (solo si hay `TAVILY_API_KEY`). Lee el docstring de arriba: explica por qué las tools con gate\nviven **solo** en subagents.",
+   "resaltar": [
+    132,
+    153,
+    160
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Comprobarlo sin keys",
+   "contenido": "import sys\nimport types\nfrom pathlib import Path\n\nfrom langchain_core.language_models.chat_models import BaseChatModel\nfrom langchain_core.messages import AIMessage\nfrom langchain_core.outputs import ChatGeneration, ChatResult\nfrom langchain_core.tools import tool\nfrom deepagents.backends import FilesystemBackend\n\n\nclass Falso(BaseChatModel):\n    \"\"\"Modelo falso: nunca se llama aquí; solo ocupa el lugar de Haiku y Sonnet.\"\"\"\n\n    @property\n    def _llm_type(self):\n        return \"falso\"\n\n    def bind_tools(self, tools, **kw):\n        return self\n\n    def _generate(self, messages, stop=None, run_manager=None, **kw):\n        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=\"ok\"))])\n\n\n# Un módulo `models` falso, para no cargar el models.py real (que lee el .env).\nfalso = types.ModuleType(\"models\")\nfalso.model = Falso()\nfalso.strong_model = Falso()\nsys.modules[\"models\"] = falso\n\nSA = Path(\"03 Introduction to Deep Agents/lca-deepagents/python/m5/sales_assistant\").resolve()\nsys.path.insert(0, str(SA))\nfrom subagents import build_subagents  # noqa: E402\n\n\n@tool\ndef mail_create_draft(to: str, subject: str, body: str) -> str:\n    \"\"\"Hace de la tool de correo que vendría del servidor MCP.\"\"\"\n    return \"draft saved\"\n\n\nbackend = FilesystemBackend(root_dir=str(SA), virtual_mode=True)\nsubs = build_subagents(backend, enable_search=False, mail_tools=[mail_create_draft])\n\nfor s in subs:\n    tools = [t.name for t in s.get(\"tools\", [])] or \"(hereda las del principal)\"\n    print(f\"{s['name']:16} tools={tools}  interrupt_on={list(s.get('interrupt_on', {}))}\")",
+   "notas": "Para no cargar el `models.py` real (lee el `.env`), meto un módulo `models` falso en `sys.modules` antes de\nimportar `subagents`. Lo corrí desde la raíz del repo. Salida real:\n```\nchinook-analyst  tools=['query_chinook', 'introspect_schema', 'add_customer']  interrupt_on=['add_customer']\nquote-reviewer   tools=(hereda las del principal)  interrupt_on=[]\ninbox-manager    tools=['mail_create_draft']  interrupt_on=['mail_create_draft']\n```\nSin Tavily no hay `genre-researcher`; el agente arranca igual. `quote-reviewer` no declara `tools`, así que hereda las\ndel principal.",
+   "resaltar": [
+    30,
+    44
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Quién tiene qué",
+   "contenido": "graph TD\n  J([Jane, por chat UI]) --> M[principal: markdown_to_html, render_pie_chart, eval]\n  M -->|task| A[chinook-analyst: SQL, add_customer GATE]\n  M -->|task| I[inbox-manager: correo MCP, mail_create_draft GATE]\n  M -->|task| R[quote-reviewer]\n  M -->|task, si hay Tavily| G[genre-researcher: internet_search]\n  class I clave",
+   "notas": "El principal **no** tiene SQL ni correo: coordina. Los dos efectos con consecuencias (guardar borrador, crear\ncliente) tienen gate y viven en un solo especialista cada uno. Recuerda 4.A: el `general-purpose` hereda las tools del\nprincipal; si `mail_create_draft` estuviera ahí, habría un camino sin aprobación."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Correrlo (en tu máquina)",
+   "contenido": "Con `ANTHROPIC_API_KEY` en el `.env` del curso (Tavily opcional), desde `python/m5/sales_assistant`:\n\n1. `./start.sh` (en Windows, con Git Bash): levanta el correo falso y `langgraph dev`.\n2. Abre agentchat.vercel.app → Deployment URL `http://localhost:2024`, Graph ID `agent`. Ahí las pausas de HITL salen\n   como tarjetas approve / edit / reject.\n3. Prueba: \"Check the inbox for any quote requests and process them\" o \"Give me a territory report\".\n\nPara repetir el RFQ: `uv run python mcp/send_to_inbox.py --reset`. Si apruebas `add_customer`, `data/chinook.db` cambia:\nrestáuralo con git."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Un RFQ, paso a paso",
+   "contenido": "Jane escribe: \"Check the inbox for any quote requests and process them\". El RFQ viene de una empresa que **no** está\nen la base. Con lo que viste en `AGENTS.md` y en los subagents (paso 4), ¿qué especialistas llama el principal, en\nqué orden, y **dónde** se pausa el agente esperando a Jane?",
+   "respuesta": "Sigue la skill `rfq-quote`: `inbox-manager` lee el pedido → `chinook-analyst` busca al cliente; como no existe, llama\n`add_customer` → **pausa 1** (gate del analyst) → `chinook-analyst` da los precios → el principal calcula el total\n**con el intérprete** (`eval`), no a ojo → `quote-reviewer` revisa → `inbox-manager` llama `mail_create_draft` →\n**pausa 2**. Nunca se envía: solo se guarda el borrador. El orden lo pone la skill (texto), no el código.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: atajo peligroso",
+   "contenido": "Un compañero quiere \"simplificar\" y pasa `mail_tools` también al agente principal: `tools=[markdown_to_html,\nrender_pie_chart] + mail_tools`, sin tocar los subagents. ¿Qué riesgo introduce?\n\n- A) Ninguno: `AGENTS.md` dice \"You have no email tools yourself\" y el modelo obedece.\n- B) El servidor MCP rechaza dos clientes con las mismas tools.\n- C) El principal (o el `general-purpose`, que hereda sus tools) puede guardar borradores **sin** la tarjeta de\n  aprobación, porque el gate es del `inbox-manager`.\n- D) El `inbox-manager` pierde sus tools: `tools=` del principal reemplaza las del subagent.",
+   "respuesta": "**C.** `interrupt_on` de `mail_create_draft` está en el spec del `inbox-manager`; solo frena **sus** llamadas. Con la\ntool en el principal hay un camino sin gate. A no: una frase del prompt **pide**, pero solo quitar la tool **impide**.\nB no: MCP no tiene esa regla. D no: el subagent declara sus propias `tools`, que no dependen de las del padre."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin Tavily",
+   "contenido": "Corres `./start.sh` sin `TAVILY_API_KEY` y Jane pide el newsletter semanal. Con el paso 5 a la vista, ¿el agente\nfalla al arrancar?",
+   "respuesta": "No. `_enable_search` queda en `False`, `build_subagents` no agrega `genre-researcher` y el resto funciona (quotes y\nreportes). Para el newsletter, el principal no tiene a quién delegar la investigación web: lo dirá o lo hará con lo que\ntenga. Fíjate que `tools.search` solo se importa dentro del `if`: por eso no truena al importar sin la key.",
+   "ref": 5
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El Sales Assistant es **poco código** (`agent.py`, `subagents.py`, `tools/`) y **mucho texto** (`AGENTS.md`, skills).\n- `make_graph` es una fábrica async porque las tools del MCP de correo solo existen en runtime.\n- Cada sistema externo tiene **un dueño**: SQL → `chinook-analyst`, correo → `inbox-manager`. El principal coordina.\n- Las escrituras con consecuencias tienen gate y viven **solo** en el subagent que las controla; si no, el principal o el\n  `general-purpose` las podrían llamar sin aprobación.\n- El dinero se calcula con el intérprete, no a ojo (regla de `AGENTS.md`).\n\nRelación: junta 1.C (MCP), 1.D (HITL), 2.B (intérprete), 3.B–3.C (skills, memoria) y 4.A (subagents)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deepagents/m5/m5.3-the-sales-assistant.html",
+  "python/m5/sales_assistant/agent.py",
+  "python/m5/sales_assistant/subagents.py",
+  "python/m5/sales_assistant/AGENTS.md",
+  "python/m5/sales_assistant/skills/rfq-quote/SKILL.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Quieres que el Sales Assistant aplique otro descuento por volumen. ¿Editas `agent.py`?",
+   "reverso": "No: el comportamiento vive en texto (la skill `rfq-quote` y `AGENTS.md`). Cambias el playbook, no el código."
+  },
+  {
+   "frente": "¿Por qué `mail_create_draft` está solo en `inbox-manager` y no también en el principal?",
+   "reverso": "Porque el gate es del subagent. En el principal (o en el `general-purpose`, que hereda sus tools) habría un camino sin aprobación."
+  },
+  {
+   "frente": "¿Por qué `langgraph.json` del Sales Assistant apunta a `make_graph` y no a una variable `graph`?",
+   "reverso": "Es una fábrica async: las tools de correo se descubren del servidor MCP en runtime, antes de poder armar el agente."
+  },
+  {
+   "frente": "Falta `TAVILY_API_KEY`. ¿Arranca el Sales Assistant?",
+   "reverso": "Sí. Solo no se agrega `genre-researcher`; quotes y reportes siguen funcionando."
+  },
+  {
+   "frente": "¿Por qué la regla dice calcular el quote con el intérprete?",
+   "reverso": "Porque un LLM suma dinero \"a ojo\" y se equivoca; el código da el número exacto."
+  }
+ ]
+}

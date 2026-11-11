@@ -1,0 +1,105 @@
+{
+ "mision_id": "3.A",
+ "titulo": "Hacia producción e Insights Agent",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta aquí solo tú usaste a Emma: 25 preguntas, y podías leer cada trace. Al abrirla a dogfooders, beta testers y luego clientes (Deploy), llegan cientos y después miles de traces.\n\nCon 20 casos de prueba revisabas todo tú. Con 500 traces ya no. Y es justo ahí donde está lo que más importa: **cómo usa la gente a Emma de verdad**, y fallas que tu dataset nunca imaginó. Necesitas formas sistemáticas de encontrar lo importante sin leer todo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Monitor: el loop externo",
+   "contenido": "Deploy → Monitor → Build → Test, y otra vuelta. Lo que construiste en los Módulos 1 y 2 (traces, datasets, evaluators) es la infraestructura sobre la que corre Monitor. Tres técnicas:\n\n| Técnica | Qué hace | Cuándo corre |\n|---|---|---|\n| **Insights Agent** | agrupa traces en patrones de uso y failure modes | bajo demanda, por lotes (hasta 1 000 traces) |\n| **Online evals** | califica cada trace (o una muestra) | continuo, al llegar cada trace |\n| **Automations** | filtran traces por score u otros criterios y ejecutan una acción | continuo, por reglas |\n\nEsta lección: Insights. La 3.B: online evals y automations."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Cómo trabaja el Insights Agent",
+   "contenido": "graph LR\n  T[Hasta 1 000 traces] --> S[1. Resumir: una línea por trace]\n  S --> C[2. Agrupar en clusters]\n  C --> R[3. Reporte: hallazgos y qué hacer]\n  class C clave",
+   "notas": "1) Un LLM resume cada trace en una línea: la acción principal y el resultado. 2) Otro LLM agrupa esos resúmenes en **clusters** de comportamiento parecido: ahí aparecen los patrones de uso y los failure modes. 3) Se genera un reporte con los hallazgos. Es la versión a escala de lo que hiciste a mano en el Módulo 1: cientos de traces en minutos. Se usa desde la UI de LangSmith; no hay código en el repo."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Un ejemplo a mano (ilustrativo)",
+   "contenido": "Preguntas reales del archivo de traces del curso; resúmenes y clusters escritos a mano (Insights lo hace con LLMs):\n\n| Pregunta | Resumen de una línea | Cluster |\n|---|---|---|\n| *Your website's search bar returns no results...* | problema web; Emma deriva a support@ | Soporte técnico |\n| *...Manila File Folders (25-pack)... Are they in stock?* | stock; contesta \"in stock\" | Disponibilidad |\n| *Do you have any paper in stock?* | stock vago; Emma pregunta qué tipo **sin consultar la base** | Disponibilidad: posible falla |\n| *Do you have Dry Erase Markers (8-pack)? And where's your nearest warehouse...* | producto + ubicación | Mixtas |\n| *I need to dispute a charge on my credit card...* | cobros; deriva a accounts@ | Cuentas y pagos |\n\nLa tercera es real: su único hijo es `ChatOpenAI`, sin `query_database`, aunque el prompt dice *CHECK DATABASE FIRST*. Un failure mode nuevo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué hay en synthetic_traces.json",
+   "contenido": "import json\nfrom collections import Counter\n\nRUTA = r\"C:/ruta/a/tus/cursos/04 Building Reliable Agents with LangSmith/lca-reliable-agents/python/module-3/lesson-2/synthetic_traces.json\"\n\nwith open(RUTA, encoding=\"utf-8\") as f:\n    runs = json.load(f)\n\ntraces = {run[\"trace_id\"] for run in runs}\nraices = [run for run in runs if run[\"parent_run_id\"] is None]\n\nprint(\"Runs:\", len(runs))\nprint(\"Traces:\", len(traces))\nprint(\"Runs raíz:\", len(raices))\nprint(\"Campos de un run:\", sorted(runs[0].keys()))\nprint(\"run_type:\", Counter(run[\"run_type\"] for run in runs))\nprint(\"Nombres más comunes:\", Counter(run[\"name\"] for run in runs).most_common(4))\nprint(\"Fechas:\", min(r[\"start_time\"] for r in runs), \"->\", max(r[\"start_time\"] for r in runs))",
+   "notas": "Los ~1 000 traces del curso, ya exportados (17 MB). Cada elemento es un **run**; los de un mismo trace comparten `trace_id`. Salida real:\n`Runs: 3740` · `Traces: 1000` · `Runs raíz: 1000`\n`run_type: Counter({'llm': 1870, 'chain': 1870})`\n`Nombres más comunes: [('ChatOpenAI', 1870), ('Emma', 1000), ('query_database', 670), ('search_knowledge_base', 200)]`\n`Fechas: 2026-02-15T19:00:00 -> 2026-02-15T20:58:55.387083`\nCada trace = 1 run raíz `Emma` + sus hijos. En este archivo las tools vienen como `chain`, no como `tool`.",
+   "resaltar": [
+    9,
+    10
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué hace upload_traces.py",
+   "contenido": "`module-3/lesson-2/upload_traces.py` sube esos traces a tu proyecto (`--project`, por defecto `default`). Antes de subir:\n\n1. **Corre las fechas** para que el trace más reciente quede en \"ahora\". Los traces son de febrero; sin corrimiento quedarían fuera de los filtros por fecha de la UI (por ejemplo, \"últimos 7 días\").\n2. **Regenera los ids** con `uuid7` (ordenados por tiempo), para no chocar con ids que ya existan.\n3. **Reconstruye cada árbol** con `RunTree`: crea la raíz, le cuelga los hijos con `create_child`, cierra cada run con `end` y lo sube con `post`.\n\nNecesita `LANGSMITH_API_KEY`: aquí no lo corrí. El paso siguiente reproduce el corrimiento de fechas."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Python: correr fechas con timedelta",
+   "contenido": "from datetime import datetime\n\nstarts = [\"2026-02-15T19:00:00\", \"2026-02-15T19:30:00\", \"2026-02-15T20:58:55\"]\nfechas = [datetime.fromisoformat(s) for s in starts]\n\nahora = datetime(2026, 11, 11, 12, 0, 0)       # fijo para que el ejemplo sea repetible\ntime_delta = ahora - max(fechas)                # el más reciente queda en \"ahora\"\n\nfor f in fechas:\n    print(f, \"->\", f + time_delta)\nprint(\"Corrimiento:\", time_delta)",
+   "notas": "La misma idea de `upload_traces.py` (que usa `datetime.now`); aquí `ahora` está fijo para que el ejemplo sea repetible. Restar dos `datetime` da un `timedelta`; sumárselo a cada fecha las corre a todas por igual. Salida real:\n`2026-02-15 19:00:00 -> 2026-11-11 10:01:05`\n`2026-02-15 19:30:00 -> 2026-11-11 10:31:05`\n`2026-02-15 20:58:55 -> 2026-11-11 12:00:00`\n`Corrimiento: 268 days, 15:01:05`",
+   "resaltar": [
+    7,
+    10
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué uso?",
+   "contenido": "Abriste Emma a 40 beta testers. Después de una semana hay 500 traces, y el equipo quiere saber **para qué la usan** y si hay tipos de pregunta que nadie anticipó.\n\nA) Una online eval de sentimiento sobre cada trace nuevo.\nB) El Insights Agent sobre esos 500 traces.\nC) Un experiment offline con el dataset de 25 preguntas.\nD) Una evaluación pairwise entre v4 y v5.",
+   "respuesta": "**B.** \"¿Para qué la usan?\" es una pregunta de patrones sobre un lote de traces: resumir y agrupar es justo lo que hace Insights. A califica cada trace en un criterio que ya elegiste; no descubre temas nuevos. C solo ve tus 25 preguntas, por definición las que sí anticipaste. D compara dos versiones, no describe el uso real. Y ojo: Insights corre **bajo demanda**, no en tiempo real; lo continuo son las online evals."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Del cluster al arreglo",
+   "contenido": "El reporte de Insights trae un cluster de 60 traces: \"el cliente pregunta por un producto en general; Emma pide detalles sin consultar la base\". ¿Qué haces con eso, recorriendo el ADLC?",
+   "respuesta": "Es un failure mode nuevo. Test: agregas algunas de esas preguntas al dataset y un evaluator que lo atrape (de código: ¿hubo un `query_database` antes de la respuesta final?). Build: ajustas el prompt o la descripción de la tool. Test otra vez: corres el experiment y comparas con el anterior para ver que mejoró y que nada más se rompió. Deploy, y Monitor sigue vigilando. Insights encuentra; el arreglo pasa por Build y Test."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Y si corro con min?",
+   "contenido": "En el script del paso 7 cambias una línea: usas `min` en vez de `max`.\n\n```python\nfrom datetime import datetime\n\nstarts = [\"2026-02-15T19:00:00\", \"2026-02-15T19:30:00\", \"2026-02-15T20:58:55\"]\nfechas = [datetime.fromisoformat(s) for s in starts]\n\nahora = datetime(2026, 11, 11, 12, 0, 0)       # fijo para que el ejemplo sea repetible\ntime_delta = ahora - min(fechas)                # cambio: min en vez de max\n\nfor f in fechas:\n    print(f, \"->\", f + time_delta)\nprint(\"Corrimiento:\", time_delta)\n```\n\n¿Dónde quedan las tres fechas? ¿Cambian los intervalos entre ellas?",
+   "respuesta": "Salida real: `12:00:00`, `12:30:00` y `13:58:55` del 2026-11-11. Ahora el trace **más viejo** queda en \"ahora\" y los demás quedan en el **futuro** (hasta casi 2 horas). Los intervalos no cambian (30 min entre el primero y el segundo), porque a todas se les suma el mismo `timedelta`. Por eso `upload_traces.py` usa `max`: el más reciente queda en ahora y ninguno en el futuro.",
+   "ref": 7
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Con tráfico real ya no revisas cada trace: Monitor escala lo que hacías a mano.\n- Insights Agent: hasta 1 000 traces → resumir (LLM) → agrupar en clusters (LLM) → reporte. Muestra patrones de uso y failure modes.\n- Corre por lotes y bajo demanda; lo continuo son las online evals (3.B).\n- Un cluster de fallas vuelve al loop: ejemplos al dataset, evaluator, arreglo, experiment.\n- `upload_traces.py` corre las fechas a hoy, regenera ids con `uuid7` y reconstruye los árboles con `RunTree`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → Observability → *Insights*; en smith.langchain.com, tu tracing project → pestaña *Insights*."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-3/scaling",
+  "https://langchain-ai.github.io/lca-lessons/reliable-agents/module-3/insights-agents",
+  "module-3/lesson-2/upload_traces.py",
+  "module-3/lesson-2/synthetic_traces.json"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué hace el Insights Agent, en 3 pasos?",
+   "reverso": "Resume cada trace en una línea (LLM), agrupa los resúmenes en clusters (LLM) y genera un reporte de patrones de uso y failure modes."
+  },
+  {
+   "frente": "¿El Insights Agent califica cada trace en tiempo real?",
+   "reverso": "No: corre bajo demanda sobre un lote (hasta 1 000 traces). Lo continuo, trace por trace, son las online evals."
+  },
+  {
+   "frente": "500 traces de beta testers y quieres saber para qué usan el agente: ¿Insights, online eval o experiment offline?",
+   "reverso": "Insights: descubre patrones en un lote. La online eval califica un criterio ya elegido; el experiment solo ve tu dataset."
+  },
+  {
+   "frente": "¿Por qué upload_traces.py corre las fechas antes de subir?",
+   "reverso": "Para que el trace más reciente quede en \"ahora\" y todos entren en los filtros por fecha de la UI, sin quedar en el futuro."
+  },
+  {
+   "frente": "Insights encuentra un cluster de fallas. ¿Cómo se vuelve trabajo de Build y Test?",
+   "reverso": "Esos inputs entran al dataset, escribes un evaluator que lo atrape, arreglas el agente y corres el experiment para confirmar sin regresiones."
+  }
+ ]
+}

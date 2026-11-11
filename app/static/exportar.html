@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exportar a PDF · Mi Tutor</title>
+<link rel="icon" href="/static/icono.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<style>
+/* Documento para leer en el celular o imprimir/guardar como PDF. Siempre claro: es para papel. */
+:root{--ink:#16191D;--muted:#59636E;--faint:#8A939C;--line:#E2E5E9;--panel2:#F3F5F6;--acc:#0B7D67;--acc-soft:#E2F2EE;--acc-ink:#095E4E;
+  --hl:#FFF4CC;--f-body:"Nunito",system-ui,sans-serif;--f-mono:"JetBrains Mono",ui-monospace,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:#fff;color:var(--ink);font:15.5px/1.6 var(--f-body)}
+.barra{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:10px 16px;background:#fff;border-bottom:1px solid var(--line)}
+.barra b{font-size:15px}
+.barra .estado{color:var(--muted);font-size:14px;flex:1;min-width:180px}
+.barra label{font-size:14px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.btn{border:1px solid var(--acc);background:var(--acc);color:#fff;padding:8px 14px;border-radius:8px;font:700 14.5px var(--f-body);cursor:pointer}
+.btn:disabled{opacity:.5;cursor:default}
+main{max-width:780px;margin:0 auto;padding:24px 16px 60px}
+.portada{min-height:60vh;display:flex;flex-direction:column;justify-content:center;gap:8px}
+.portada .k{font:600 12px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.portada h1{font-size:34px;line-height:1.15;margin:0}
+.portada .d{color:var(--muted)}
+.portada ol{margin:16px 0 0;padding-left:20px}
+h1.curso{font-size:28px;margin:0 0 4px;line-height:1.2}
+.ruta{font:600 12px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0}
+th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:var(--panel2)}
+h2.leccion{font-size:22px;margin:0;line-height:1.25}
+.meta{color:var(--muted);font-size:13.5px;margin:2px 0 10px}
+.links{font-size:13.5px;margin:6px 0 14px;padding:8px 12px;background:var(--panel2);border-radius:8px}
+.links a{color:var(--acc-ink);word-break:break-all}
+.paso{margin:16px 0;break-inside:avoid-page}
+.paso>.pt{font-weight:800;font-size:16px;margin:0 0 6px}
+.paso .num{font:700 11.5px var(--f-mono);color:var(--faint);margin-right:6px}
+.notas{border-left:3px solid var(--acc);background:var(--acc-soft);padding:8px 12px;border-radius:0 8px 8px 0;font-size:14px;margin-top:8px}
+.notas p{margin:.2em 0}
+.code{font:12.5px/1.5 var(--f-mono);background:#F7F8F9;border:1px solid var(--line);border-radius:8px;padding:8px 0;overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+.code .ln{display:flex;padding:0 10px}
+.code .ln i{flex:none;width:2.6em;color:var(--faint);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl)}
+.md pre{font:12.5px/1.5 var(--f-mono);background:#F7F8F9;border:1px solid var(--line);border-radius:8px;padding:8px 10px;white-space:pre-wrap;word-break:break-word}
+.md code{font-family:var(--f-mono);font-size:.92em;background:var(--panel2);padding:0 4px;border-radius:4px}
+.md pre code{background:none;padding:0}
+.md table{font-size:13.5px}
+.mm{text-align:center}
+.mm svg{max-width:100%;height:auto}
+figure{margin:0;text-align:center}
+figure img{max-width:100%;border:1px solid var(--line);border-radius:8px}
+.predice{border:1.5px solid var(--acc);border-radius:10px;padding:10px 14px}
+.predice .tag{font:700 11px var(--f-mono);letter-spacing:.08em;color:var(--acc-ink);text-transform:uppercase}
+.resp,.tarj{margin-top:18px;border-top:2px dashed var(--line);padding-top:10px}
+.resp h3,.tarj h3{font-size:15px;margin:0 0 6px;color:var(--acc-ink)}
+.resp .r{margin:8px 0;font-size:14.5px}
+.tarj dl{margin:0}
+.tarj dt{font-weight:700;margin-top:8px}
+.tarj dd{margin:2px 0 0 0;color:var(--muted)}
+.fuentes{color:var(--faint);font-size:12.5px;margin-top:10px;word-break:break-all}
+.vacio{color:var(--muted);font-style:italic}
+.sin-resp .resp,.sin-tarj .tarj{display:none}
+.salto{break-before:page;page-break-before:always;padding-top:8px}
+@media screen{.salto{border-top:1px solid var(--line);margin-top:36px;padding-top:28px}}
+@media print{.barra{display:none}main{max-width:none;padding:0}a{color:var(--ink)}@page{margin:16mm 14mm}}
+</style>
+</head>
+<body>
+<div class="barra">
+  <b id="tit">Exportar</b>
+  <span class="estado" id="estado" aria-live="polite">Cargando…</span>
+  <label><input type="checkbox" id="cresp" checked> Respuestas</label>
+  <label><input type="checkbox" id="ctarj" checked> Tarjetas</label>
+  <button class="btn" id="pdf" disabled>Guardar como PDF</button>
+</div>
+<main id="doc"></main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const md = s => window.marked ? marked.parse(String(s ?? "")) : `<p>${esc(s)}</p>`;
+const TIPO = {video: "Video", lectura: "Lectura", lab: "Lab", quiz: "Quiz"};
+if (window.mermaid) mermaid.initialize({startOnLoad: false, theme: "neutral", securityLevel: "strict"});
+
+async function api(url){
+  const r = await fetch(url, {cache: "no-store"});
+  if (r.status === 401){ location.href = "/login"; throw new Error("sin sesión"); }
+  if (!r.ok) throw new Error(url + " → " + r.status);
+  return r.json();
+}
+// Busca el nodo pedido en el árbol y devuelve {nodo, ruta}.
+function buscar(nodos, id, ruta = []){
+  for (const n of nodos){
+    if (n.id === id) return {nodo: n, ruta};
+    if (n.hijos){ const x = buscar(n.hijos, id, [...ruta, n.nombre]); if (x) return x; }
+  }
+  return null;
+}
+const cursosDe = (n, ruta = []) => n.curso ? [{...n, ruta}] : (n.hijos || []).flatMap(h => cursosDe(h, [...ruta, n.nombre]));
+
+function codigo(txt, resaltar){
+  const hl = new Set(resaltar || []);
+  return `<div class="code">${String(txt || "").replace(/\n$/, "").split("\n").map((l, i) =>
+    `<div class="ln ${hl.has(i + 1) ? "hl" : ""}"><i>${i + 1}</i><span>${esc(l) || " "}</span></div>`).join("")}</div>`;
+}
+let mmN = 0;
+async function visual(p){
+  if (p.tipo === "codigo") return codigo(p.contenido, p.resaltar);
+  if (p.tipo === "mermaid"){
+    try{ const {svg} = await mermaid.render("mm" + (++mmN), p.contenido); return `<div class="mm">${svg}</div>`; }
+    catch(e){ return `<pre class="code" style="padding:8px 10px">${esc(p.contenido)}</pre>`; }
+  }
+  if (p.tipo === "imagen") return `<figure><img src="${esc(p.url)}" alt="${esc(p.alt || "")}"></figure>`;
+  return `<div class="md">${md(p.contenido)}</div>`;
+}
+async function leccionHtml(c, m, lec){
+  const links = (m && m.links || []).filter(l => /^https:\/\//.test(l.url || ""));
+  let html = `<section class="salto"><div class="ruta">${esc(c.nombre)}${m ? " · Módulo " + esc(m.modulo) : ""}</div>
+    <h2 class="leccion">${esc(lec.mision_id)} · ${esc(lec.titulo)}</h2>`;
+  if (links.length) html += `<div class="links"><b>Material oficial</b><br>${links.map(l =>
+    `${esc(TIPO[l.tipo] || "Abrir")}: <a href="${esc(l.url)}">${esc(l.titulo || l.url)}</a>${l.min ? " (" + esc(l.min) + " min)" : ""}<br><small>${esc(l.url)}</small>`).join("<br>")}</div>`;
+  const resps = [];
+  let i = 0;
+  for (const p of lec.pasos){
+    i++;
+    if (p.tipo === "predice"){
+      resps.push({i, r: p.respuesta});
+      html += `<div class="paso predice"><div class="tag">Predice · paso ${i}</div>${p.titulo ? `<div class="pt">${esc(p.titulo)}</div>` : ""}<div class="md">${md(p.contenido)}</div>
+        ${p.ref ? `<div class="meta">Se refiere al código del paso ${esc(p.ref)}.</div>` : ""}</div>`;
+    } else {
+      html += `<div class="paso">${p.titulo ? `<div class="pt"><span class="num">${i}</span>${esc(p.titulo)}</div>` : ""}${await visual(p)}
+        ${p.notas && p.tipo !== "markdown" ? `<div class="notas">${md(p.notas)}</div>` : ""}</div>`;
+    }
+  }
+  if (resps.length) html += `<div class="resp"><h3>Respuestas (contesta antes de leerlas)</h3>${resps.map(x =>
+    `<div class="r"><b>Paso ${x.i}.</b> ${md(x.r)}</div>`).join("")}</div>`;
+  if ((lec.tarjetas || []).length) html += `<div class="tarj"><h3>Tarjetas para repasar</h3><dl>${lec.tarjetas.map(t =>
+    `<dt>${md(t.frente)}</dt><dd>${md(t.reverso)}</dd>`).join("")}</dl></div>`;
+  if ((lec.fuentes || []).length) html += `<div class="fuentes">Fuentes: ${lec.fuentes.map(esc).join(" · ")}</div>`;
+  return html + `</section>`;
+}
+
+async function main(){
+  const id = new URLSearchParams(location.search).get("nodo") || "";
+  const {arbol} = await api("/api/cursos");
+  const hallado = buscar(arbol, id) || (arbol.length === 1 ? {nodo: arbol[0], ruta: []} : null);
+  if (!hallado){ $("#estado").textContent = "No encontré ese nodo del árbol."; return; }
+  const {nodo, ruta} = hallado;
+  const cursos = cursosDe(nodo, ruta);
+  document.title = `${nodo.nombre} · Mi Tutor`;
+  $("#tit").textContent = nodo.nombre;
+  // Primero se juntan los datos de todos los cursos para saber cuántas lecciones hay.
+  const info = [];
+  for (const c of cursos){
+    const e = await api("/api/estado?curso=" + encodeURIComponent(c.id));
+    info.push({c, datos: e.datos || {}, lecs: e.lecciones || []});
+  }
+  const total = info.reduce((a, x) => a + x.lecs.length, 0);
+  const hoy = new Date().toLocaleDateString("es-MX", {day: "numeric", month: "long", year: "numeric"});
+  let html = `<section class="portada"><div class="k">${esc([...ruta].join(" › ") || "Mi Tutor")}</div><h1>${esc(nodo.nombre)}</h1>
+    <div class="d">${cursos.length} ${cursos.length === 1 ? "curso" : "cursos"} · ${total} lecciones · exportado el ${esc(hoy)}</div>
+    ${cursos.length > 1 ? `<ol>${cursos.map(c => `<li>${esc(c.nombre)}</li>`).join("")}</ol>` : ""}
+    <div class="d" style="margin-top:14px">Cada lección: primero la explicación con un ejemplo resuelto; después los <b>predice</b>.
+    Contesta cada uno antes de ver sus respuestas, al final de la lección.</div></section>`;
+  let n = 0;
+  for (const {c, datos, lecs} of info){
+    const ms = datos.misiones || [], mods = datos.modulos || [];
+    html += `<section class="salto"><div class="ruta">${esc(c.ruta.join(" › "))}</div><h1 class="curso">${esc(c.nombre)}</h1>`;
+    if (ms.length){
+      html += `<table><tr><th>Misión</th><th>Módulo</th><th>Material</th></tr>${ms.map(m => {
+        const mod = (mods.find(x => x.n == m.modulo) || {}).nombre || "";
+        const tieneLec = lecs.some(l => l.mision_id === String(m.id));
+        return `<tr><td><b>${esc(m.id)}</b> ${esc(m.titulo)}${tieneLec ? "" : ' <span class="vacio">(sin lección)</span>'}</td><td>${esc(m.modulo)}${mod ? " · " + esc(mod) : ""}</td>
+          <td>${(m.links || []).map(l => `<a href="${esc(l.url)}">${esc(TIPO[l.tipo] || "Abrir")}</a>`).join(" · ")}</td></tr>`;
+      }).join("")}</table>`;
+    } else html += `<p class="vacio">Este curso todavía no tiene misiones en la app.</p>`;
+    html += `</section>`;
+    // Lecciones en el orden de las misiones; las sueltas, al final.
+    const orden = [...ms.map(m => String(m.id)), ...lecs.map(l => l.mision_id).filter(x => !ms.some(m => String(m.id) === x))];
+    for (const mid of orden){
+      if (!lecs.some(l => l.mision_id === mid)) continue;
+      $("#estado").textContent = `Preparando ${++n} de ${total} lecciones…`;
+      const lec = await api(`/api/lecciones/${encodeURIComponent(c.id)}/${encodeURIComponent(mid)}`);
+      html += await leccionHtml(c, ms.find(m => String(m.id) === mid), lec);
+    }
+  }
+  $("#doc").innerHTML = html;
+  await Promise.all([...document.images].map(im => im.complete ? 0 : new Promise(r => { im.onload = im.onerror = r; })));
+  $("#estado").textContent = `Listo: ${total} lecciones. En el celular: menú del navegador → Compartir/Imprimir → Guardar como PDF.`;
+  $("#pdf").disabled = false;
+}
+$("#pdf").onclick = () => window.print();
+$("#cresp").onchange = e => document.body.classList.toggle("sin-resp", !e.target.checked);
+$("#ctarj").onchange = e => document.body.classList.toggle("sin-tarj", !e.target.checked);
+main().catch(e => { $("#estado").textContent = "No se pudo preparar: " + (e.message || e); });
+</script>
+</body>
+</html>

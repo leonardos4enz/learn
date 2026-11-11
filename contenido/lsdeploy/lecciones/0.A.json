@@ -1,0 +1,85 @@
+{
+ "mision_id": "0.A",
+ "titulo": "Bienvenida y setup",
+ "modulo": "0",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Este curso despliega agentes en **LangSmith Deployment**. Antes de correr nada hay dos preguntas que, si no las contestas, te atoran en el primer paso o te cobran sin querer:\n\n1. ¿Qué **plan** de LangSmith necesitas para cada cosa?\n2. ¿Qué **herramientas** necesitas en tu máquina (uv, Docker, keys)?\n\nLas dos salen en el examen LCAE (dominio Deploy) como preguntas de escenario."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué puedes hacer con cada plan",
+   "contenido": "| Plan | Qué te deja hacer |\n|---|---|\n| **Developer** (gratis) | `langgraph dev`: el mismo Agent Server corriendo **en tu máquina**, en memoria, con Studio. |\n| **Plus** o superior (de pago) | `langgraph deploy`: una deployment **en la nube** de LangSmith, con URL pública. |\n\nUna deployment en la nube **cobra mientras existe**. Al terminar se borra: `langgraph deploy list` y `langgraph deploy delete <ID>`.\n\nEl servidor es el mismo Agent Server que se puede montar self-hosted con `langgraph-api` + Postgres + Redis (como en el curso de LangGraph, módulo 1). Es el mismo servidor; la diferencia es **quién lo administra**. Aquí LangSmith pone la infraestructura y tú solo subes tu código."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Los dos manifiestos: python/pyproject.toml",
+   "contenido": "# Only needed so uv recognizes this as a project — not a publishable package\n[project]\nname = \"lang-chat\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11,<3.14\"\n\ndependencies = [\n    # Agent framework\n    \"deepagents==0.5.9\",\n    \"langgraph>=1.0.0,<2.0\",\n    \"langchain>=1.3.12,<2.0\",\n    \"langchain-core>=1.3.3,<2.0\",\n    \"langsmith>=0.10.2\",\n    \"langchain-mcp-adapters\",\n    \"langgraph-sdk\",\n\n    # Model providers — all installed, uncomment the one you want in agent/agent.py\n    \"langchain-google-genai\",   # Gemini (default — generous free tier)\n    \"langchain-openai\",         # OpenAI\n    \"langchain-anthropic\",      # Anthropic\n    \"langchain-ollama\",         # Ollama (local models)\n\n    # UI server\n    \"fastapi\",\n    \"uvicorn[standard]\",\n    \"python-dotenv\",\n\n    # LangGraph local dev\n    \"langgraph-cli[inmem]>=0.4.0\",\n\n    # deepagents CLI (m6 / dacli_tutor)\n    \"deepagents-cli==0.0.57\",\n]\n\n[tool.ruff]\nlint.select = [\"E\", \"F\", \"I\", \"UP\"]\nlint.ignore = [\"T201\", \"E501\", \"UP006\", \"UP007\"]",
+   "notas": "Este es el manifiesto de **desarrollo** (scripts de las lecciones, `langgraph dev`, la CLI de deepagents). La imagen de la deployment usa otro: `deep_tutor/pyproject.toml`, con solo lo que el agente necesita (lo ves en 1.B).\nFíjate en las versiones **fijas**: `deepagents==0.5.9` y `deepagents-cli==0.0.57`. Son distintas de las del curso 03 (deepagents 0.7): no mezcles los `.venv`.\n`langgraph-cli[inmem]` es lo que te da `langgraph dev` con el runtime en memoria.\nArchivo del repo; no hay nada que correr. Se instala con `uv sync` dentro de `python/` (todavía no hay `.venv`).",
+   "resaltar": [
+    9,
+    29,
+    32
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Las keys: python/.env.example",
+   "contenido": "# LangSmith — tracing and deployment\nLANGSMITH_API_KEY=lsv2_...\nLANGSMITH_PROJECT=lca-deployment\n\n# Alias used by the deep_tutor deployment to call its own API.\n# LangSmith reserves LANGSMITH_API_KEY (the CLI strips it on deploy), so we\n# forward the same value under a non-reserved name. Leave the line as-is.\nDEEP_TUTOR_API_KEY=${LANGSMITH_API_KEY}\n\n# Model provider API keys — set the one you're using\nANTHROPIC_API_KEY=your-anthropic-api-key\n# OPENAI_API_KEY=your-openai-api-key\n# GOOGLE_API_KEY=your-google-api-key",
+   "notas": "Las dos keys obligatorias: `LANGSMITH_API_KEY` (tracing, deploy y Studio) y `ANTHROPIC_API_KEY` (el modelo del tutor). `DEEP_TUTOR_API_KEY` es un alias que se explica en 1.B.\nCopias el ejemplo a `.env` (en PowerShell: `Copy-Item .env.example .env`) y **tú** pones los valores; nunca los pegues en el chat.\nLos scripts del curso usan `load_dotenv(override=True)`: el `.env` le gana a la shell, igual que en Deep Agents Python.",
+   "resaltar": [
+    2,
+    11
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Docker es opcional",
+   "contenido": "`langgraph deploy` tiene que construir una **imagen Docker** con tu código, tus dependencias y el runtime.\n\n- **Con Docker** corriendo: la construye en tu máquina y la sube.\n- **Sin Docker** (o apagado): la CLI sube tu código y LangSmith la construye **en remoto**. Funciona igual; solo tarda más.\n\nSalida del material oficial (requiere plan Plus), cuando Docker está apagado:\n\n```text\nDocker is installed but not running.\nStart Docker and try again.\nUsing remote build instead.\n```\n\nPara el desarrollo local (`langgraph dev`) Docker no hace falta en absoluto."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Examen: ¿qué plan necesitas?",
+   "contenido": "Tu equipo tiene una cuenta de LangSmith con plan **Developer**. Quieren probar el agente en Studio esta semana y, si funciona, darle a un cliente una **URL pública** para usarlo. ¿Qué afirmación es correcta?\n\n- **A)** Con Developer pueden usar `langgraph deploy`, pero sin Studio.\n- **B)** Con Developer pueden correr `langgraph dev` y usar Studio en local; para la URL pública en la nube necesitan Plus o superior.\n- **C)** Necesitan Docker instalado para cualquiera de las dos cosas.\n- **D)** Plus solo hace falta para el tracing; el deploy está incluido en Developer.",
+   "respuesta": "**B.** Developer (gratis) solo permite el desarrollo local: `langgraph dev` levanta el Agent Server en tu máquina y Studio se conecta a él. Desplegar en la nube (`langgraph deploy`) exige Plus o superior.\nA está al revés. C: Docker es opcional para el deploy (hay build remoto) y no se usa en `langgraph dev`. D: el tracing está en el plan gratis; lo que cuesta es la deployment."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin Docker",
+   "contenido": "Tienes plan Plus, pero no tienes Docker instalado. Corres `uv run langgraph deploy` dentro de `deep_tutor/`. ¿Qué pasa?",
+   "respuesta": "El deploy funciona: la CLI crea un archivo con tu código, lo sube y LangSmith construye la imagen en remoto (`Triggering remote build`). Solo tarda más (en el ejemplo del curso, unos 3 minutos y medio hasta `Deployment successful!`).\nEl malentendido típico es creer que sin Docker no se puede desplegar."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Developer (gratis):** `langgraph dev` en local, con Studio. **Plus (de pago):** `langgraph deploy` a la nube.\n- Una deployment cobra mientras existe: bórrala con `langgraph deploy delete <ID>` al terminar.\n- Docker es opcional: sin él, el build se hace en remoto.\n- Dos manifiestos: `python/pyproject.toml` (desarrollo) y `deep_tutor/pyproject.toml` (lo que va en la imagen).\n- Es el mismo Agent Server que se puede montar self-hosted (`langgraph-api` + Postgres + Redis); aquí lo administra LangSmith.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangSmith → *Deployment* (página \"Deploy to cloud\") y la página de precios (langchain.com/pricing)."
+  }
+ ],
+ "fuentes": [
+  "https://langchain-ai.github.io/lca-lessons/deployment/m0/m0.1-setup-python.html",
+  "lca-deployment/thinkific/src/m0/m0.1-setup-python.md",
+  "lca-deployment/python/pyproject.toml",
+  "lca-deployment/python/.env.example",
+  "lca-deployment/python/README.md"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Tu cuenta de LangSmith es Developer (gratis). ¿Puedes desplegar en la nube con `langgraph deploy`?",
+   "reverso": "No. Developer solo permite `langgraph dev` en local (con Studio). La nube exige Plus o superior."
+  },
+  {
+   "frente": "¿Qué pasa si corres `langgraph deploy` sin Docker?",
+   "reverso": "Funciona: la CLI sube el código y LangSmith construye la imagen en remoto. Solo tarda más."
+  },
+  {
+   "frente": "¿Por qué el curso tiene dos `pyproject.toml`?",
+   "reverso": "El de `python/` es para desarrollar (scripts, CLI, `langgraph dev`); el de `deep_tutor/` es lo que se instala en la imagen. La imagen solo necesita un subconjunto."
+  },
+  {
+   "frente": "Terminaste de practicar con tu deployment en la nube. ¿Por qué importa borrarla?",
+   "reverso": "Porque cobra mientras existe, aunque nadie la use. `langgraph deploy list` y `langgraph deploy delete <ID>`."
+  }
+ ]
+}

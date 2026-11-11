@@ -1,0 +1,144 @@
+{
+ "mision_id": "3.D",
+ "titulo": "Pausa decidida por el grafo",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "`interrupt_before=[\"node\"]` es fijo: lo decides al compilar y el grafo se detiene **siempre** en ese\nnode. Pero muchas veces la pausa depende de los datos: pedir aprobación solo si el pago pasa de\n$1000, o solo si el input es raro.\n\nAdemás, con un breakpoint fijo el humano no sabe **por qué** se detuvo.\n\nQuieres que sea el **node** quien decida, desde adentro, si pausa y con qué mensaje. Eso es un\nbreakpoint dinámico. El notebook usa `NodeInterrupt`; en langgraph 1.2.19 eso ya está\n**deprecado** y lo vigente es `interrupt()` con `Command(resume=...)`. Vas a ver los dos."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El grafo",
+   "contenido": "flowchart LR\n  S((START)) --> step_1 --> step_2 --> step_3 --> E((END))\n  class step_2 clave",
+   "notas": "Tres pasos en cadena, sin LLM. `step_2` revisa el input: si mide más de 5 caracteres, pausa.\nNada en `compile` dice dónde parar: la decisión vive **dentro** de `step_2`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La versión del notebook: NodeInterrupt",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.errors import NodeInterrupt\nfrom langgraph.graph import START, END, StateGraph\n\nclass State(TypedDict):\n    input: str\n\ndef step_1(state: State) -> State:\n    print(\"---Step 1---\")\n    return state\n\ndef step_2(state: State) -> State:\n    if len(state[\"input\"]) > 5:\n        raise NodeInterrupt(f\"Received input that is longer than 5 characters: {state['input']}\")\n    print(\"---Step 2---\")\n    return state\n\ndef step_3(state: State) -> State:\n    print(\"---Step 3---\")\n    return state\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"step_1\", step_1)\nbuilder.add_node(\"step_2\", step_2)\nbuilder.add_node(\"step_3\", step_3)\nbuilder.add_edge(START, \"step_1\")\nbuilder.add_edge(\"step_1\", \"step_2\")\nbuilder.add_edge(\"step_2\", \"step_3\")\nbuilder.add_edge(\"step_3\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"input\": \"hello world\"}, thread, stream_mode=\"values\"):\n    print(event)\nstate = graph.get_state(thread)\nprint(\"next:\", state.next)\nprint(\"interrupts:\", state.tasks[0].interrupts)",
+   "notas": "El node **lanza** `NodeInterrupt` con un mensaje. No hay `interrupt_before`.\nSí hay checkpointer: la pausa, igual que en la lección 3.B, es un checkpoint con `next` pendiente.",
+   "resaltar": [
+    15,
+    31
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real (1.2.19)",
+   "contenido": "```\nLangGraphDeprecatedSinceV10: NodeInterrupt is deprecated. Please use `langgraph.types.interrupt` instead. Deprecated in LangGraph V1.0 to be removed in V2.0.\n{'input': 'hello world'}\n---Step 1---\n{'input': 'hello world'}\n{'input': 'hello world', '__interrupt__': (Interrupt(value='Received input that is longer than 5 characters: hello world', id='placeholder-id', response_schema=None),)}\nnext: ('step_2',)\ninterrupts: (Interrupt(value='Received input that is longer than 5 characters: hello world', ...),)\n```\n\nFunciona, con un aviso: se quitará en la versión 2.0. `next` es `step_2` y el mensaje quedó\nguardado como `Interrupt`. En `values` llega un chunk con la key especial `__interrupt__`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Con NodeInterrupt, ¿cómo se sale?",
+   "contenido": "for event in graph.stream(None, thread, stream_mode=\"values\"):\n    print(event)\n\ngraph.update_state(thread, {\"input\": \"hi\"})\n\nfor event in graph.stream(None, thread, stream_mode=\"values\"):\n    print(event)",
+   "notas": "Se corre después del bloque anterior.\nPrimero reanuda con `None` sin cambiar nada; luego corrige el input con `update_state` (lección 3.C) y reanuda otra vez.",
+   "resaltar": [
+    4
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: atorado hasta que cambias el state",
+   "contenido": "```\n{'input': 'hello world'}\n{'input': 'hello world', '__interrupt__': (Interrupt(value='Received input that is longer than 5 characters: hello world', ...),)}\n{'input': 'hi'}\n---Step 2---\n{'input': 'hi'}\n---Step 3---\n{'input': 'hi'}\n```\n\nReanudar con `None` **vuelve a correr `step_2`** con el mismo input, y vuelve a pausar. Solo sale\ncuando cambias el state desde fuera. El node nunca recibe la respuesta del humano: el humano\ntiene que saber qué key editar."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La versión vigente: interrupt()",
+   "contenido": "from typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import START, END, StateGraph\nfrom langgraph.types import interrupt, Command\n\nclass State(TypedDict):\n    input: str\n\ndef step_1(state: State):\n    print(\"---Step 1---\")\n    return {}\n\ndef step_2(state: State):\n    print(\"---entra a step_2---\")\n    texto = state[\"input\"]\n    if len(texto) > 5:\n        # Pausa el grafo y le manda este valor a quien lo corre.\n        # Al reanudar con Command(resume=X), interrupt(...) devuelve X.\n        texto = interrupt(f\"Mide {len(texto)} caracteres (máx. 5). Mándame uno más corto: {texto}\")\n    print(f\"---Step 2--- con '{texto}'\")\n    return {\"input\": texto}\n\ndef step_3(state: State):\n    print(\"---Step 3---\")\n    return {}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"step_1\", step_1)\nbuilder.add_node(\"step_2\", step_2)\nbuilder.add_node(\"step_3\", step_3)\nbuilder.add_edge(START, \"step_1\")\nbuilder.add_edge(\"step_1\", \"step_2\")\nbuilder.add_edge(\"step_2\", \"step_3\")\nbuilder.add_edge(\"step_3\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"input\": \"hello world\"}, thread, stream_mode=\"values\"):\n    print(event)\nstate = graph.get_state(thread)\nprint(\"next:\", state.next)\nprint(\"interrupts:\", state.interrupts)",
+   "notas": "`interrupt(valor)` pausa el grafo y le manda `valor` a quien lo corre.\nCuando reanudas con `Command(resume=X)`, la llamada `interrupt(...)` **devuelve X** y el node sigue con ese valor.\nEl `print` de entrada está para ver cuántas veces corre el node.",
+   "resaltar": [
+    19,
+    14,
+    4
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: pausó con su mensaje",
+   "contenido": "```\n{'input': 'hello world'}\n---Step 1---\n---entra a step_2---\n{'input': 'hello world', '__interrupt__': (Interrupt(value='Mide 11 caracteres (máx. 5). Mándame uno más corto: hello world', id='e59933f6...', response_schema=None),)}\nnext: ('step_2',)\ninterrupts: (Interrupt(value='Mide 11 caracteres (máx. 5). Mándame uno más corto: hello world', ...),)\n```\n\nIgual que antes: `next` es `step_2` y el mensaje para el humano está en `state.interrupts` (y en el\nchunk `__interrupt__`). Ahora el `Interrupt` trae un `id` real, que sirve para responder a una\npausa concreta cuando hay varias."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Responder con Command(resume=...)",
+   "contenido": "for event in graph.stream(Command(resume=\"hi\"), thread, stream_mode=\"values\"):\n    print(event)\n\nprint(\"next:\", graph.get_state(thread).next)",
+   "notas": "Se corre después del bloque anterior. En vez de `None`, el input es `Command(resume=\"hi\")`.\nNo tocas el state desde fuera: le das la respuesta al node.",
+   "resaltar": [
+    1
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Salida real: el node recibió la respuesta",
+   "contenido": "```\n{'input': 'hello world'}\n---entra a step_2---\n---Step 2--- con 'hi'\n{'input': 'hi'}\n---Step 3---\nnext: ()\n```\n\nDos cosas que mirar:\n\n1. `interrupt(...)` devolvió `\"hi\"`, y fue el **node** quien escribió `{\"input\": \"hi\"}` en el state.\n2. `---entra a step_2---` salió **otra vez**. Al reanudar, el node corre **desde su primera línea**;\n   cuando llega a `interrupt(...)`, esta vez devuelve el valor en lugar de pausar. Todo lo que\n   está antes del `interrupt` se ejecuta dos veces."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "¿Y si reanudas con None?",
+   "contenido": "for event in graph.stream(None, thread, stream_mode=\"values\"):\n    print(event)\n\nprint(\"next:\", graph.get_state(thread).next)",
+   "notas": "Se corre justo después del bloque de `interrupt()` (la pausa), en lugar de `Command`.\nSalida real: `---entra a step_2---`, otra vez el chunk `__interrupt__` y `next: ('step_2',)`.\nSin respuesta, el node vuelve a correr y vuelve a pausar. Para `interrupt()` se reanuda con `Command(resume=...)`.",
+   "resaltar": [
+    1
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las tres formas de pausar",
+   "contenido": "| | Quién decide | Cómo se reanuda | Estado en 1.2.19 |\n|---|---|---|---|\n| `interrupt_before=[\"node\"]` | tú, al compilar (o por corrida en el SDK) | `None` | vigente |\n| `raise NodeInterrupt(msg)` | el node, con un `if` | editar con `update_state` + `None` | deprecado, sale en 2.0 |\n| `interrupt(valor)` | el node, con un `if` | `Command(resume=respuesta)` | vigente, recomendado |\n\nLas tres necesitan checkpointer. En LangChain v1, el middleware de human-in-the-loop de\n`create_agent` está construido sobre este mismo `interrupt()` (lo puedes ver en\n`langchain/agents/middleware/human_in_the_loop.py`)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Input corto",
+   "contenido": "Es la versión de `interrupt()` del paso 7, pero con `{\"input\": \"hola\"}` (4 caracteres). ¿Se pausa? ¿Qué es `next` al final?\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import START, END, StateGraph\nfrom langgraph.types import interrupt, Command\n\nclass State(TypedDict):\n    input: str\n\ndef step_1(state: State):\n    print(\"---Step 1---\")\n    return {}\n\ndef step_2(state: State):\n    print(\"---entra a step_2---\")\n    texto = state[\"input\"]\n    if len(texto) > 5:\n        texto = interrupt(f\"Mide {len(texto)} caracteres (máx. 5). Mándame uno más corto: {texto}\")\n    print(f\"---Step 2--- con '{texto}'\")\n    return {\"input\": texto}\n\ndef step_3(state: State):\n    print(\"---Step 3---\")\n    return {}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"step_1\", step_1)\nbuilder.add_node(\"step_2\", step_2)\nbuilder.add_node(\"step_3\", step_3)\nbuilder.add_edge(START, \"step_1\")\nbuilder.add_edge(\"step_1\", \"step_2\")\nbuilder.add_edge(\"step_2\", \"step_3\")\nbuilder.add_edge(\"step_3\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"input\": \"hola\"}, thread, stream_mode=\"values\"):\n    print(event)\nprint(\"next:\", graph.get_state(thread).next)\n```",
+   "respuesta": "**No se pausa.** La condición `len(texto) > 5` es falsa, así que nunca se llama a `interrupt()`:\ncorren `step_1`, `step_2` (con 'hola') y `step_3`, y `next` es `()` (salida real). Esa es la\ndiferencia con `interrupt_before`, que se detendría siempre."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cuántas veces entra?",
+   "contenido": "Con el grafo de `interrupt()` del paso 7, arrancas con `\"hello world\"` y luego reanudas una vez con\n`Command(resume=\"hi\")` (como en el paso 9). ¿Cuántas veces se imprime `---entra a step_2---` en total?",
+   "respuesta": "**2.** Una en la primera corrida (hasta que `interrupt()` pausa) y otra al reanudar: el node se\nre-ejecuta desde el principio, y esta vez `interrupt()` devuelve `\"hi\"` en lugar de pausar.",
+   "ref": 7
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Un correo antes del interrupt",
+   "contenido": "El grafo de `interrupt()` del paso 7, con un cambio: `step_2` llama a `enviar_correo_al_jefe()` **antes** del `interrupt(...)`. Arrancas con `\"hello world\"` y reanudas con `Command(resume=\"hi\")`. ¿Qué imprime la última línea?\n\n```python\nfrom typing_extensions import TypedDict\nfrom langgraph.checkpoint.memory import MemorySaver\nfrom langgraph.graph import START, END, StateGraph\nfrom langgraph.types import interrupt, Command\n\nCORREOS = []\n\ndef enviar_correo_al_jefe():\n    CORREOS.append(\"aviso\")\n    print(\"---correo enviado al jefe---\")\n\nclass State(TypedDict):\n    input: str\n\ndef step_1(state: State):\n    print(\"---Step 1---\")\n    return {}\n\ndef step_2(state: State):\n    print(\"---entra a step_2---\")\n    enviar_correo_al_jefe()  # ANTES del interrupt\n    texto = state[\"input\"]\n    if len(texto) > 5:\n        texto = interrupt(f\"Mide {len(texto)} caracteres (máx. 5). Mándame uno más corto: {texto}\")\n    print(f\"---Step 2--- con '{texto}'\")\n    return {\"input\": texto}\n\ndef step_3(state: State):\n    print(\"---Step 3---\")\n    return {}\n\nbuilder = StateGraph(State)\nbuilder.add_node(\"step_1\", step_1)\nbuilder.add_node(\"step_2\", step_2)\nbuilder.add_node(\"step_3\", step_3)\nbuilder.add_edge(START, \"step_1\")\nbuilder.add_edge(\"step_1\", \"step_2\")\nbuilder.add_edge(\"step_2\", \"step_3\")\nbuilder.add_edge(\"step_3\", END)\ngraph = builder.compile(checkpointer=MemorySaver())\n\nthread = {\"configurable\": {\"thread_id\": \"1\"}}\nfor event in graph.stream({\"input\": \"hello world\"}, thread, stream_mode=\"values\"):\n    print(event)\n\nfor event in graph.stream(Command(resume=\"hi\"), thread, stream_mode=\"values\"):\n    print(event)\n\nprint(\"correos al jefe:\", len(CORREOS))\n```",
+   "respuesta": "`correos al jefe: 2` (salida real). Al reanudar, `step_2` corre desde su primera línea, así que todo lo\nanterior al `interrupt` se repite. Los efectos con consecuencias (correos, pagos, escribir en una base) van\n**después** del `interrupt` o en otro node."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un breakpoint dinámico lo decide el **node** con un `if`, y le dice al humano por qué se detuvo.\n- `NodeInterrupt` (el del notebook) funciona en 1.2.19 pero está **deprecado**; con él, `None` re-corre el node y te quedas atorado hasta editar el state.\n- Lo vigente: `valor = interrupt(mensaje)` pausa; `graph.stream(Command(resume=x), thread)` reanuda y `interrupt` devuelve `x`.\n- Al reanudar, el node corre **desde el principio**: no pongas efectos irreversibles antes del `interrupt`.\n- Igual que `interrupt_before`, todo descansa en el checkpointer. El HITL middleware de `create_agent` usa este `interrupt()`."
+  }
+ ],
+ "fuentes": [
+  "module-3/dynamic-breakpoints.ipynb"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Qué ventaja tiene una pausa con `interrupt()` dentro del node sobre `interrupt_before`?",
+   "reverso": "Pausa **solo cuando una condición se cumple** (un `if` en el node) y le manda al humano un valor que explica por qué."
+  },
+  {
+   "frente": "Reanudas un `interrupt()` con `Command(resume=\"hi\")`. ¿Qué pasa dentro del node?",
+   "reverso": "El node corre **desde el principio** y, al llegar a `interrupt(...)`, esta vez devuelve `\"hi\"` en vez de pausar."
+  },
+  {
+   "frente": "¿Por qué no debes poner un efecto irreversible (mandar un correo) antes de un `interrupt()`?",
+   "reverso": "Porque al reanudar el node se re-ejecuta desde su primera línea: el correo saldría dos veces."
+  },
+  {
+   "frente": "Un node pausó con `interrupt()` y lo reanudas con `None`. ¿Qué pasa?",
+   "reverso": "Vuelve a correr el node y vuelve a pausar en el mismo `interrupt`. La respuesta se pasa con `Command(resume=...)`."
+  },
+  {
+   "frente": "Con el viejo `NodeInterrupt`, ¿cómo salías de la pausa y qué cambió con `interrupt()`?",
+   "reverso": "Había que editar el state con `update_state` y reanudar con `None`. Con `interrupt()` el humano responde con `Command(resume=...)` y el node recibe la respuesta."
+  },
+  {
+   "frente": "¿Qué tienen en común `interrupt_before`, `NodeInterrupt` e `interrupt()` para poder reanudar?",
+   "reverso": "Las tres necesitan un **checkpointer**: la pausa es un checkpoint guardado con un node pendiente en `next`."
+  }
+ ]
+}
