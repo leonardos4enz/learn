@@ -62,11 +62,16 @@ aside{background:var(--panel);border-right:1px solid var(--line);display:flex;fl
 .nav svg{width:18px;height:18px;flex:none}
 .badge{margin-left:auto;font:600 11px var(--f-mono);background:var(--acc);color:var(--on-acc);border-radius:10px;padding:1px 7px;display:none}
 .badge.show{display:inline-block}
-.side-foot{margin-top:auto;padding:12px 8px 0;border-top:1px solid var(--line);font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:9px}
-.live{display:flex;align-items:center;gap:7px}
+.side-foot{margin-top:auto;padding:10px 4px 0;border-top:1px solid var(--line);display:flex;align-items:center;gap:2px}
+.live{display:flex;align-items:center;height:34px;padding:0 8px;margin-right:auto;cursor:default}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.ibtn{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer}
+.ibtn:hover{background:var(--panel2);color:var(--ink)}
+.ibtn:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.ibtn svg{width:18px;height:18px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
 .dot.ok{background:var(--acc)}
-.side-foot a,.linkbtn{color:var(--muted);background:none;border:0;padding:0;text-align:left;cursor:pointer;text-decoration:underline;text-underline-offset:2px;font-size:13px}
+.linkbtn{color:var(--muted);background:none;border:0;padding:0;text-align:left;cursor:pointer;text-decoration:underline;text-underline-offset:2px;font-size:13px}
 
 /* ---------- Contenido ---------- */
 main{overflow:auto;padding:28px 32px 48px}
@@ -638,7 +643,9 @@ ol.plan .pb:has(a.btn){flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end;max
   aside{flex-direction:row;flex-wrap:wrap;align-items:center;align-content:start;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line)}
   .brand{width:100%;padding:0 4px 8px}
   .nav{width:auto;font-size:14px;padding:7px 9px}
-  .side-foot,.navsep{display:none}
+  .navsep{display:none}
+  aside{position:relative}
+  .side-foot{position:absolute;top:8px;right:8px;margin:0;padding:0;border:0}
   .curlabel{margin:0 0 6px}
   main{padding:20px 16px 32px;overflow:visible}
   .today{grid-template-columns:1fr}.today .main{grid-row:auto}
@@ -654,7 +661,7 @@ ol.plan .pb:has(a.btn){flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end;max
 <body>
 
 <aside>
-  <div class="brand"><span class="pet" id="pet" aria-hidden="true"></span><div><b>Mi Tutor</b><span>Estudios de Leo</span></div></div>
+  <div class="brand"><span class="pet" id="pet" aria-hidden="true"></span><div><b>Mi Tutor</b><span>Tus estudios</span></div></div>
   <button class="curlabel" id="curlabel" type="button" title="Cambiar de curso en Mis estudios"><span>Curso</span><b id="curname">…</b></button>
   <button class="nav" data-v="estudios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v6M12 9H6v4M12 9h6v4M6 13v3M18 13v3"/><circle cx="12" cy="3" r="1.5"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg>Mis estudios</button>
   <div class="navsep"></div>
@@ -668,10 +675,10 @@ ol.plan .pb:has(a.btn){flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end;max
   <button class="nav" data-v="proyecto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>Proyecto</button>
   <button class="nav" data-v="mejoras"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Mejoras<span class="badge" id="mbadge"></span></button>
   <div class="side-foot">
-    <div class="live"><span class="dot" id="dot"></span><span id="live">Conectando…</span></div>
-    <button class="linkbtn" id="theme">Cambiar a modo oscuro</button>
-    <button class="linkbtn" id="sonido">Sonido: activado</button>
-    <a href="/salir">Salir</a>
+    <span class="live" title="Conectando…"><span class="dot" id="dot"></span><span id="live" class="sr">Conectando…</span></span>
+    <button class="ibtn" id="theme" type="button"></button>
+    <button class="ibtn" id="sonido" type="button"></button>
+    <a class="ibtn" href="/salir" title="Salir" aria-label="Salir"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg></a>
   </div>
 </aside>
 
@@ -793,9 +800,14 @@ const md = s => window.marked ? marked.parse(String(s ?? "")) : `<p>${esc(s)}</p
 const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 
 /* ---------- Tema (claro por defecto) ---------- */
+const ICONO_SOL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`;
+const ICONO_LUNA = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>`;
+const ICONO_SONIDO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>`;
+const ICONO_MUDO = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/></svg>`;
 function applyTheme(t){
   document.documentElement.dataset.theme = t;
-  $("#theme").textContent = t === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro";
+  const lbl = t === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro";
+  $("#theme").innerHTML = t === "dark" ? ICONO_SOL : ICONO_LUNA; $("#theme").title = lbl; $("#theme").setAttribute("aria-label", lbl);
   if (window.mermaid) mermaid.initialize({startOnLoad:false, theme: t === "dark" ? "dark" : "default", securityLevel:"strict", fontFamily:"Nunito, Segoe UI, sans-serif", flowchart:{htmlLabels:true}});
 }
 applyTheme(store.get("tema") || "light");
@@ -1033,12 +1045,12 @@ async function poll(){
       if (view === "tarjetas" && tActual) pintarTarjeta();
       if (view === "tiempo" && !($("#tform") && $("#tform").children.length)) pintarTiempo();  // colores y nombres de cursos salen del árbol
     }
-    if (!curso){ $("#dot").classList.add("ok"); $("#live").textContent = "Conectado"; return; }
+    if (!curso){ $("#dot").classList.add("ok"); $("#live").textContent = "Conectado"; $(".live").title = "Conectado"; return; }
     const raw = await (await fetch("/api/estado?curso=" + encodeURIComponent(curso), {cache:"no-store"})).text();
-    $("#dot").classList.add("ok"); $("#live").textContent = "Conectado";
+    $("#dot").classList.add("ok"); $("#live").textContent = "Conectado"; $(".live").title = "Conectado";
     if (raw !== lastRaw){ lastRaw = raw; state = JSON.parse(raw); state._curso = curso; render(); }
   }catch(e){
-    $("#dot").classList.remove("ok"); $("#live").textContent = "Sin conexión al servidor";
+    $("#dot").classList.remove("ok"); $("#live").textContent = "Sin conexión al servidor"; $(".live").title = "Sin conexión al servidor";
   }
 }
 
@@ -1240,7 +1252,10 @@ const Sonido = (() => {
     set(v){ on = v; store.set("sonido", v ? "1" : "0"); },
   };
 })();
-function pintarBotonSonido(){ $("#sonido").textContent = Sonido.on ? "Sonido: activado" : "Sonido: apagado"; }
+function pintarBotonSonido(){
+  const lbl = Sonido.on ? "Sonido activado (toca para apagarlo)" : "Sonido apagado (toca para activarlo)";
+  $("#sonido").innerHTML = Sonido.on ? ICONO_SONIDO : ICONO_MUDO; $("#sonido").title = lbl; $("#sonido").setAttribute("aria-label", lbl);
+}
 $("#sonido").onclick = () => { Sonido.set(!Sonido.on); pintarBotonSonido(); if (Sonido.on) Sonido.play("bien"); };
 pintarBotonSonido();
 
