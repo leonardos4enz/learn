@@ -495,7 +495,7 @@ def crear_tarjetas(cid, lista):
         c = Card()
         tid = _x("""INSERT INTO tarjetas (curso, modulo, mision, frente, reverso, creada, fsrs, due, nueva)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-                 (cid, str(t.get("modulo") or ""), str(t.get("mision") or ""), frente, reverso,
+                 (cid, "" if t.get("modulo") is None else str(t.get("modulo")), str(t.get("mision") or ""), frente, reverso,
                   now_utc().isoformat(), c.to_json(), c.due.isoformat()))
         existentes.add(frente.lower())
         creadas.append(tid)
@@ -674,7 +674,7 @@ def guardar_leccion(cid, mision_id, titulo, pasos, fuentes=None, tarjetas=None, 
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(curso, mision_id) DO UPDATE SET modulo=excluded.modulo, titulo=excluded.titulo, pasos=excluded.pasos,
           fuentes=excluded.fuentes, tarjetas=excluded.tarjetas, actualizado=excluded.actualizado""",
-       (cid, mision_id, str(modulo or ""), titulo.strip(), json.dumps(pasos, ensure_ascii=False),
+       (cid, mision_id, "" if modulo is None else str(modulo), titulo.strip(),  # el módulo 0 (Bienvenida) es válido json.dumps(pasos, ensure_ascii=False),
         json.dumps(fuentes, ensure_ascii=False), json.dumps(tarjetas, ensure_ascii=False), now_utc().isoformat()))
     return {"pasos": len(pasos), "predice": sum(1 for p in pasos if p["tipo"] == "predice"), "tarjetas": len(tarjetas)}
 
