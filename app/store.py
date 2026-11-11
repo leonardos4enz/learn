@@ -254,7 +254,8 @@ def arbol_con_resumen():
                 m["curso"] = True
                 m["resumen"] = resumen(n["id"])
                 sc = m["resumen"].get("score")
-                m["_scores"] = [sc["pct"] if sc else 0]
+                # Un curso terminado sin plan en la app (p. ej. hecho con videos) cuenta 100, no 0.
+                m["_scores"] = [sc["pct"] if sc else (100 if n.get("estado") == "terminado" else 0)]
             else:
                 m["hijos"] = anotar(n["hijos"])
                 m["_scores"] = [s for h in m["hijos"] for s in h["_scores"]]
@@ -269,6 +270,52 @@ def arbol_con_resumen():
             limpiar(n.get("hijos", []))
         return ns
     return limpiar(anotar(arbol()))
+
+
+# ---------- rutas: una capa sobre el árbol (p. ej. la ruta de una certificación) ----------
+def rutas():
+    return kv_get("rutas", [])
+
+
+def guardar_rutas(lista):
+    """Rutas = [{"id", "nombre", "descripcion"?, "cursos": [ids de cursos del árbol, en orden]}]. No mueven cursos
+    en el árbol: la app las dibuja encima del grafo."""
+    if not isinstance(lista, list):
+        raise ValueError("Las rutas deben ser una lista.")
+    ids_cursos = {n["id"] for _, n in iter_cursos()}
+    vistos = set()
+    for r in lista:
+        if not isinstance(r, dict) or not r.get("id") or not r.get("nombre") or not isinstance(r.get("cursos"), list):
+            raise ValueError("Cada ruta necesita 'id', 'nombre' y 'cursos' (lista).")
+        if r["id"] in vistos:
+            raise ValueError(f"Ruta repetida: {r['id']}.")
+        vistos.add(r["id"])
+        faltan = [c for c in r["cursos"] if c not in ids_cursos]
+        if faltan:
+            raise ValueError(f"La ruta {r['id']} menciona cursos que no están en el árbol: {', '.join(faltan)}.")
+    kv_set("rutas", lista)
+
+
+def rutas_con_progreso(arbol_anotado=None):
+    """Cada ruta con su progreso: promedio del score de sus cursos (terminado sin plan = 100) y cursos terminados."""
+    cursos = {}
+
+    def juntar(ns):
+        for n in ns:
+            if n.get("curso"):
+                cursos[n["id"]] = n
+            juntar(n.get("hijos", []))
+    juntar(arbol_anotado if arbol_anotado is not None else arbol_con_resumen())
+    out = []
+    for r in rutas():
+        cs = [cursos[c] for c in r.get("cursos", []) if c in cursos]
+        pcts = []
+        for c in cs:
+            sc = (c.get("resumen") or {}).get("score")
+            pcts.append(100 if c.get("estado") == "terminado" else (sc["pct"] if sc else 0))
+        out.append({**r, "pct": round(sum(pcts) / len(pcts)) if pcts else 0,
+                    "terminados": sum(1 for c in cs if c.get("estado") == "terminado"), "total": len(cs)})
+    return out
 
 
 # ---------- racha (días seguidos estudiando) ----------

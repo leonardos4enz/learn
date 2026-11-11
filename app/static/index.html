@@ -25,7 +25,7 @@
 <style>
 :root{
   --bg:#F5F6F7; --panel:#FFFFFF; --panel2:#F3F5F6; --ink:#16191D; --muted:#59636E; --faint:#8A939C;
-  --line:#E2E5E9; --acc:#0B7D67; --acc-soft:#E2F2EE; --acc-ink:#095E4E; --on-acc:#FFFFFF;
+  --line:#E2E5E9; --ruta:#6A4BE0; --ruta-soft:#EFEBFF; --acc:#0B7D67; --acc-soft:#E2F2EE; --acc-ink:#095E4E; --on-acc:#FFFFFF;
   --mark:#FFF1BF; --mark-line:#C98A00; --warn:#9A5B00; --warn-soft:#FFF3DC; --bad:#A8231B; --bad-soft:#FCEBE9;
   --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.07);
   --f-body: "Nunito", "Segoe UI", system-ui, sans-serif;
@@ -36,7 +36,7 @@
 }
 :root[data-theme="dark"]{
   --bg:#101417; --panel:#171C20; --panel2:#1D2328; --ink:#E6EBEE; --muted:#9BA6B0; --faint:#6E7983;
-  --line:#283037; --acc:#34C3A2; --acc-soft:#14322B; --acc-ink:#86E3CC; --on-acc:#062A21;
+  --line:#283037; --ruta:#A893FF; --ruta-soft:#272140; --acc:#34C3A2; --acc-soft:#14322B; --acc-ink:#86E3CC; --on-acc:#062A21;
   --mark:#3A3115; --mark-line:#E0A92E; --warn:#F0A43A; --warn-soft:#33260F; --bad:#F07167; --bad-soft:#3A1A18;
   --shadow:none; --sheet:#171C20; color-scheme: dark;
 }
@@ -241,6 +241,28 @@ details.rama:not([open]) > summary.sh{margin-bottom:4px}
 .gley{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .gley i{display:inline-block;width:18px;height:3px;border-radius:2px;margin-left:8px}
 .gley .lg-on{background:var(--acc)}
+.gley .lg-r{background:var(--ruta)}
+.grutas{display:flex;flex-wrap:wrap;gap:10px;margin:2px 0 12px}
+.ruta{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1.5px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;text-align:left;color:var(--ink)}
+.ruta:hover{border-color:var(--ruta)}
+.ruta.on{border-color:var(--ruta);background:var(--ruta-soft)}
+.ruta .rn{display:flex;flex-direction:column}
+.ruta .rn b{font-size:15px}
+.ruta .rn small{color:var(--muted);font-size:12.5px}
+.ruta .meter{width:110px}
+.ruta .meter i{background:var(--ruta)}
+.ruta .meter::after{display:none}
+.ruta em{font:700 14px var(--f-mono);font-style:normal}
+.gbar .btn{padding:5px 12px;font-size:13.5px}
+.gedges path.ru{stroke:var(--ruta);stroke-width:2.5;opacity:.75}
+.gedges path.on.ru{stroke:var(--acc);opacity:1}
+.gcur.g-ruta .ring .rt{stroke:var(--ruta-soft)}
+.gcur.g-ruta .gt b{color:var(--ink)}
+.gn.g-fuera{opacity:.35}
+.gcur.g-ruta.g-pausa{opacity:.85}
+.gn.g-fuera:hover{opacity:.8}
+.gord{position:absolute;left:-7px;top:2px;width:18px;height:18px;border-radius:50%;background:var(--ruta);color:#fff;font:700 10.5px/18px var(--f-mono);text-align:center;z-index:1}
+.chip.gr{background:var(--ruta-soft);color:var(--ruta)}
 .gley .lg-p{background:var(--faint);opacity:.5;height:10px;width:10px;border-radius:50%}
 .gwrap{overflow-x:auto;padding:4px 0;margin-bottom:18px;max-width:100%}
 main{min-width:0}  /* sin esto, el grafo ancho estira la columna y toda la página se desborda en el celular */
@@ -651,12 +673,11 @@ ol.plan .pb:has(a.btn){flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end;max
   <!-- MIS ESTUDIOS -->
   <section class="view" id="v-estudios">
     <h1>Mis estudios</h1>
-    <p class="sub">Todo lo que estás aprendiendo y cuánto llevas. Toca una rama para cerrarla o abrirla, y un curso para ver su detalle.</p>
-    <div class="gbar"><div class="vmodo" role="group" aria-label="Cómo ver el árbol"><button type="button" data-g="grafo">Grafo</button><button type="button" data-g="lista">Lista</button></div>
-      <span class="gley"><i class="lg-on"></i>Camino al curso actual <i class="lg-p"></i>En pausa</span></div>
-    <div class="card gwrap" id="grafo" hidden></div>
-    <div class="tree" id="tree"></div>
-    <div id="gdet"></div>
+    <p class="sub">Todo lo que estás aprendiendo y cuánto llevas. Toca una rama para cerrarla o abrirla; un curso, para ver sus módulos (y otra vez, para ir a Hoy).</p>
+    <div class="grutas" id="grutas"></div>
+    <div class="gbar"><button class="btn" type="button" id="gexp">Expandir todo</button><button class="btn" type="button" id="gcol">Contraer todo</button><button class="btn" type="button" id="gact">Ir al curso actual</button>
+      <span class="gley"><i class="lg-on"></i>Camino al curso actual <span class="lgr"><i class="lg-r"></i>Ruta resaltada</span> <i class="lg-p"></i>En pausa</span></div>
+    <div class="card gwrap" id="grafo"></div>
   </section>
 
   <!-- HOY -->
@@ -871,50 +892,34 @@ function renderSelector(){
   const c = cursoActual();
   $("#curname").textContent = c ? c.nombre : "Elige un curso";
 }
-function renderLista(){
-  const abiertos = new Set([...document.querySelectorAll("#tree details[open]")].map(x => x.dataset.c));
-  const nodo = (n, nivel) => {
-    if (n.curso){
-      const r = n.resumen || {}, sc = r.score, pct = sc ? sc.pct : 0;
-      const tj = r.tarjetas || {};
-      const det = (r.tiene_plan ? `${r.hechas} de ${r.total} misiones${r.siguiente ? " · sigue " + esc(r.siguiente) : ""}` : esc(n.nota || "Sin plan todavía: se arma al empezarlo con el tutor."))
-        + (tj.total ? ` · ${tj.dominadas} de ${tj.total} tarjetas dominadas` : "");
-      const chip = n.estado === "actual" ? `<span class="chip ok">Actual</span>` : (n.estado ? `<span class="chip off">${esc(n.estado)}</span>` : "");
-      const mods = sc && sc.modulos.length ? `<details class="mods-det" data-c="${esc(n.id)}" ${abiertos.has(n.id) ? "open" : ""}><summary>Score por módulo</summary>
-        ${sc.modulos.map(m => `<div class="mrow big"><span class="mn">M${esc(m.n)}<small>${esc(m.nombre)}</small></span>${barra(m.pct)}<em>${m.pct}%</em><small class="mp">${esc(partesTxt(m.partes))}</small></div>`).join("")}</details>` : "";
-      return `<div class="coursewrap"><button class="course ${n.id === curso ? "on" : ""}" data-curso="${esc(n.id)}"><div class="grow"><div class="t">${esc(n.nombre)}</div><div class="d">${det}</div></div>
-        ${r.tiene_plan ? `${barra(pct)}<span class="n" title="Score del curso">${pct}%</span>` : ""}${chip}</button>${mods}</div>`;
-    }
-    const hijos = (n.hijos || []).map(h => nodo(h, nivel + 1)).join("") || `<div class="d" style="color:var(--muted)">Vacío</div>`;
-    const sc = `<span class="bscore" title="Promedio de sus ${n.n_cursos || 0} cursos (los no empezados cuentan 0)">${barra(n.score_pct || 0)}<b>${n.score_pct || 0}%</b></span>`;
-    // Cada rama se puede colapsar; lo que Leo cierra se recuerda en este navegador.
-    const cs = aplanar([n]), abierta = !cerradas.has(n.id) ? "open" : "";
-    const conActual = cs.some(c => c.estado === "actual") ? `<span class="chip ok">Actual</span>` : "";
-    const cuenta = `<span class="rcnt">${cs.length} ${cs.length === 1 ? "curso" : "cursos"}</span>`;
-    if (nivel === 0) return `<details class="card branch rama" data-rama="${esc(n.id)}" ${abierta}><summary class="bh"><b>${esc(n.nombre)}</b>${cuenta}${conActual}${sc}</summary>${hijos}</details>`;
-    return `<details class="sub-branch rama" data-rama="${esc(n.id)}" ${abierta}><summary class="sh">${esc(n.nombre)}${cuenta}${conActual}${sc}</summary>${hijos}</details>`;
-  };
-  const cerradas = ramasCerradas();
-  $("#tree").innerHTML = arbol.length ? arbol.map(n => nodo(n, 0)).join("") : `<div class="card empty">Aún no hay cursos. Abre una sesión con <code>/tutor</code> y dile qué quieres aprender.</div>`;
-  $("#tree").querySelectorAll("[data-curso]").forEach(b => b.onclick = () => { setCurso(b.dataset.curso); show("hoy"); });
-  $("#tree").querySelectorAll("details.rama").forEach(d => d.ontoggle = () => {
-    if (d.open) cerradas.delete(d.dataset.rama); else cerradas.add(d.dataset.rama);
-    store.set("ramas_cerradas", JSON.stringify([...cerradas]));
-  });
-}
-
 /* ---------- Mis estudios: grafo con anillos de progreso (o lista) + detalle del curso elegido ---------- */
 function ramasCerradas(){ try{ return new Set(JSON.parse(store.get("ramas_cerradas") || "[]")); }catch(e){ return new Set(); } }
-// Sin preferencia guardada: grafo en pantallas anchas, lista en el celular (un árbol horizontal no cabe en 375 px).
-let arbolModo = store.get("arbol_modo") || (innerWidth < 700 ? "lista" : "grafo");
-document.querySelectorAll(".vmodo [data-g]").forEach(b => b.onclick = () => { arbolModo = b.dataset.g; store.set("arbol_modo", arbolModo); renderArbol(); });
-function renderArbol(){
-  document.querySelectorAll(".vmodo [data-g]").forEach(b => { b.classList.toggle("on", b.dataset.g === arbolModo); b.setAttribute("aria-pressed", String(b.dataset.g === arbolModo)); });
-  const g = arbolModo === "grafo";
-  $("#grafo").hidden = !g; $("#tree").hidden = g; $(".gley").hidden = !g;
-  if (g) renderGrafo(); else renderLista();
-  renderDetalle();
+function renderArbol(){ renderRutas(); renderGrafo(); }
+// Rutas: una capa sobre el grafo (p. ej. la de una certificación). Se elige cuál resaltar; la elección se recuerda.
+let rutas = [];
+const rutaVer = () => { const v = store.get("ruta_ver"); if (v === "ninguna") return null;
+  return rutas.find(r => r.id === v) || rutas.find(r => (r.cursos || []).some(id => (cursos.find(c => c.id === id) || {}).estado === "actual")) || null; };
+function renderRutas(){
+  const rv = rutaVer();
+  $("#grutas").innerHTML = rutas.map(r => `<button type="button" class="ruta ${rv && rv.id === r.id ? "on" : ""}" data-ruta="${esc(r.id)}" aria-pressed="${!!(rv && rv.id === r.id)}" title="${esc(r.descripcion || "Resaltar esta ruta en el grafo")}">
+      <span class="rn"><b>${esc(r.nombre)}</b><small>${r.terminados} de ${r.total} cursos terminados</small></span>${barra(r.pct)}<em>${r.pct}%</em></button>`).join("");
+  $("#grutas").querySelectorAll("[data-ruta]").forEach(b => b.onclick = () => {
+    const ya = rv && rv.id === b.dataset.ruta; store.set("ruta_ver", ya ? "ninguna" : b.dataset.ruta); renderArbol();
+  });
+  $(".gley .lgr").hidden = !rv;
 }
+$("#gexp").onclick = () => { store.set("ramas_cerradas", "[]"); renderGrafo(); };
+$("#gcol").onclick = () => {
+  const ids = []; const rec = ns => ns.forEach(n => { if (!n.curso){ ids.push(n.id); rec(n.hijos || []); } });
+  rec(arbol); store.set("ramas_cerradas", JSON.stringify(ids)); renderGrafo();
+};
+$("#gact").onclick = () => {
+  const act = cursos.find(c => c.estado === "actual"); if (!act) return;
+  // abre las ramas que llevan al curso actual y lo elige
+  const s = ramasCerradas(); const camino = (ns, r) => { for (const n of ns){ if (n.id === act.id) return r; if (n.hijos){ const x = camino(n.hijos, [...r, n.id]); if (x) return x; } } return null; };
+  (camino(arbol, []) || []).forEach(id => s.delete(id)); store.set("ramas_cerradas", JSON.stringify([...s]));
+  if (act.id !== curso) setCurso(act.id); else renderGrafo();
+};
 // Anillo de progreso: pista gris y arco del color de acento según el porcentaje.
 function anillo(pct, r, centro, cls = ""){
   const c = 2 * Math.PI * r, p = Math.max(0, Math.min(100, pct || 0)), s = r * 2 + 8;
@@ -945,32 +950,38 @@ function renderGrafo(){
   arbol.forEach(n => visitar(n, 0, null, []));
   if (!nodos.length){ $("#grafo").innerHTML = `<div class="empty">Aún no hay cursos. Abre una sesión con <code>/tutor</code> y dile qué quieres aprender.</div>`; return; }
   const enCamino = new Set((nodos.find(g => g.n.curso && g.n.estado === "actual") || {ruta: []}).ruta);
+  // Ruta resaltada: sus cursos llevan su número de orden; las ramas y aristas que llevan a ellos se marcan; lo demás se atenúa.
+  const rv = rutaVer(), enRuta = rv ? (rv.cursos || []) : [];
+  const caminoRuta = new Set(nodos.filter(g => g.n.curso && enRuta.includes(g.n.id)).flatMap(g => g.ruta));
+  const rutaEnRama = n => aplanar([n]).filter(c => enRuta.includes(c.id)).length;
   const X = g => PX + g.d * COL, Y = g => PY + g.y;
   const W = Math.max(PX + prof * COL + 210, ($("#grafo").clientWidth || 0) - 4), H = PY * 2 + (fila - 1) * ROW;
   const lineas = aristas.map(([a, b]) => {
     const x1 = X(a) - 18 + CAJA + 2, y1 = Y(a), x2 = X(b) - 18, y2 = Y(b), xm = (x1 + x2) / 2;
-    const on = enCamino.has(a.n.id) && enCamino.has(b.n.id);
-    return `<path class="${on ? "on" : ""}" d="M${x1} ${y1} C${xm} ${y1} ${xm} ${y2} ${x2} ${y2}"/>`;
+    const on = enCamino.has(a.n.id) && enCamino.has(b.n.id), ru = caminoRuta.has(a.n.id) && caminoRuta.has(b.n.id);
+    return `<path class="${on ? "on" : ""} ${ru ? "ru" : ""}" d="M${x1} ${y1} C${xm} ${y1} ${xm} ${y2} ${x2} ${y2}"/>`;
   }).join("");
   const htmlNodo = g => {
     // Un nodo sin nada a su derecha (hoja) usa todo el ancho libre; uno con hijos, solo su columna.
     const n = g.n, st = `left:${X(g) - 18}px;top:${Y(g) - 26}px;width:${g.hijos.length ? CAJA : W - X(g) + 6}px`;
     if (n.mod){
       const m = n.mod;
-      return `<button class="gn gmod" style="${st}" data-mod="${esc(m.n)}" title="${esc(partesTxt(m.partes))}">${anillo(m.pct, 13, "M" + esc(m.n), "sm")}
+      return `<button class="gn gmod" style="${st}" data-mod="${esc(m.n)}" title="${esc(partesTxt(m.partes))} · toca para ver sus lecciones">${anillo(m.pct, 13, "M" + esc(m.n), "sm")}
         <span class="gt"><b>${esc(m.nombre || "Módulo " + m.n)}</b><small>${m.pct}%</small></span></button>`;
     }
     if (n.curso){
       const r = n.resumen || {}, pct = r.score ? r.score.pct : (n.estado === "terminado" ? 100 : 0);
       const sub = r.tiene_plan ? `${r.hechas}/${r.total} misiones${r.siguiente && n.estado !== "terminado" ? " · sigue " + esc(r.siguiente) : ""}` : esc(n.estado === "terminado" ? "Terminado" : "Sin plan todavía");
-      const cls = ["gcur", n.id === curso ? "g-sel" : "", n.estado === "actual" ? "g-act" : "", n.estado === "en pausa" ? "g-pausa" : "", n.estado === "terminado" ? "g-fin" : ""].join(" ");
+      const cls = ["gcur", n.id === curso ? "g-sel" : "", n.estado === "actual" ? "g-act" : "", n.estado === "en pausa" ? "g-pausa" : "", n.estado === "terminado" ? "g-fin" : "",
+        rv ? (enRuta.includes(n.id) ? "g-ruta" : "g-fuera") : ""].join(" ");
+      const orden = rv && enRuta.includes(n.id) ? `<span class="gord" title="Paso ${enRuta.indexOf(n.id) + 1} de ${enRuta.length} en ${esc(rv.nombre)}">${enRuta.indexOf(n.id) + 1}</span>` : "";
       const centro = n.estado === "terminado" ? "✓" : `${pct}`;
-      return `<button class="gn ${cls}" style="${st}" data-curso="${esc(n.id)}" title="${esc(n.nombre)}${n.nota ? " · " + esc(n.nota) : ""}">${anillo(pct, 17, centro)}
+      return `<button class="gn ${cls}" style="${st}" data-curso="${esc(n.id)}" title="${esc(n.nombre)}${n.nota ? " · " + esc(n.nota) : ""}${n.id === curso ? " · toca otra vez para ir a Hoy" : ""}">${orden}${anillo(pct, 17, centro)}
         <span class="gt"><b>${esc(n.nombre)}</b><small>${sub}${n.estado === "actual" ? ` <em class="chip ok">Actual</em>` : ""}</small></span></button>`;
     }
-    const cs = aplanar([n]), cerrada = cerradas.has(n.id);
-    return `<button class="gn grama ${cerrada ? "g-cerrada" : ""}" style="${st}" data-rama="${esc(n.id)}" aria-expanded="${!cerrada}" title="${cerrada ? "Abrir" : "Cerrar"} la rama">${anillo(n.score_pct || 0, 17, cerrada ? "+" : `${n.score_pct || 0}`)}
-      <span class="gt"><b>${esc(n.nombre)}</b><small>${cs.length} ${cs.length === 1 ? "curso" : "cursos"}${cerrada && cs.some(c => c.estado === "actual") ? ` <em class="chip ok">Actual</em>` : ""}</small></span></button>`;
+    const cs = aplanar([n]), cerrada = cerradas.has(n.id), nr = rv ? rutaEnRama(n) : 0;
+    return `<button class="gn grama ${cerrada ? "g-cerrada" : ""} ${rv && !nr ? "g-fuera" : ""}" style="${st}" data-rama="${esc(n.id)}" aria-expanded="${!cerrada}" title="${cerrada ? "Abrir" : "Cerrar"} la rama">${anillo(n.score_pct || 0, 17, cerrada ? "+" : `${n.score_pct || 0}`)}
+      <span class="gt"><b>${esc(n.nombre)}</b><small>${cs.length} ${cs.length === 1 ? "curso" : "cursos"}${cerrada && cs.some(c => c.estado === "actual") ? ` <em class="chip ok">Actual</em>` : ""}${cerrada && nr ? ` <em class="chip gr">${nr} de la ruta</em>` : ""}</small></span></button>`;
   };
   $("#grafo").innerHTML = `<div class="gcanvas" style="width:${W}px;height:${H}px"><svg class="gedges" width="${W}" height="${H}" aria-hidden="true">${lineas}</svg>${nodos.map(htmlNodo).join("")}</div>`;
   const sel = $("#grafo .g-sel"), wrap = $("#grafo");
@@ -980,40 +991,9 @@ function renderGrafo(){
     s.has(id) ? s.delete(id) : s.add(id); store.set("ramas_cerradas", JSON.stringify([...s])); renderGrafo();
   });
   $("#grafo").querySelectorAll("[data-curso]").forEach(b => b.onclick = () => {
-    if (b.dataset.curso !== curso) setCurso(b.dataset.curso);
-    setTimeout(() => $("#gdet").scrollIntoView({behavior: "smooth", block: "start"}), 60);
+    if (b.dataset.curso !== curso) setCurso(b.dataset.curso); else show("hoy");
   });
-  $("#grafo").querySelectorAll("[data-mod]").forEach(b => b.onclick = () => {
-    const r = document.querySelector(`#gdet [data-modrow="${CSS.escape(b.dataset.mod)}"]`);
-    if (r){ r.scrollIntoView({behavior: "smooth", block: "center"}); r.classList.remove("flash"); void r.offsetWidth; r.classList.add("flash"); }
-  });
-}
-// Detalle del curso elegido (lo que antes era la pestaña Progreso): misiones por módulo y sesiones.
-function renderDetalle(){
-  const c = cursoActual(), d = (state && state._curso === curso && state.datos) || null;
-  if (!c){ $("#gdet").innerHTML = ""; return; }
-  const r = c.resumen || {}, sc = r.score;
-  const head = `<div class="gdh"><div class="grow"><div class="k">${esc((c.ruta || []).join(" › "))}</div><div class="gdt">${esc(c.nombre)}</div>
-      <div class="d">${r.tiene_plan ? `${r.hechas} de ${r.total} misiones${r.siguiente ? " · sigue " + esc(r.siguiente) : ""}` : esc(c.nota || "Sin plan todavía: se arma al empezarlo con el tutor.")}</div></div>
-    ${sc ? `<div class="gdscore">${anillo(sc.pct, 26, sc.pct + "%", "lg")}</div>` : ""}
-    <button class="btn pri" onclick="show('hoy')">Ir a Hoy</button></div>`;
-  if (!d || !(d.misiones || []).length){ $("#gdet").innerHTML = `<div class="card gdet">${head}</div>`; return; }
-  const ms = d.misiones || [], scm = Object.fromEntries(((sc || {}).modulos || []).map(m => [String(m.n), m]));
-  const mods = (d.modulos || []).length ? d.modulos : [...new Set(ms.map(m => m.modulo))].map(n => ({n, nombre: ""}));
-  const filas = mods.map(({n, nombre}) => {
-    const list = ms.filter(m => m.modulo == n), k = list.filter(m => m.estado === "hecha").length;
-    if (!list.length) return "";
-    const pills = list.map(m => `<span class="pill ${m.estado === "hecha" ? "done" : (m.id === d.siguiente ? "now" : "")}" data-tip="${esc(m.id)}|${esc(m.titulo)}|${esc(material(m))}|${esc(m.nota || "")}">${esc(m.id)}</span>`).join("");
-    const s = scm[String(n)];
-    return `<div class="gmrow" data-modrow="${esc(n)}">${anillo(s ? s.pct : Math.round(100 * k / list.length), 15, "M" + esc(n), "sm")}
-      <div class="gmn"><b>${esc(nombre || "Módulo " + n)}</b><small>${k} de ${list.length} misiones${s ? " · " + esc(partesTxt(s.partes)) : ""}</small></div><div class="pills">${pills}</div></div>`;
-  }).join("");
-  const ses = (d.sesiones || []).slice().reverse(), verTodas = !!renderDetalle.todas;
-  const sesHtml = ses.length ? (verTodas ? ses : ses.slice(0, 4)).map(s => `<div class="row"><span class="when">${esc(s.fecha)}</span><div class="grow"><div class="t">${esc(s.titulo)}</div><div class="d">${esc(s.nota)}</div></div></div>`).join("")
-    + (ses.length > 4 ? `<div class="row"><button class="linkbtn" id="sestodas">${verTodas ? "Ver menos" : `Ver las ${ses.length} sesiones`}</button></div>` : "")
-    : `<div class="empty">Sin sesiones todavía.</div>`;
-  $("#gdet").innerHTML = `<div class="card gdet">${head}<div class="gmods">${filas}</div></div><h2>Sesiones</h2><div class="card list">${sesHtml}</div>`;
-  if ($("#sestodas")) $("#sestodas").onclick = () => { renderDetalle.todas = !verTodas; renderDetalle(); };
+  $("#grafo").querySelectorAll("[data-mod]").forEach(b => b.onclick = () => show("lecciones"));
 }
 
 /* ---------- Navegación ---------- */
@@ -1034,7 +1014,7 @@ async function poll(){
     if (rc.status === 401){ location.href = "/login"; return; }
     const rt = await rc.text();
     if (rt !== lastTree){
-      lastTree = rt; const jt = JSON.parse(rt); arbol = jt.arbol || []; cursos = aplanar(arbol); racha = jt.racha || null;
+      lastTree = rt; const jt = JSON.parse(rt); arbol = jt.arbol || []; rutas = jt.rutas || []; cursos = aplanar(arbol); racha = jt.racha || null;
       // Si en el árbol cambió el curso "actual" (lo cambia el tutor), la app salta a él una vez;
       // después Leo puede elegir otro y se respeta hasta el siguiente cambio.
       const act = (cursos.find(c => c.estado === "actual") || {}).id;
@@ -1076,7 +1056,7 @@ function render(){
   const d = state.datos || {};
   const c = cursoActual();
   document.title = c ? "Mi Tutor · " + c.nombre : "Mi Tutor";
-  renderHoy(d, state.hojas || []); renderLecciones(d); renderTarjetasStats(); renderPantalla(); renderHojas(d, state.hojas || []); renderRepaso(d); renderDetalle(); renderProyecto(d);
+  renderHoy(d, state.hojas || []); renderLecciones(d); renderTarjetasStats(); renderPantalla(); renderHojas(d, state.hojas || []); renderRepaso(d); renderProyecto(d);
 }
 let items = [], pendingShow = false;
 /* Dos modos: "Por lección" (los paneles que el tutor clasificó en una misión) y "Libre" (dudas sueltas). */

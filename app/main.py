@@ -137,7 +137,8 @@ async def app_index(req: Request):
 
 @_privado
 async def api_cursos(req: Request):
-    return JSONResponse({"arbol": store.arbol_con_resumen(), "racha": store.racha()})
+    a = store.arbol_con_resumen()
+    return JSONResponse({"arbol": a, "rutas": store.rutas_con_progreso(a), "racha": store.racha()})
 
 
 @_privado
@@ -324,8 +325,9 @@ mcp = FastMCP(
 @mcp.tool()
 def ver_arbol() -> dict:
     """Árbol de estudios (áreas › series › cursos) con el resumen de cada curso (misiones hechas, siguiente misión, tarjetas
-    y score por módulo), el score de cada rama y la racha de días seguidos estudiando."""
-    return {"arbol": store.arbol_con_resumen(), "racha": store.racha()}
+    y score por módulo), el score de cada rama, las rutas (con su progreso) y la racha de días seguidos estudiando."""
+    a = store.arbol_con_resumen()
+    return {"arbol": a, "rutas": store.rutas_con_progreso(a), "racha": store.racha()}
 
 
 @mcp.tool()
@@ -335,6 +337,15 @@ def guardar_arbol(arbol: list) -> str:
     "nota"?, "carpeta_local"? (ruta en la PC de Leo con el material)}. Solo un curso debe tener estado "actual"."""
     store.guardar_arbol(arbol)
     return "Árbol guardado."
+
+
+@mcp.tool()
+def guardar_rutas(rutas: list) -> str:
+    """Reemplaza las rutas (lista completa). Una ruta agrupa cursos del árbol hacia una meta (p. ej. una certificación)
+    sin moverlos de su rama: la app la dibuja resaltada sobre el grafo con su progreso.
+    Ruta: {"id", "nombre", "descripcion"?, "cursos": [ids de cursos, en el orden recomendado]}."""
+    store.guardar_rutas(rutas)
+    return "Rutas guardadas."
 
 
 @mcp.tool()
