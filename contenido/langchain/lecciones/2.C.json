@@ -1,0 +1,86 @@
+{
+ "mision_id": "2.C",
+ "titulo": "Multiagente: un agente como tool de otro",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Un solo agente con muchas tools y un prompt enorme se confunde: elige mal la tool, mezcla instrucciones y gasta tokens leyendo todo cada vez.\n\nLa salida es repartir el trabajo: **especialistas** (subagentes) con pocas tools y un prompt corto, y un agente **principal** que decide a quién delegar.\n\nEl patrón más simple en LangChain no necesita nada nuevo: un subagente es otro `create_agent`, y el principal lo llama **a través de una tool**. La pregunta importante es qué información cruza de un agente al otro."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Subagentes como tools (2.3_multi_agent.ipynb)",
+   "contenido": "from langchain.tools import tool\nfrom langchain.agents import create_agent\nfrom langchain.messages import HumanMessage\n\n\n@tool\ndef square_root(x: float) -> float:\n    \"\"\"Calculate the square root of a number\"\"\"\n    return x ** 0.5\n\n\n@tool\ndef square(x: float) -> float:\n    \"\"\"Calculate the square of a number\"\"\"\n    return x ** 2\n\n\n# subagentes: cada uno con su propia tool\nsubagent_1 = create_agent(model=\"gpt-5-nano\", tools=[square_root])\nsubagent_2 = create_agent(model=\"gpt-5-nano\", tools=[square])\n\n\n# cada subagente se envuelve en una tool del agente principal\n@tool\ndef call_subagent_1(x: float) -> float:\n    \"\"\"Call subagent 1 in order to calculate the square root of a number\"\"\"\n    response = subagent_1.invoke({\"messages\": [HumanMessage(content=f\"Calculate the square root of {x}\")]})\n    return response[\"messages\"][-1].content\n\n\n@tool\ndef call_subagent_2(x: float) -> float:\n    \"\"\"Call subagent 2 in order to calculate the square of a number\"\"\"\n    response = subagent_2.invoke({\"messages\": [HumanMessage(content=f\"Calculate the square of {x}\")]})\n    return response[\"messages\"][-1].content\n\n\nmain_agent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[call_subagent_1, call_subagent_2],\n    system_prompt=\"You are a helpful assistant who can call subagents to calculate the square root or square of a number.\",\n)\n\nquestion = \"What is the square root of 456?\"\nresponse = main_agent.invoke({\"messages\": [HumanMessage(content=question)]})\nprint(response[\"messages\"][-1].content)",
+   "notas": "`subagent_1` y `subagent_2` son agentes completos, cada uno con una tool.\n`call_subagent_1` es una tool normal del principal: dentro, **invoca** al subagente con un mensaje nuevo y devuelve solo el texto final (`[-1].content`).\nEl principal solo conoce `call_subagent_1` y `call_subagent_2`; no sabe que existen `square_root` ni `square`.",
+   "resaltar": [
+    27,
+    28,
+    40
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Cómo se anidan",
+   "contenido": "graph TD\n  U[usuario] --> M[main_agent]\n  M -->|tool call_subagent_1 x=456| W[call_subagent_1]\n  W -->|HumanMessage nuevo| S1[subagent_1]\n  S1 -->|tool| R[square_root]\n  S1 -->|solo el texto final| W\n  W -->|ToolMessage| M\n  class W clave",
+   "notas": "La tool `call_subagent_1` es la frontera: decide qué entra al subagente (un `HumanMessage` armado con `x`) y qué sale (el último mensaje).\nTodo lo que pasa dentro del subagente (su tool call, su `ToolMessage`) se queda en **su** run."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que pasó (salida real)",
+   "contenido": "Lo corrí con modelos falsos con guion (el principal pide `call_subagent_1(456)`; el subagente pide `square_root(456)`). Agregué antes dos mensajes al historial del principal: \"My name is Ana.\" / \"Nice to meet you, Ana.\"\n\n```\nMAIN state:\n   HumanMessage 'My name is Ana.'\n   AIMessage    'Nice to meet you, Ana.'\n   HumanMessage 'What is the square root of 456?'\n   AIMessage    ''  ['call_subagent_1']\n   ToolMessage  'The square root of 456 is about 21.354.'\n   AIMessage    'The square root of 456 is about 21.354.'\nSUB1 saw: [('human', 'Calculate the square root of 456.0')]\nSUB1 tool result: ('tool', '21.354156504062622')\n```\n\nEl subagente vio **un solo mensaje**. Dice `456.0` porque el argumento `x: float` convierte 456 a float antes del f-string."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué aislar el contexto",
+   "contenido": "El subagente empieza **en blanco** cada vez: solo recibe lo que tú escribes en su `HumanMessage`.\n\nVentajas:\n- Contexto limpio y corto: menos tokens y menos distracción.\n- El principal recibe un resumen (el texto final), no todo el ruido de las tools internas.\n\nCosto:\n- Si el subagente necesita algo del historial (el nombre del usuario, su idioma, una fecha), **tienes que pasárselo**: como argumento de la tool o leyéndolo del state con `runtime.state` (lo verás en el Wedding Planner).\n\nEs la misma idea de los subagentes de Deep Agents (la tool `task`): delegar con contexto aislado."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué ve el subagente?",
+   "contenido": "En el ejemplo del paso 2, el historial del principal empieza con \"My name is Ana.\" y después el usuario pregunta \"What is the square root of 456?\". El principal llama a `call_subagent_1(x=456)`.\n\n¿Qué mensajes recibe el modelo de `subagent_1` en su primera llamada? ¿Sabe que el usuario se llama Ana?",
+   "respuesta": "Recibe **un solo** `HumanMessage`: `\"Calculate the square root of 456.0\"` (salida real). No sabe nada de Ana.\nEl subagente no hereda el historial del principal: su `invoke` empieza con la lista de mensajes que arma `call_subagent_1`. Si quieres que sepa algo, tienes que ponerlo en ese mensaje.",
+   "ref": 2
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué vuelve al principal?",
+   "contenido": "Dentro de su run, `subagent_1` generó 3 mensajes además del suyo de entrada: un `AIMessage` con la tool call a `square_root`, un `ToolMessage` con `21.354156504062622` y un `AIMessage` final.\n\n¿Cuáles de esos mensajes quedan en el state del `main_agent` del paso 2?",
+   "respuesta": "Ninguno tal cual. Al principal le llega **un** `ToolMessage` cuyo contenido es el texto del `AIMessage` final del subagente, porque `call_subagent_1` devuelve `response[\"messages\"][-1].content`.\nLos mensajes internos del subagente (su tool call y el `21.354...` exacto) se pierden al terminar su run; el principal solo ve lo que la tool devuelve.",
+   "ref": 2
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: pasar datos al subagente",
+   "contenido": "Tu agente principal habla con el usuario, que en el primer turno dijo \"respóndeme siempre en portugués\". El principal delega la redacción de un informe a un subagente envuelto en una tool `call_writer(topic: str)`, igual que en el paso 2. El informe sale en inglés. ¿Qué cambio lo arregla?\n\nA) Ninguno: el subagente lee automáticamente el historial del principal; es un fallo del modelo\nB) Agregar un argumento `language: str` a `call_writer` (o leerlo del state con `runtime`) e incluirlo en el `HumanMessage` que la tool le manda al subagente\nC) Darle al subagente el mismo `checkpointer` que al principal\nD) Subir el `recursion_limit` del principal",
+   "respuesta": "**B.** El subagente solo ve el mensaje que arma la tool; lo que necesite del historial se lo tienes que pasar.\nA: falso, el contexto está aislado (es justo lo que pasó con \"Ana\").\nC: un checkpointer guarda el state **por thread**; no copia los mensajes de otro agente, y aquí el subagente ni siquiera se invoca con `thread_id`.\nD: el límite de pasos no tiene que ver con qué información recibe el subagente."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Patrón básico de multiagente: cada **subagente** es un `create_agent`; el **principal** lo llama dentro de una tool.\n- El subagente empieza en blanco: solo ve el `HumanMessage` que arma la tool. Lo que necesite del historial, pásalo explícitamente.\n- El principal solo recibe lo que la tool devuelve (normalmente el último mensaje del subagente), en un `ToolMessage`.\n- Ventaja: contexto limpio y especialistas simples. Costo: tienes que diseñar qué entra y qué sale.\n- Deep Agents usa la misma idea con su tool `task`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Multi-agent* (`/oss/python/langchain/multi-agent`): patrón de subagentes como tools (tool calling) y handoffs."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-2/2.3_multi_agent.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "El usuario dijo su nombre al principal. ¿El subagente llamado desde una tool lo sabe?",
+   "reverso": "No. El subagente solo ve el HumanMessage que arma la tool; el historial del principal no se comparte."
+  },
+  {
+   "frente": "¿Qué llega al state del principal cuando una tool invoca a un subagente que hizo 3 pasos internos?",
+   "reverso": "Un solo ToolMessage con lo que la tool devuelve (p. ej. el texto final). Los mensajes internos se quedan en el run del subagente."
+  },
+  {
+   "frente": "¿Por qué conviene aislar el contexto de un subagente?",
+   "reverso": "Contexto corto y limpio: menos tokens y menos distracción; el principal recibe un resultado, no el ruido de las tools."
+  },
+  {
+   "frente": "Tu subagente necesita el idioma del usuario. ¿Cómo se lo das?",
+   "reverso": "Pásalo explícito: argumento de la tool wrapper o leído de runtime.state, e inclúyelo en el mensaje al subagente."
+  }
+ ]
+}

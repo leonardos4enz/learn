@@ -1,0 +1,127 @@
+{
+ "mision_id": "1.B",
+ "titulo": "Tools y búsqueda web: el modelo pide, el agente ejecuta",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Un modelo solo genera texto. No sabe calcular con exactitud, no conoce lo que pasó después de su entrenamiento y no puede consultar tus sistemas.\n\nLas **tools** resuelven eso: le das al modelo una lista de funciones que **puede pedir**. Ojo con el verbo: el modelo **no ejecuta** nada. Solo escribe \"quiero llamar a `square_root` con `x=467`\". Quien corre la función es el agente, en tu proceso de Python, y le devuelve el resultado como un mensaje nuevo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Una tool es una función con @tool",
+   "contenido": "from langchain.tools import tool\n\n@tool\ndef square_root(x: float) -> float:\n    \"\"\"Calculate the square root of a number\"\"\"\n    return x ** 0.5\n\nprint(\"name:\", square_root.name)\nprint(\"description:\", square_root.description)\nprint(\"args:\", square_root.args)\nprint(\"invoke:\", square_root.invoke({\"x\": 467}))",
+   "notas": "El decorador `@tool` saca todo de la función: el **nombre** (`square_root`), la **descripción** (el docstring) y el **schema de los args** (de los type hints). Salida real:\n`name: square_root` · `description: Calculate the square root of a number`\n`args: {'x': {'title': 'X', 'type': 'number'}}` · `invoke: 21.61018278497431`\nEsas tres cosas son lo único que el modelo ve de la tool. Puedes probarla sola con `.invoke`, sin modelo.",
+   "resaltar": [
+    3,
+    5,
+    11
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Otro nombre, otra descripción, o ninguna",
+   "contenido": "from langchain.tools import tool\n\n@tool(\"square_root\")\ndef tool1(x: float) -> float:\n    \"\"\"Calculate the square root of a number\"\"\"\n    return x ** 0.5\n\n@tool(\"square_root\", description=\"Calculate the square root of a number\")\ndef tool2(x: float) -> float:\n    return x ** 0.5\n\nfor t in (tool1, tool2):\n    print(t.name, \"|\", t.description, \"|\", t.invoke({\"x\": 467}))\n\ntry:\n    @tool\n    def no_docs(x: float) -> float:\n        return x ** 0.5\nexcept Exception as e:\n    print(type(e).__name__, \"->\", e)",
+   "notas": "`@tool(\"square_root\")` cambia el nombre que ve el modelo aunque la función se llame `tool1`. `description=` reemplaza al docstring. Salida real:\n`square_root | Calculate the square root of a number | 21.61018278497431` (dos veces)\n`ValueError -> Function must have a docstring if description not provided.`\nSin docstring ni `description` falla **al definirla**: el modelo no sabría para qué sirve.",
+   "resaltar": [
+    3,
+    8,
+    17
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El loop de un agente con tools",
+   "contenido": "graph LR\n  S([START]) --> M[model]\n  M -->|AIMessage con tool_calls| T[tools]\n  T -->|ToolMessage| M\n  M -->|AIMessage sin tool_calls| E([END])\n  class T clave",
+   "notas": "`create_agent` arma este grafo. Si la respuesta del modelo trae `tool_calls`, el node `tools` **ejecuta** cada una y agrega un `ToolMessage`; luego vuelve al modelo.\nCuando el modelo responde sin `tool_calls`, termina. Es el patrón ReAct."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El loop paso a paso",
+   "contenido": "from pprint import pprint\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langchain.tools import tool\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", [type(m).__name__ for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\n@tool(\"square_root\", description=\"Calculate the square root of a number\")\ndef tool1(x: float) -> float:\n    print(f\"  >> la tool corre en TU proceso con x={x}\")\n    return x ** 0.5\n\nmodel = FakeModel(messages=iter([\n    # 1.a respuesta: el modelo solo PIDE la tool\n    AIMessage(content=\"\", tool_calls=[{\"name\": \"square_root\", \"args\": {\"x\": 467}, \"id\": \"call_1\"}]),\n    # 2.a respuesta: ya con el resultado, contesta\n    AIMessage(content=\"The square root of 467 is about 21.61.\"),\n]))\n\nagent = create_agent(\n    model=model,\n    tools=[tool1],\n    system_prompt=\"You are an arithmetic wizard. Use your tools to calculate the square root and square of any number.\",\n)\n\nresponse = agent.invoke({\"messages\": [HumanMessage(content=\"What is the square root of 467?\")]})\n\nfor m in response[\"messages\"]:\n    print(type(m).__name__, \"|\", repr(m.content)[:60])\nprint(response[\"messages\"][1].tool_calls)",
+   "notas": "`FakeModel` hace de LLM con respuestas fijas: la primera **pide** la tool y la segunda contesta. Así ves el loop sin gastar tokens.\nSalida real:\n`El modelo recibe: ['SystemMessage', 'HumanMessage']`\n`  >> la tool corre en TU proceso con x=467.0`\n`El modelo recibe: ['SystemMessage', 'HumanMessage', 'AIMessage', 'ToolMessage']`\nMensajes: `HumanMessage` · `AIMessage ''` · `ToolMessage '21.61018278497431'` · `AIMessage 'The square root of 467 is about 21.61.'`\n`tool_calls`: `[{'name': 'square_root', 'args': {'x': 467}, 'id': 'call_1', 'type': 'tool_call'}]`",
+   "resaltar": [
+    22,
+    29,
+    37
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué mirar en esa salida",
+   "contenido": "- El modelo se llamó **dos veces**: una para pedir la tool y otra para contestar con el resultado.\n- El print `>> la tool corre...` salió de **tu** proceso, entre las dos llamadas: lo ejecutó el node `tools`, no el modelo.\n- El `AIMessage` del medio tiene texto vacío y `tool_calls`. El `ToolMessage` trae el resultado como texto y el mismo `id` (`call_1`) para emparejarlo.\n- `x` llegó como `467.0`: los args se validan contra el schema (`float`) antes de ejecutar.\n\nCon un LLM real el número de vueltas lo decide el modelo: puede pedir varias tools o ninguna."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Búsqueda web: la tool que trae información nueva",
+   "contenido": "from typing import Dict, Any\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langchain.tools import tool\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n\nclass FakeTavily:\n    \"\"\"Hace de TavilyClient: devuelve un resultado con la misma forma (un dict).\"\"\"\n    def search(self, query):\n        return {\"query\": query,\n                \"results\": [{\"title\": \"langchain on PyPI\",\n                             \"url\": \"https://example.com/langchain\",\n                             \"content\": \"Example result: langchain 1.3.14 is the latest release.\"}]}\n\ntavily_client = FakeTavily()\n\n@tool\ndef web_search(query: str) -> Dict[str, Any]:\n    \"\"\"Search the web for information\"\"\"\n    return tavily_client.search(query)\n\nmodel = FakeModel(messages=iter([\n    AIMessage(content=\"\", tool_calls=[{\"name\": \"web_search\",\n                                       \"args\": {\"query\": \"latest langchain release\"},\n                                       \"id\": \"call_1\"}]),\n    AIMessage(content=\"The latest langchain release is 1.3.14.\"),\n]))\n\nagent = create_agent(model=model, tools=[web_search])\n\nresponse = agent.invoke({\"messages\": [HumanMessage(content=\"What is the latest release of langchain?\")]})\n\ntool_msg = response[\"messages\"][2]\nprint(type(tool_msg).__name__, type(tool_msg.content).__name__)\nprint(tool_msg.content[:120])\nprint(response[\"messages\"][-1].content)",
+   "notas": "En el notebook, `tavily_client = TavilyClient()` (necesita `TAVILY_API_KEY`) y `search` devuelve un dict con `results`. Aquí `FakeTavily` devuelve uno con la misma forma, sin red. Salida real:\n`ToolMessage str`\n`{\"query\": \"latest langchain release\", \"results\": [{\"title\": \"langchain on PyPI\", ...`\n`The latest langchain release is 1.3.14.`\nLa tool devuelve un dict; el `ToolMessage` lo guarda como **texto** (JSON) para el modelo.",
+   "resaltar": [
+    23,
+    25,
+    34
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué la búsqueda web cambia el agente",
+   "contenido": "Sin tools, el notebook `1.2_web_search` pregunta \"How up to date is your training knowledge?\" y el modelo solo puede contestar con lo que aprendió hasta su fecha de corte. Con `web_search`, ante una pregunta sobre algo actual el modelo **decide** pedir la búsqueda, lee los resultados en el `ToolMessage` y contesta con ellos.\n\nLa decisión de usar la tool sale de la **descripción** (\"Search the web for information\") y de la pregunta. Una descripción vaga hace que el modelo la use mal o nunca."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: dos tool calls en un mensaje",
+   "contenido": "Ahora el modelo falso pide **dos** tool calls en el mismo `AIMessage`:\n\n```python\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langchain.tools import tool\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", [type(m).__name__ for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\n@tool(\"square_root\", description=\"Calculate the square root of a number\")\ndef tool1(x: float) -> float:\n    print(f\"  >> la tool corre con x={x}\")\n    return x ** 0.5\n\nmodel = FakeModel(messages=iter([\n    # Esta vez el modelo pide DOS tool calls en el mismo mensaje\n    AIMessage(content=\"\", tool_calls=[\n        {\"name\": \"square_root\", \"args\": {\"x\": 16}, \"id\": \"call_1\"},\n        {\"name\": \"square_root\", \"args\": {\"x\": 81}, \"id\": \"call_2\"},\n    ]),\n    AIMessage(content=\"sqrt(16) = 4 and sqrt(81) = 9.\"),\n]))\n\nagent = create_agent(model=model, tools=[tool1])\n\nresponse = agent.invoke({\"messages\": [HumanMessage(content=\"What are the square roots of 16 and 81?\")]})\n\nprint([type(m).__name__ for m in response[\"messages\"]])\n```\n\n¿Cuántas veces se llama al modelo? ¿Qué lista de tipos imprime la última línea?",
+   "respuesta": "El modelo se llama **2 veces**: una pide las dos tools y otra contesta.\nÚltima línea: `['HumanMessage', 'AIMessage', 'ToolMessage', 'ToolMessage', 'AIMessage']`.\nEl node `tools` ejecuta **todas** las `tool_calls` del mensaje (un `ToolMessage` por cada una, emparejado por `id`) antes de volver al modelo. Pueden correr en paralelo, así que el orden de los prints no está garantizado."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: qué ve el modelo de tu tool",
+   "contenido": "Defines una tool con `@tool` y se la pasas a `create_agent`. ¿Qué información usa el modelo para decidir si la llama y con qué argumentos?\n\nA) El código fuente de la función.\nB) El nombre, la descripción (docstring) y el schema de los argumentos.\nC) El valor que devuelve la función, calculado de antemano.\nD) Nada: el agente decide por su cuenta cuándo ejecutarla.",
+   "respuesta": "**B.** Eso es lo que `@tool` arma y se manda al modelo con `bind_tools`.\nA: el código nunca sale de tu proceso. C: la función solo corre cuando el modelo la pide. D: el agente **ejecuta**, pero quien **decide** es el modelo, con nombre, descripción y schema."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: ¿quién ejecuta la tool?",
+   "contenido": "En el loop del paso 5, `tool1` imprime `>> la tool corre en TU proceso`. Si cambias el modelo falso por `gpt-5-nano` de OpenAI, ¿dónde se ejecuta `x ** 0.5`?\n\nA) En los servidores de OpenAI, porque el modelo llamó a la tool.\nB) En tu proceso de Python, dentro del node `tools` del agente.\nC) En Tavily.\nD) En ningún lado: el modelo calcula la raíz y la escribe.",
+   "respuesta": "**B.** El modelo solo devuelve un `AIMessage` con `tool_calls` (nombre + args). El agente, en tu proceso, ejecuta la función y le manda el resultado en un `ToolMessage`.\nA es el malentendido típico. C no tiene nada que ver con esta tool. D es lo que pasaría **sin** tools, con el riesgo de un número inventado.",
+   "ref": 5
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `@tool` convierte una función en tool: nombre, descripción (docstring o `description=`) y schema de args (type hints). Sin descripción, falla al definirla.\n- El modelo **pide** (`tool_calls` en un `AIMessage`); el node `tools` **ejecuta** en tu proceso y responde con un `ToolMessage` por cada llamada.\n- El loop sigue hasta que el modelo contesta sin `tool_calls`.\n- La búsqueda web (Tavily) le da al modelo información posterior a su entrenamiento.\n- Este loop model ↔ tools es el mismo grafo ReAct que se construye a mano en el curso de LangGraph.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain (Python) → *Tools* y *Agents* (sección de tools); Tavily en *Integrations → Tools*."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-1/1.2_tools.ipynb",
+  "notebooks/module-1/1.2_web_search.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Cuando un agente \"usa una tool\", ¿quién ejecuta la función y quién decide llamarla?",
+   "reverso": "Decide el modelo (escribe `tool_calls` con nombre y args). Ejecuta el node `tools` del agente, en tu proceso, y devuelve el resultado en un `ToolMessage`."
+  },
+  {
+   "frente": "¿Por qué importa tanto el docstring de una función con `@tool`?",
+   "reverso": "Es la descripción que ve el modelo para decidir cuándo usarla. Sin docstring ni `description=`, `@tool` lanza `ValueError` al definirla."
+  },
+  {
+   "frente": "Pregunta con una tool usada una vez: ¿qué secuencia de mensajes devuelve el agente?",
+   "reverso": "`HumanMessage` → `AIMessage` (con `tool_calls`, texto vacío) → `ToolMessage` (resultado) → `AIMessage` (respuesta final). El modelo se llamó 2 veces."
+  },
+  {
+   "frente": "Si el modelo pide dos `tool_calls` en el mismo mensaje, ¿cuántas veces vuelve al modelo antes de tener los dos resultados?",
+   "reverso": "Ninguna: el node `tools` ejecuta las dos, agrega dos `ToolMessage` (emparejados por `id`) y recién entonces vuelve al modelo."
+  },
+  {
+   "frente": "¿Para qué le das una tool de búsqueda web a un agente?",
+   "reverso": "Para contestar sobre cosas posteriores a la fecha de corte del modelo: la tool trae resultados actuales y el modelo responde a partir de ellos."
+  },
+  {
+   "frente": "Tu tool devuelve un dict. ¿Qué recibe el modelo?",
+   "reverso": "Texto: el `ToolMessage` guarda el resultado serializado (JSON). El modelo lee ese texto en la siguiente llamada."
+  }
+ ]
+}

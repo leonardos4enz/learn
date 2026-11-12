@@ -1,0 +1,106 @@
+{
+ "mision_id": "2.B",
+ "titulo": "Runtime context y state: fijo vs. cambiante",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Tus tools necesitan datos que **no** deben salir del modelo:\n\n- Unos los sabe tu aplicación **antes** del run: el id del usuario, su plan, una conexión a la base de datos, sus preferencias guardadas.\n- Otros **aparecen durante** la conversación: el usuario dice su color favorito, el agente abre un ticket.\n\nSi metes todo en el prompt, el modelo lo puede ignorar, inventar o cambiar. LangChain separa dos lugares:\n\n- **runtime context**: lo pasas tú en cada `invoke`; es fijo durante el run y no se guarda.\n- **state**: lo leen y escriben las tools; el checkpointer lo guarda por `thread_id`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Runtime context: datos fijos por run (2.2_runtime_context.ipynb)",
+   "contenido": "from dataclasses import dataclass\nfrom langchain.agents import create_agent\nfrom langchain.tools import tool, ToolRuntime\nfrom langchain.messages import HumanMessage\n\n\n@dataclass\nclass ColourContext:\n    favourite_colour: str = \"blue\"\n    least_favourite_colour: str = \"yellow\"\n\n\n@tool\ndef get_favourite_colour(runtime: ToolRuntime[ColourContext]) -> str:\n    \"\"\"Get the favourite colour of the user\"\"\"\n    return runtime.context.favourite_colour\n\n\n@tool\ndef get_least_favourite_colour(runtime: ToolRuntime[ColourContext]) -> str:\n    \"\"\"Get the least favourite colour of the user\"\"\"\n    return runtime.context.least_favourite_colour\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[get_favourite_colour, get_least_favourite_colour],\n    context_schema=ColourContext,\n)\n\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"What is my favourite colour?\")]},\n    context=ColourContext(),\n)\nprint(response[\"messages\"][-1].content)\n\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"What is my favourite colour?\")]},\n    context=ColourContext(favourite_colour=\"green\"),\n)\nprint(response[\"messages\"][-1].content)",
+   "notas": "`context_schema=ColourContext` declara la forma del context; `context=ColourContext(...)` lo pasa en cada `invoke`.\n`ToolRuntime[ColourContext]` le da a la tool acceso a `runtime.context`. El modelo **no ve** ese parámetro: `get_favourite_colour.args` es `{}`.\nSalida real (modelo falso que llama a `get_favourite_colour`): el `ToolMessage` dice `blue` con `ColourContext()` y `green` con `ColourContext(favourite_colour=\"green\")`. El resultado del run solo trae la clave `messages`: el context no forma parte del state.",
+   "resaltar": [
+    28,
+    16,
+    39
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Mini repaso: @dataclass con valores por defecto",
+   "contenido": "`@dataclass` crea una clase con un `__init__` automático a partir de los campos:\n\n```python\nfrom dataclasses import dataclass\n\n@dataclass\nclass ColourContext:\n    favourite_colour: str = \"blue\"\n    least_favourite_colour: str = \"yellow\"\n\nprint(ColourContext())\n# ColourContext(favourite_colour='blue', least_favourite_colour='yellow')\n\nprint(ColourContext(favourite_colour=\"green\"))\n# ColourContext(favourite_colour='green', least_favourite_colour='yellow')\n```\n\nLos campos que no pasas toman su valor por defecto. Por eso `ColourContext()` basta para el primer `invoke`, y el segundo cambia **solo** el color favorito."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "State: datos que cambian y se guardan (2.2_state.ipynb)",
+   "contenido": "from langchain.agents import create_agent, AgentState\nfrom langchain.tools import tool, ToolRuntime\nfrom langchain.messages import HumanMessage, ToolMessage\nfrom langgraph.types import Command\nfrom langgraph.checkpoint.memory import InMemorySaver\n\n\nclass CustomState(AgentState):\n    favourite_colour: str\n\n\n@tool\ndef update_favourite_colour(favourite_colour: str, runtime: ToolRuntime) -> Command:\n    \"\"\"Update the favourite colour of the user in the state once they've revealed it.\"\"\"\n    return Command(update={\n        \"favourite_colour\": favourite_colour,\n        \"messages\": [ToolMessage(\"Successfully updated favourite colour\", tool_call_id=runtime.tool_call_id)]\n    })\n\n\n@tool\ndef read_favourite_colour(runtime: ToolRuntime) -> str:\n    \"\"\"Read the favourite colour of the user from the state.\"\"\"\n    try:\n        return runtime.state[\"favourite_colour\"]\n    except KeyError:\n        return \"No favourite colour found in state\"\n\n\nagent = create_agent(\n    \"gpt-5-nano\",\n    tools=[update_favourite_colour, read_favourite_colour],\n    checkpointer=InMemorySaver(),\n    state_schema=CustomState,\n)\n\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"My favourite colour is green\")]},\n    {\"configurable\": {\"thread_id\": \"1\"}},\n)\nprint(response[\"favourite_colour\"])\n\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"What's my favourite colour?\")]},\n    {\"configurable\": {\"thread_id\": \"1\"}},\n)\nprint(response[\"messages\"][-1].content)",
+   "notas": "`CustomState(AgentState)` agrega la clave `favourite_colour` al state del agente (que ya trae `messages`).\nPara **escribir** en el state, la tool devuelve `Command(update=...)`. Para **leer**, usa `runtime.state[...]`.\nSalida real (modelo falso con guion): tras el primer turno, `response[\"favourite_colour\"]` es `green`; en el segundo turno del mismo `thread_id`, `read_favourite_colour` devuelve `green`.",
+   "resaltar": [
+    8,
+    15,
+    25
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué Command y por qué el ToolMessage",
+   "contenido": "Una tool normal devuelve un string y el agente lo envuelve en un `ToolMessage`. Ese string **no** toca otras claves del state.\n\nPara escribir en el state, la tool devuelve `Command(update={...})`. Es el mismo `Command` de LangGraph: cada clave se aplica con su reducer. `messages` usa `add_messages` (agrega); `favourite_colour` no tiene reducer (se sobrescribe).\n\nEl `ToolMessage` con `tool_call_id=runtime.tool_call_id` es obligatorio: cada tool call del `AIMessage` necesita su respuesta con el mismo id, o la siguiente llamada al modelo falla. Como devuelves un `Command`, ese mensaje lo tienes que poner tú."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Context vs state",
+   "contenido": "| | runtime context | state |\n|---|---|---|\n| Se declara con | `context_schema=` | `state_schema=` (hereda de `AgentState`) |\n| Lo escribe | tu código, en `invoke(..., context=...)` | las tools (`Command(update=...)`) y los nodos |\n| Cambia durante el run | no | sí |\n| Lo guarda el checkpointer | no: lo pasas en cada `invoke` | sí, por `thread_id` |\n| Una tool lo lee con | `runtime.context` | `runtime.state` |\n\nRegla práctica: si tu app lo sabe antes de empezar y el modelo no debe cambiarlo, es **context**. Si se descubre o se acumula en la conversación, es **state**."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Context y checkpointer",
+   "contenido": "Tomas el agente del paso 2 y le agregas memoria. En el segundo `invoke` olvidas el `context`:\n\n```python\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[get_favourite_colour],\n    context_schema=ColourContext,\n    checkpointer=InMemorySaver(),\n)\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\nagent.invoke({\"messages\": [HumanMessage(content=\"Hi\")]}, config, context=ColourContext(favourite_colour=\"green\"))\n\n# segundo turno, mismo thread, sin context\nagent.invoke({\"messages\": [HumanMessage(content=\"What is my favourite colour?\")]}, config)\n```\n\nEn el segundo turno el modelo llama a `get_favourite_colour`. ¿Qué devuelve la tool?",
+   "respuesta": "Falla con `AttributeError: 'NoneType' object has no attribute 'favourite_colour'` (salida real).\nEl context **no se guarda** en el checkpointer, ni siquiera con el mismo `thread_id`: `runtime.context` es `None` si no lo pasas. El checkpointer guarda el **state**. Por eso el context se pasa en **cada** `invoke`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Una tool que devuelve string",
+   "contenido": "Cambias la tool del paso 4 por esta, y el modelo la llama con `favourite_colour=\"green\"`:\n\n```python\n@tool\ndef update_plain(favourite_colour: str) -> str:\n    \"\"\"Update the favourite colour\"\"\"\n    return f\"Saved {favourite_colour}\"\n\nagent = create_agent(\n    \"gpt-5-nano\",\n    tools=[update_plain],\n    checkpointer=InMemorySaver(),\n    state_schema=CustomState,\n)\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"My favourite colour is green\")]},\n    {\"configurable\": {\"thread_id\": \"1\"}},\n)\nprint(response.get(\"favourite_colour\", \"<no existe>\"))\n```\n\n¿Qué imprime?",
+   "respuesta": "`<no existe>` (salida real). El string `\"Saved green\"` solo se convierte en un `ToolMessage` dentro de `messages`. Declarar `favourite_colour` en `CustomState` no hace que se llene sola: para escribir esa clave, la tool tiene que devolver `Command(update={\"favourite_colour\": ...})`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Otro thread",
+   "contenido": "Con el agente del paso 4, después de los dos turnos en el thread `\"1\"`, haces:\n\n```python\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"What's my favourite colour?\")]},\n    {\"configurable\": {\"thread_id\": \"2\"}},\n)\n```\n\nEl modelo llama a `read_favourite_colour`. ¿Qué devuelve la tool?",
+   "respuesta": "`\"No favourite colour found in state\"` (salida real). El state se guarda **por thread**: el thread `\"2\"` empieza vacío, así que `runtime.state[\"favourite_colour\"]` lanza `KeyError` y el `except` devuelve ese texto. Es la misma memoria de corto plazo de 1.C, ahora con una clave propia.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: ¿context o state?",
+   "contenido": "Construyes un agente de soporte. Sabes el `user_id` y tienes una conexión a la base de datos **antes** de cada run; el modelo no debe poder cambiarlos. Durante la conversación, el agente abre tickets y quieres recordar la lista de tickets en los siguientes turnos del mismo thread. ¿Qué diseño es el correcto?\n\nA) Todo en `state_schema`, y las tools leen todo con `runtime.state`\nB) `user_id` y conexión en `context_schema` (pasados en cada `invoke`); la lista de tickets en `state_schema`, escrita por una tool con `Command(update=...)`, con checkpointer\nC) Todo en el `system_prompt`, para que el modelo lo recuerde\nD) `user_id` en el state y la lista de tickets en el context",
+   "respuesta": "**B.** Lo que tu app conoce antes del run y no debe cambiar es **context**; lo que se acumula en la conversación es **state**, y el checkpointer lo guarda por thread.\nA: en el state, una tool (o el input) podría sobrescribir el `user_id`, y una conexión a DB no es un dato que convenga guardar en cada checkpoint.\nC: el prompt no es memoria fiable ni controla datos.\nD: es al revés; el context no persiste entre turnos, así que perderías los tickets."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- **Runtime context** (`context_schema` + `context=` en cada `invoke`): datos fijos del run; las tools los leen con `runtime.context`; no se guardan.\n- **State** (`state_schema` que hereda de `AgentState`): datos que cambian; las tools los escriben con `Command(update=...)` (más su `ToolMessage`) y los leen con `runtime.state`; el checkpointer los guarda por `thread_id`.\n- El parámetro `runtime: ToolRuntime` no aparece en los args que ve el modelo.\n- Es el `Command` y los reducers de LangGraph, usados desde una tool.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Runtime* (`/oss/python/langchain/runtime`), *Tools* (sección ToolRuntime: state y context) y *Short-term memory* (custom state)."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-2/2.2_runtime_context.ipynb",
+  "notebooks/module-2/2.2_state.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué el context no aparece en el resultado de `agent.invoke` ni en el checkpointer?",
+   "reverso": "Porque no es parte del state: lo pasas en cada invoke y vive solo durante ese run."
+  },
+  {
+   "frente": "Una tool devuelve un string y tu `state_schema` tiene la clave `favourite_colour`. ¿Se llena la clave?",
+   "reverso": "No. El string solo se vuelve un ToolMessage. Para escribir otra clave del state, devuelve Command(update={...})."
+  },
+  {
+   "frente": "¿Por qué el `Command` de una tool lleva un `ToolMessage` con `tool_call_id=runtime.tool_call_id`?",
+   "reverso": "Cada tool call del AIMessage necesita su respuesta con el mismo id; si devuelves Command, ese mensaje lo pones tú."
+  },
+  {
+   "frente": "Tu app sabe el `user_id` antes del run y el modelo no debe cambiarlo. ¿Context o state?",
+   "reverso": "Context (context_schema). El state es para lo que cambia o se acumula durante la conversación."
+  },
+  {
+   "frente": "¿El modelo ve el parámetro `runtime: ToolRuntime` como argumento de la tool?",
+   "reverso": "No. LangChain lo inyecta al ejecutar la tool; en los args que ve el modelo no aparece."
+  }
+ ]
+}

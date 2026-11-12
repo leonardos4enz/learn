@@ -1,0 +1,123 @@
+{
+ "mision_id": "2.A",
+ "titulo": "MCP: tools que viven en otro proceso",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora tus tools son funciones `@tool` escritas en tu mismo archivo. Si otro equipo, o un proveedor (un buscador de vuelos, una base de datos, GitHub), ya tiene esas capacidades, tendrías que copiar su código y mantenerlo tú.\n\n**MCP (Model Context Protocol)** es un protocolo estándar para eso: un **servidor MCP** expone capacidades y cualquier **cliente** (tu agente, un IDE, una app de escritorio) las usa sin ver su código.\n\nLa pregunta de esta lección: ¿qué recibe tu agente de un servidor MCP? No recibe \"el servidor\": recibe una **lista de tools**."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Servidor, cliente y transporte",
+   "contenido": "Un servidor MCP puede exponer tres cosas:\n\n- **tools**: funciones que el modelo puede pedir que se ejecuten.\n- **resources**: datos de solo lectura, identificados por una URI.\n- **prompts**: plantillas de texto reutilizables.\n\nEl cliente habla con el servidor por un **transporte**:\n\n- `stdio`: el cliente arranca el servidor como **subproceso local** y se hablan por stdin/stdout.\n- `streamable_http`: el servidor ya corre en otra máquina y tiene una **URL**.\n\nEn LangChain, el paquete `langchain-mcp-adapters` trae `MultiServerMCPClient`: se conecta a uno o varios servidores y convierte sus tools MCP en tools de LangChain que `create_agent` entiende."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El servidor: resources/2.1_mcp_server.py",
+   "contenido": "from dotenv import load_dotenv\n\nload_dotenv()\n\nfrom mcp.server.fastmcp import FastMCP\nfrom tavily import TavilyClient\nfrom typing import Dict, Any\nfrom requests import get\n\n\nmcp = FastMCP(\"mcp_server\")\n\ntavily_client = TavilyClient()\n\n\n# Tool for searching the web\n@mcp.tool()\ndef search_web(query: str) -> Dict[str, Any]:\n    \"\"\"Search the web for information\"\"\"\n\n    results = tavily_client.search(query)\n\n    return results\n\n\n# Resources - provide access to langchain-ai repo files\n@mcp.resource(\"github://langchain-ai/langchain-mcp-adapters/main/README.md\")\ndef github_file():\n    \"\"\"\n    Resource for accessing langchain-ai/langchain-mcp-adapters/README.md file\n\n    \"\"\"\n    url = f\"https://raw.githubusercontent.com/langchain-ai/langchain-mcp-adapters/main/README.md\"\n    try:\n        resp = get(url)\n        return resp.text\n    except Exception as e:\n        return f\"Error: {str(e)}\"\n\n\n# Prompt template\n@mcp.prompt()\ndef prompt():\n    \"\"\"Analyze data from a langchain-ai repo file with comprehensive insights\"\"\"\n    return \"\"\"\n    You are a helpful assistant that answers user questions about LangChain, LangGraph and LangSmith.\n\n    You can use the following tools/resources to answer user questions:\n    - search_web: Search the web for information\n    - github_file: Access the langchain-ai repo files\n\n    If the user asks a question that is not related to LangChain, LangGraph or LangSmith, you should say \"I'm sorry, I can only answer questions about LangChain, LangGraph and LangSmith.\"\n\n    You may try multiple tool and resource calls to answer the user's question.\n\n    You may also ask clarifying questions to the user to better understand their question.\n    \"\"\"\n\nif __name__ == \"__main__\":\n    mcp.run(transport=\"stdio\")",
+   "notas": "`FastMCP` arma el servidor; cada decorador registra una cosa distinta: `@mcp.tool()` una tool, `@mcp.resource(uri)` un resource y `@mcp.prompt()` un prompt.\nEl docstring de `search_web` es la descripción que verá el modelo, igual que con `@tool`.\n`mcp.run(transport=\"stdio\")`: este servidor no abre un puerto; espera que un cliente lo lance como subproceso.\n`TavilyClient()` necesita `TAVILY_API_KEY` (la toma del `.env`).",
+   "resaltar": [
+    17,
+    27,
+    42
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El cliente y el agente",
+   "contenido": "import asyncio\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\nfrom langchain.agents import create_agent\nfrom langchain.messages import HumanMessage\n\nclient = MultiServerMCPClient(\n    {\n        \"local_server\": {\n            \"transport\": \"stdio\",\n            \"command\": \"python\",\n            \"args\": [\"resources/2.1_mcp_server.py\"],\n        }\n    }\n)\n\n\nasync def main():\n    # tools: el adaptador las convierte en tools de LangChain\n    tools = await client.get_tools()\n\n    # resources: datos que el servidor expone por URI\n    resources = await client.get_resources(\"local_server\")\n\n    # prompts: plantillas que el servidor te ofrece\n    prompt = await client.get_prompt(\"local_server\", \"prompt\")\n    prompt = prompt[0].content\n\n    agent = create_agent(\n        model=\"gpt-5-nano\",\n        tools=tools,\n        system_prompt=prompt,\n    )\n\n    response = await agent.ainvoke(\n        {\"messages\": [HumanMessage(content=\"Tell me about the langchain-mcp-adapters library\")]}\n    )\n    print([t.name for t in tools])\n    print(response[\"messages\"][-1].content)\n\n\nasyncio.run(main())",
+   "notas": "`\"transport\": \"stdio\"` + `command`/`args`: el cliente ejecuta `python resources/2.1_mcp_server.py` por ti. Córrelo desde `notebooks/module-2`, porque la ruta es relativa.\n`get_tools()` devuelve tools de LangChain; `create_agent` las usa como cualquier otra.\nEl notebook usa `await` suelto (Jupyter lo permite); en un `.py` necesitas `async def main()` + `asyncio.run(main())`.\nEn Windows, el notebook agrega un arreglo de event loop para lanzar subprocesos; en un `.py` no hace falta.",
+   "resaltar": [
+    9,
+    19,
+    31
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que devolvió el servidor (salida real)",
+   "contenido": "Corrí el servidor oficial por stdio (con una key de Tavily falsa, sin llamar a la búsqueda) y un modelo falso en lugar de `gpt-5-nano`:\n\n```\nTOOLS: ['search_web']\nARGS: {'query': {'title': 'Query', 'type': 'string'}}\nDESC: Search the web for information\nRESOURCES: ['github://langchain-ai/langchain-mcp-adapters/main/README.md']\nPROMPT type: HumanMessage | first line: You are a helpful assistant that answers user questions about LangChain...\nMODEL SAW TOOLS: ['search_web']\n```\n\nFíjate en tres cosas: el modelo ve **una sola tool**; el resource y el prompt **no** son tools; y `get_prompt` devuelve mensajes (aquí un `HumanMessage`), por eso el código toma `prompt[0].content` para usarlo como `system_prompt`."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Quién habla con quién",
+   "contenido": "graph LR\n  A[create_agent] -->|usa tools| C[MultiServerMCPClient]\n  C -->|stdio: lanza subproceso| S1[2.1_mcp_server.py<br/>tool search_web<br/>resource github_file<br/>prompt]\n  C -->|streamable_http: URL| S2[mcp.kiwi.com<br/>tools de vuelos]\n  class C clave",
+   "notas": "El agente nunca habla directo con los servidores: el cliente traduce.\nUn cliente puede tener varios servidores a la vez; `get_tools()` junta las tools de todos en una sola lista.\nEl servidor es un **proceso**; lo que llega al agente son **tools**."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un servidor remoto (2.1_travel_agent.ipynb)",
+   "contenido": "import asyncio\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\nfrom langchain.agents import create_agent\nfrom langchain.messages import HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclient = MultiServerMCPClient(\n    {\n        \"travel_server\": {\n            \"transport\": \"streamable_http\",\n            \"url\": \"https://mcp.kiwi.com\",\n        }\n    }\n)\n\n\nasync def main():\n    tools = await client.get_tools()\n\n    agent = create_agent(\n        \"gpt-5-nano\",\n        tools=tools,\n        checkpointer=InMemorySaver(),\n        system_prompt=\"You are a travel agent. No follow up questions.\",\n    )\n\n    config = {\"configurable\": {\"thread_id\": \"1\"}}\n    response = await agent.ainvoke(\n        {\"messages\": [HumanMessage(content=\"Get me a direct flight from San Francisco to Tokyo on March 31st\")]},\n        config,\n    )\n    print(response[\"messages\"][-1].content)\n\n\nasyncio.run(main())",
+   "notas": "Mismo cliente, otro transporte: `streamable_http` con una `url`. No hay subproceso: el servidor ya corre en internet.\nEl resto es lo que ya conoces: `checkpointer` + `thread_id` para la memoria de corto plazo (1.C).\nNo lo corrí: necesita red y una key de OpenAI. La salida depende del servidor de Kiwi y del modelo.",
+   "resaltar": [
+    10,
+    11
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué ainvoke y no invoke",
+   "contenido": "Las tools que crea `langchain-mcp-adapters` son **solo asíncronas**: para ejecutarse tienen que mandar un mensaje al servidor y esperar la respuesta.\n\nMini repaso de Python:\n\n```python\nimport asyncio\n\nasync def doble(x):          # función asíncrona\n    await asyncio.sleep(0)   # await solo vale dentro de async def\n    return 2 * x\n\nprint(asyncio.run(doble(21)))   # 42\n```\n\n`await` pausa la función hasta que llega el resultado. Por eso el agente se llama con `await agent.ainvoke(...)` dentro de una función `async`. En un notebook puedes escribir `await` directo; en un script, `asyncio.run(main())`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cuántas tools?",
+   "contenido": "En el cliente del paso 4, con el servidor del paso 3: ¿qué devuelve `[t.name for t in tools]`? ¿El modelo puede \"llamar\" a `github_file` o a `prompt`?",
+   "respuesta": "`['search_web']`: una sola tool. `github_file` es un **resource** y `prompt` es un **prompt**; `get_tools()` solo trae tools, así que el modelo no los ve como algo que pueda llamar.\nEl servidor MCP tampoco es una tool: es el proceso que las expone. Para usar el resource o el prompt, **tu código** los pide (`get_resources`, `get_prompt`) y decide qué hacer con ellos.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos servidores",
+   "contenido": "Agregas un segundo servidor local, `math_server.py`, y lo registras en el mismo cliente:\n\n```python\n# math_server.py\nfrom mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP(\"math_server\")\n\n@mcp.tool()\ndef add(a: int, b: int) -> int:\n    \"\"\"Add two numbers\"\"\"\n    return a + b\n\n@mcp.tool()\ndef multiply(a: int, b: int) -> int:\n    \"\"\"Multiply two numbers\"\"\"\n    return a * b\n\nif __name__ == \"__main__\":\n    mcp.run(transport=\"stdio\")\n```\n\n```python\nclient = MultiServerMCPClient(\n    {\n        \"local_server\": {\"transport\": \"stdio\", \"command\": \"python\", \"args\": [\"resources/2.1_mcp_server.py\"]},\n        \"math\": {\"transport\": \"stdio\", \"command\": \"python\", \"args\": [\"math_server.py\"]},\n    }\n)\ntools = await client.get_tools()\nprint([t.name for t in tools])\n```\n\n¿Qué imprime?",
+   "respuesta": "`['search_web', 'add', 'multiply']` (salida real).\nEl cliente junta en **una lista plana** las tools de todos los servidores. Un servidor no equivale a una tool: `math_server` aporta dos. El agente no sabe de qué servidor viene cada tool; solo ve nombres, descripciones y argumentos."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Llamada síncrona",
+   "contenido": "Con las tools de `math_server.py` (pregunta anterior) haces esto en un script:\n\n```python\nimport asyncio\nfrom langchain.agents import create_agent\n\ntools = asyncio.run(client.get_tools())\nagent = create_agent(model=\"gpt-5-nano\", tools=tools)\n\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"6 por 7?\"}]})\nprint(result[\"messages\"][-1].content)\n```\n\nEl modelo decide llamar a `multiply(6, 7)`. ¿Qué pasa?",
+   "respuesta": "Falla: `NotImplementedError: StructuredTool does not support sync invocation.` (salida real, con un modelo falso que pide `multiply`).\nLas tools MCP solo tienen versión asíncrona, porque cada llamada es un mensaje al servidor. Con `await agent.ainvoke(...)` la misma llamada devuelve el `ToolMessage` con `42`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: conectar un servidor publicado",
+   "contenido": "Otro equipo publicó un servidor MCP en `https://tools.example.com/mcp`. Quieres que tu agente de `create_agent` use sus tools. ¿Qué haces?\n\nA) `MultiServerMCPClient({\"equipo\": {\"transport\": \"stdio\", \"command\": \"https://tools.example.com/mcp\"}})`\nB) `MultiServerMCPClient({\"equipo\": {\"transport\": \"streamable_http\", \"url\": \"https://tools.example.com/mcp\"}})`, luego `tools = await client.get_tools()` y `create_agent(..., tools=tools)`\nC) Escribir una función `@tool` por cada endpoint del servidor, con `requests.post`\nD) Poner la URL del servidor en el `system_prompt` para que el modelo la llame",
+   "respuesta": "**B.** Un servidor remoto con URL usa el transporte `streamable_http`; `get_tools()` convierte sus tools y se pasan a `create_agent` como cualquier otra.\nA: `stdio` sirve para lanzar un **proceso local**; una URL no es un comando.\nC: funciona, pero es justo lo que MCP evita: reescribir y mantener cada tool a mano.\nD: el modelo no hace peticiones HTTP; solo pide tools que tú le diste."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un **servidor MCP** expone tools, resources y prompts. El agente solo recibe las **tools**; resources y prompts los pide tu código.\n- `MultiServerMCPClient` conecta uno o varios servidores (`stdio` para un proceso local, `streamable_http` para una URL) y `get_tools()` devuelve una lista plana de tools de LangChain.\n- Las tools MCP son asíncronas: usa `await agent.ainvoke(...)`.\n- Lo demás no cambia: `create_agent`, `checkpointer` y `thread_id` funcionan igual que en el módulo 1.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain (Python) → *Model Context Protocol (MCP)* (`/oss/python/langchain/mcp`): transportes, `MultiServerMCPClient`, resources, prompts e interceptors."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-2/2.1_mcp.ipynb",
+  "notebooks/module-2/2.1_travel_agent.ipynb",
+  "notebooks/module-2/resources/2.1_mcp_server.py",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Un servidor MCP expone una tool, un resource y un prompt. ¿Cuántas tools ve el agente tras `get_tools()`?",
+   "reverso": "Una. Resources y prompts no se convierten en tools: tu código los pide con get_resources / get_prompt."
+  },
+  {
+   "frente": "¿Cuándo usas `transport: \"stdio\"` y cuándo `streamable_http`?",
+   "reverso": "stdio: el cliente lanza el servidor como subproceso local (command + args). streamable_http: el servidor ya corre en otra máquina y tiene URL."
+  },
+  {
+   "frente": "¿Por qué un agente con tools MCP falla con `agent.invoke` y funciona con `await agent.ainvoke`?",
+   "reverso": "Las tools de langchain-mcp-adapters solo son asíncronas: cada llamada es un mensaje al servidor que hay que esperar."
+  },
+  {
+   "frente": "Registras dos servidores en un `MultiServerMCPClient`, uno con 1 tool y otro con 2. ¿Qué devuelve `get_tools()`?",
+   "reverso": "Una lista plana con las 3 tools. El agente no distingue de qué servidor viene cada una."
+  },
+  {
+   "frente": "¿Por qué el notebook usa `prompt[0].content` después de `get_prompt`?",
+   "reverso": "get_prompt devuelve una lista de mensajes (aquí un HumanMessage); para usarlo como system_prompt necesitas su texto."
+  }
+ ]
+}

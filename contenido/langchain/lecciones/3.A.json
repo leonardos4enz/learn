@@ -1,0 +1,107 @@
+{
+ "mision_id": "3.A",
+ "titulo": "Middleware: ganchos en el loop del agente",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Para llevar un agente a producción necesitas cosas que no son tools: resumir el historial cuando crece, pedir aprobación antes de una acción peligrosa, cambiar de modelo según el usuario, registrar cada llamada, limitar cuántas veces se llama al modelo.\n\nCon LangGraph puro tendrías que armar tú el grafo: nodos nuevos, edges, condiciones. `create_agent` ya trae el loop hecho (modelo → tools → modelo…). El **middleware** te deja **enganchar funciones en puntos fijos de ese loop** sin reescribirlo."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Dónde se engancha cada hook",
+   "contenido": "graph TD\n  S([START]) --> BA[before_agent]\n  BA --> BM[before_model]\n  BM --> M[\"model<br/>(wrap_model_call lo envuelve)\"]\n  M --> AM[after_model]\n  AM -->|hay tool calls| T[\"tools<br/>(wrap_tool_call envuelve cada una)\"]\n  T --> BM\n  AM -->|no hay tool calls| AA[after_agent]\n  AA --> E([END])\n  class M clave",
+   "notas": "`before_agent` y `after_agent` corren **una vez por invoke**.\n`before_model`, `wrap_model_call` y `after_model` corren **en cada llamada al modelo**: dentro de un run puede haber varias.\n`wrap_tool_call` corre por **cada** tool call."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Dos tipos de hook",
+   "contenido": "**Tipo nodo** (`before_agent`, `before_model`, `after_model`, `after_agent`): reciben el `state` y el `runtime`, y devuelven un **update del state** (un dict) o `None`. Son como un node de LangGraph.\n\n**Tipo wrap** (`wrap_model_call`, `wrap_tool_call`): reciben el `request` y un `handler`. Llamar a `handler(request)` ejecuta el modelo (o la tool). Tú decides si llamarlo, cuántas veces y con qué request: puedes cambiarlo con `request.override(...)`, reintentar o devolver otra respuesta.\n\nSe escriben de dos formas: una clase que hereda de `AgentMiddleware` (varios hooks juntos) o decoradores para un solo hook (`@before_model`, `@wrap_model_call`, `@dynamic_prompt`…)."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un middleware que registra todo",
+   "contenido": "from typing import Any, Callable\nfrom langchain.agents import create_agent, AgentState\nfrom langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse\nfrom langchain.tools import tool\nfrom langgraph.runtime import Runtime\n\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get the weather for a city\"\"\"\n    return f\"Sunny in {city}\"\n\n\nclass LoggingMiddleware(AgentMiddleware):\n    # hooks de tipo nodo: reciben el state, devuelven un update (o None)\n    def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:\n        print(\"before_agent   | mensajes:\", len(state[\"messages\"]))\n        return None\n\n    def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:\n        print(\"before_model   | mensajes:\", len(state[\"messages\"]))\n        return None\n\n    def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:\n        last = state[\"messages\"][-1]\n        print(\"after_model    | tool_calls:\", [c[\"name\"] for c in last.tool_calls])\n        return None\n\n    def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:\n        print(\"after_agent    | mensajes:\", len(state[\"messages\"]))\n        return None\n\n    # hooks de tipo wrap: envuelven la llamada; tú decides cuándo llamar a handler\n    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:\n        print(\"wrap_model_call: antes del modelo\")\n        response = handler(request)\n        print(\"wrap_model_call: después del modelo\")\n        return response\n\n    def wrap_tool_call(self, request, handler):\n        print(\"wrap_tool_call :\", request.tool_call[\"name\"], request.tool_call[\"args\"])\n        return handler(request)\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[get_weather],\n    middleware=[LoggingMiddleware()],\n)\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"Weather in Paris?\"}]})\nprint(\"FINAL:\", result[\"messages\"][-1].content)\nprint(\"NODES:\", list(agent.get_graph().nodes))",
+   "notas": "Una clase con los seis hooks; se pasa en `middleware=[LoggingMiddleware()]`.\nLos hooks de tipo nodo devuelven `None`: solo miran, no cambian el state.\nEn `wrap_model_call`, lo que va antes de `handler(request)` corre antes del modelo; lo que va después, cuando ya hay respuesta.",
+   "resaltar": [
+    14,
+    36,
+    48
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que imprime (salida real)",
+   "contenido": "Con un modelo falso que primero pide `get_weather(\"Paris\")` y luego responde:\n\n```\nbefore_agent   | mensajes: 1\nbefore_model   | mensajes: 1\nwrap_model_call: antes del modelo\nwrap_model_call: después del modelo\nafter_model    | tool_calls: ['get_weather']\nwrap_tool_call : get_weather {'city': 'Paris'}\nbefore_model   | mensajes: 3\nwrap_model_call: antes del modelo\nwrap_model_call: después del modelo\nafter_model    | tool_calls: []\nafter_agent    | mensajes: 4\nFINAL: It's sunny in Paris.\nNODES: ['__start__', 'model', 'tools', 'LoggingMiddleware.before_agent',\n        'LoggingMiddleware.before_model', 'LoggingMiddleware.after_model',\n        'LoggingMiddleware.after_agent', '__end__']\n```"
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "¿El middleware cambia el grafo?",
+   "contenido": "Mira la lista `NODES` del paso anterior. Sin middleware, el grafo de `create_agent` es `['__start__', 'model', 'tools', '__end__']`.\n\n- Los hooks **de tipo nodo** se agregan como **nodos** alrededor de `model` (`LoggingMiddleware.before_model`…).\n- Los hooks **de tipo wrap** no agregan nodos: corren **dentro** de `model` o de `tools`.\n\nLo que **no** cambia es la lógica del loop: modelo, tools si hay tool calls, de vuelta al modelo, fin cuando no hay. El middleware se engancha en puntos fijos; no lo reprogramas."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Middleware que ya viene hecho",
+   "contenido": "LangChain trae middleware listo en `langchain.agents.middleware` (nombres verificados en langchain 1.3):\n\n- `SummarizationMiddleware`: resume el historial (3.B).\n- `HumanInTheLoopMiddleware`: pausa antes de ciertas tools (3.C).\n- `ModelCallLimitMiddleware`, `ToolCallLimitMiddleware`: límites de llamadas.\n- `ModelFallbackMiddleware`, `ModelRetryMiddleware`, `ToolRetryMiddleware`: reintentos y modelo de respaldo.\n- `PIIMiddleware`: detecta y oculta datos personales.\n- `TodoListMiddleware`, `LLMToolSelectorMiddleware`, `ContextEditingMiddleware`.\n\nLos notebooks del módulo usan los tres estilos: `@before_agent` (borrar mensajes, 3.B), `@wrap_model_call` (cambiar modelo o tools, 3.D) y `@dynamic_prompt` (3.D). Deep Agents arma sus todos, filesystem y subagentes con middleware."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Dos middlewares: ¿en qué orden?",
+   "contenido": "Registras seis middlewares de un hook cada uno, en este orden:\n\n```python\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import before_model, after_model, wrap_model_call\n\n\n@before_model\ndef a_before(state, runtime):\n    print(\"A.before_model\")\n\n\n@before_model\ndef b_before(state, runtime):\n    print(\"B.before_model\")\n\n\n@after_model\ndef a_after(state, runtime):\n    print(\"A.after_model\")\n\n\n@after_model\ndef b_after(state, runtime):\n    print(\"B.after_model\")\n\n\n@wrap_model_call\ndef a_wrap(request, handler):\n    print(\"A.wrap entra\")\n    response = handler(request)\n    print(\"A.wrap sale\")\n    return response\n\n\n@wrap_model_call\ndef b_wrap(request, handler):\n    print(\"B.wrap entra\")\n    response = handler(request)\n    print(\"B.wrap sale\")\n    return response\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    middleware=[a_before, b_before, a_after, b_after, a_wrap, b_wrap],\n)\nagent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]})\n```\n\n¿En qué orden se imprimen las 8 líneas?",
+   "respuesta": "Salida real:\n```\nA.before_model\nB.before_model\nA.wrap entra\nB.wrap entra\nB.wrap sale\nA.wrap sale\nB.after_model\nA.after_model\n```\nLos `before_*` corren en el orden de la lista; los `after_*`, al revés. Los `wrap_*` son capas de cebolla: el primero de la lista es la capa de afuera (entra primero y sale último)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cuántas veces?",
+   "contenido": "En el agente del paso 4, el modelo llamó a una tool y después respondió. ¿Cuántas veces se imprimió `before_model` y cuántas `before_agent`? ¿Por qué distinto?",
+   "respuesta": "`before_model` dos veces; `before_agent` una.\n`before_agent` corre una vez por `invoke`. `before_model` corre antes de **cada** llamada al modelo, y en este run hubo dos: la que pidió `get_weather` y la que dio la respuesta final. Si pones lógica cara en `before_model`, se repite en cada vuelta del loop.",
+   "ref": 4
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: cambiar el modelo por usuario",
+   "contenido": "Quieres que tu agente use un modelo barato para usuarios del plan gratis y uno más grande para el plan premium. El plan llega en el runtime context de cada `invoke`. No quieres crear un agente distinto por plan. ¿Qué usas?\n\nA) Un `@before_agent` que devuelva `{\"model\": \"modelo-grande\"}`\nB) Un `@wrap_model_call` que lea `request.runtime.context` y llame a `handler(request.override(model=...))`\nC) Un `@after_model` que repita la llamada con el otro modelo\nD) Un `@wrap_tool_call` que cambie el modelo antes de cada tool",
+   "respuesta": "**B.** `wrap_model_call` recibe el request de cada llamada al modelo y puede cambiarlo con `request.override(model=...)` antes de pasarlo al `handler`.\nA: un hook de tipo nodo devuelve un **update del state**; el modelo no vive en el state.\nC: llamaría al modelo dos veces y pagarías ambas.\nD: `wrap_tool_call` envuelve la ejecución de tools, no la llamada al modelo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Nodos nuevos?",
+   "contenido": "Creas un agente con un solo middleware:\n\n```python\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import wrap_model_call\n\n\n@wrap_model_call\ndef solo_wrap(request, handler):\n    return handler(request)\n\n\nagent = create_agent(model=\"gpt-5-nano\", tools=[get_weather], middleware=[solo_wrap])\nprint(list(agent.get_graph().nodes))\n```\n\n¿Qué imprime?",
+   "respuesta": "`['__start__', 'model', 'tools', '__end__']` (salida real): igual que sin middleware.\nUn hook de tipo wrap corre **dentro** del nodo `model`; no agrega nodos. Solo los hooks de tipo nodo (`before_*`, `after_*`) aparecen como nodos con el nombre del middleware."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El middleware engancha funciones en puntos fijos del loop de `create_agent`; no reescribes el loop.\n- **Tipo nodo** (`before_agent`, `before_model`, `after_model`, `after_agent`): reciben el state y devuelven un update; aparecen como nodos.\n- **Tipo wrap** (`wrap_model_call`, `wrap_tool_call`): reciben `request` + `handler`; pueden cambiar el request con `override`, reintentar o saltarse la llamada; no agregan nodos.\n- Orden: `before_*` en el orden de la lista, `after_*` al revés, `wrap_*` como capas.\n- `before_agent`/`after_agent`: una vez por invoke; los de modelo, en cada llamada.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Middleware* (`/oss/python/langchain/middleware`): overview, *Built-in middleware* y *Custom middleware* (hooks y orden de ejecución)."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-3/3.2_managing_messages.ipynb",
+  "notebooks/module-3/3.4_dynamic_models.ipynb",
+  "notebooks/module-3/3.4_dynamic_prompts.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Cuál es la diferencia entre un hook de tipo nodo y uno de tipo wrap?",
+   "reverso": "Nodo: recibe el state y devuelve un update (corre como nodo). Wrap: recibe request + handler y controla la llamada al modelo o tool."
+  },
+  {
+   "frente": "En un run con 2 llamadas al modelo, ¿cuántas veces corren `before_agent` y `before_model`?",
+   "reverso": "before_agent 1 vez (por invoke); before_model 2 veces (antes de cada llamada al modelo)."
+  },
+  {
+   "frente": "middleware=[A, B]: ¿en qué orden corren los after_model y los wrap_model_call?",
+   "reverso": "after_model al revés (B, luego A). wrap como cebolla: A es la capa de afuera (entra primero, sale último)."
+  },
+  {
+   "frente": "¿Un `@wrap_model_call` agrega nodos al grafo del agente?",
+   "reverso": "No: corre dentro del nodo model. Solo los hooks before_*/after_* aparecen como nodos."
+  },
+  {
+   "frente": "Quieres cambiar el modelo por request sin crear otro agente. ¿Qué hook?",
+   "reverso": "wrap_model_call con handler(request.override(model=...)). El modelo no está en el state, así que un before_* no sirve."
+  }
+ ]
+}

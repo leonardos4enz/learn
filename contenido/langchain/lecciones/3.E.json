@@ -1,0 +1,100 @@
+{
+ "mision_id": "3.E",
+ "titulo": "Proyecto: Email Assistant",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "El proyecto del módulo 3 junta todo en un **asistente de correo**:\n\n- Primero el usuario se **autentica**. Hasta entonces el agente solo puede llamar a `authenticate`.\n- Ya autenticado, puede **revisar la bandeja** y **mandar correos**.\n- Mandar un correo pide **aprobación humana**.\n\nLas piezas ya las conoces: context y state con `Command` (2.B), tools y prompt dinámicos (3.D) y human in the loop (3.C). Lo nuevo es cómo se combinan, y que el archivo está listo para correr con `langgraph dev`."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El flujo",
+   "contenido": "graph TD\n  S([inicio]) --> Q{state.authenticated?}\n  Q -->|no| A[tools: authenticate<br/>prompt: authenticate users]\n  A -->|Command authenticated=True| Q\n  Q -->|sí| B[tools: check_inbox, send_email<br/>prompt: check inbox and send]\n  B -->|send_email| H[HITL: pausa]\n  H -->|approve| E([correo enviado])\n  class Q clave",
+   "notas": "La decisión central es el valor `authenticated` del **state**: lo escribe `authenticate` y lo leen los dos middlewares dinámicos.\nComo el middleware corre en cada llamada al modelo, el cambio se nota en la llamada siguiente, dentro del mismo run."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente completo: 3.5_email_agent.py",
+   "contenido": "from dotenv import load_dotenv\nfrom dataclasses import dataclass\nfrom langchain.agents import AgentState, create_agent\nfrom langchain.tools import tool, ToolRuntime\nfrom langgraph.types import Command\nfrom langchain.messages import ToolMessage\nfrom langchain.agents.middleware import wrap_model_call, dynamic_prompt, HumanInTheLoopMiddleware\nfrom langchain.agents.middleware import ModelRequest, ModelResponse\nfrom typing import Callable\n\nload_dotenv()\n\n\n@dataclass\nclass EmailContext:\n    email_address: str = \"julie@example.com\"\n    password: str = \"password123\"\n\n\nclass AuthenticatedState(AgentState):\n    authenticated: bool\n\n\n@tool\ndef check_inbox() -> str:\n    \"\"\"Check the inbox for recent emails\"\"\"\n    return \"\"\"\n    Hi Julie, \n    I'm going to be in town next week and was wondering if we could grab a coffee?\n    - best, Jane (jane@example.com)\n    \"\"\"\n\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an response email\"\"\"\n    return f\"Email sent to {to} with subject {subject} and body {body}\"\n\n\n@tool\ndef authenticate(email: str, password: str, runtime: ToolRuntime) -> Command:\n    \"\"\"Authenticate the user with the given email and password\"\"\"\n    if email == runtime.context.email_address and password == runtime.context.password:\n        return Command(\n            update={\n                \"authenticated\": True,\n                \"messages\": [\n                    ToolMessage(\"Successfully authenticated\", tool_call_id=runtime.tool_call_id)\n                ],\n            }\n        )\n    else:\n        return Command(\n            update={\n                \"authenticated\": False,\n                \"messages\": [\n                    ToolMessage(\"Authentication failed\", tool_call_id=runtime.tool_call_id)\n                ],\n            }\n        )\n\n\n@wrap_model_call\nasync def dynamic_tool_call(\n    request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]\n) -> ModelResponse:\n    \"\"\"Allow read inbox and send email tools only if user provides correct email and password\"\"\"\n\n    authenticated = request.state.get(\"authenticated\")\n\n    if authenticated:\n        tools = [check_inbox, send_email]\n    else:\n        tools = [authenticate]\n\n    request = request.override(tools=tools)\n    return await handler(request)\n\n\nauthenticated_prompt = \"You are a helpful assistant that can check the inbox and send emails.\"\nunauthenticated_prompt = \"You are a helpful assistant that can authenticate users.\"\n\n\n@dynamic_prompt\ndef dynamic_prompt_func(request: ModelRequest) -> str:\n    \"\"\"Generate system prompt based on authentication status\"\"\"\n    authenticated = request.state.get(\"authenticated\")\n\n    if authenticated:\n        return authenticated_prompt\n    else:\n        return unauthenticated_prompt\n\n\nagent = create_agent(\n        \"gpt-5-nano\",\n        tools=[authenticate, check_inbox, send_email],\n        state_schema=AuthenticatedState,\n        context_schema=EmailContext,\n        middleware=[\n            dynamic_tool_call,\n            dynamic_prompt_func,\n            HumanInTheLoopMiddleware(\n                interrupt_on={\n                    \"authenticate\": False,\n                    \"check_inbox\": False,\n                    \"send_email\": True,\n                }\n            ),\n        ],\n    )",
+   "notas": "`EmailContext` (context): las credenciales correctas las conoce la app, no el modelo. `AuthenticatedState` (state): el resultado de la autenticación.\n`authenticate` compara con `runtime.context` y escribe `authenticated` con `Command`.\n`dynamic_tool_call` es **async** (`async def` + `await handler(...)`): este archivo es para `langgraph dev`, que corre el agente de forma asíncrona.\nNo hay `checkpointer`: el servidor de `langgraph dev` pone su propia persistencia.",
+   "resaltar": [
+    64,
+    69,
+    107
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué cada pieza va donde va",
+   "contenido": "- **Credenciales en el context**: el modelo no las ve en sus mensajes; solo la tool las compara. Si estuvieran en el prompt, el modelo podría filtrarlas en una respuesta.\n- **`authenticated` en el state**: cambia durante la conversación y tiene que recordarse en los siguientes turnos del thread.\n- **Tools dinámicas**: antes de autenticarse, el modelo **no ve** `check_inbox` ni `send_email`; no es una instrucción que pueda desobedecer, simplemente no existen para él.\n- **Prompt dinámico**: le dice al modelo qué rol tiene en cada fase.\n- **HITL al final**: aunque esté autenticado, mandar un correo pasa por una persona.\n\n`request.state.get(\"authenticated\")` usa `.get` porque al principio la clave no existe: devuelve `None` en vez de lanzar `KeyError`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Probarlo en un script, con checkpointer",
+   "contenido": "import asyncio\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import HumanInTheLoopMiddleware\nfrom langchain.messages import HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\nfrom langgraph.types import Command\n\n# las piezas del archivo del paso 3\nfrom email_agent import (\n    EmailContext, AuthenticatedState,\n    authenticate, check_inbox, send_email,\n    dynamic_tool_call, dynamic_prompt_func,\n)\n\n# para probar fuera de langgraph dev: el mismo agente, con checkpointer\nagent = create_agent(\n    \"gpt-5-nano\",\n    tools=[authenticate, check_inbox, send_email],\n    checkpointer=InMemorySaver(),\n    state_schema=AuthenticatedState,\n    context_schema=EmailContext,\n    middleware=[\n        dynamic_tool_call,\n        dynamic_prompt_func,\n        HumanInTheLoopMiddleware(interrupt_on={\n            \"authenticate\": False,\n            \"check_inbox\": False,\n            \"send_email\": True,\n        }),\n    ],\n)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\n\nasync def main():\n    # turno 1: credenciales -> autentica y revisa la bandeja\n    r = await agent.ainvoke({\"messages\": [HumanMessage(content=\"julie@example.com, password123\")]},\n                            context=EmailContext(), config=config)\n    print(\"T1:\", r[\"messages\"][-1].content, \"| authenticated:\", r[\"authenticated\"])\n\n    # turno 2: pide responder -> se pausa antes de send_email\n    r = await agent.ainvoke({\"messages\": [HumanMessage(content=\"any draft is fine. don't check back.\")]},\n                            context=EmailContext(), config=config)\n    print(\"T2:\", r[\"__interrupt__\"][0].value[\"action_requests\"][0][\"args\"])\n\n    # turno 3: aprobar\n    r = await agent.ainvoke(Command(resume={\"decisions\": [{\"type\": \"approve\"}]}),\n                            context=EmailContext(), config=config)\n    print(\"T3:\", r[\"messages\"][-1].content)\n\n\nasyncio.run(main())",
+   "notas": "Guarda el archivo del paso 3 como `email_agent.py` junto a este script (o usa el notebook, que tiene la versión síncrona).\nSe arma el mismo agente con `InMemorySaver()`, porque fuera de `langgraph dev` nadie más pone la persistencia que necesita la pausa de 3.C.\nSe usa `ainvoke`, porque `dynamic_tool_call` es async.",
+   "resaltar": [
+    19,
+    48
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que pasó (salida real)",
+   "contenido": "Con un modelo falso con guion (autentica, revisa la bandeja, propone una respuesta, la manda):\n\n```\nT1: Jane wants coffee next week. Shall I reply? | authenticated: True\n  llamada 1: tools=['authenticate']              | system='You are a helpful assistant that can authenti...'\n  llamada 2: tools=['check_inbox', 'send_email'] | system='You are a helpful assistant that can check th...'\n  llamada 3: tools=['check_inbox', 'send_email'] | system='You are a helpful assistant that can check th...'\nT2: {'to': 'jane@example.com', 'subject': 'Re: Coffee', 'body': 'Sounds great! Tuesday?'}\nT3: Email sent.\n```\n\nEn el **mismo turno 1**, la llamada 1 solo ve `authenticate` y la llamada 2 ya ve las otras dos: el `Command` cambió el state y el middleware lo leyó. El notebook oficial, con el modelo real, sigue el mismo camino y se pausa con el borrador antes de mandarlo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Contraseña incorrecta",
+   "contenido": "Con el agente del paso 5, en un thread nuevo, el usuario escribe `\"julie@example.com, wrong\"`. El modelo llama a `authenticate(email=\"julie@example.com\", password=\"wrong\")` y después vuelve a llamar al modelo.\n\n¿Qué vale `authenticated` en el state? ¿Qué tools ve el modelo en su segunda llamada?",
+   "respuesta": "`authenticated: False` y la segunda llamada ve solo `['authenticate']` (salida real). El `ToolMessage` dice `\"Authentication failed\"`.\n`authenticate` escribe `False` con su `Command`, `dynamic_tool_call` lee un valor falso y deja solo `authenticate`. El modelo no puede llegar a la bandeja aunque el usuario se lo pida.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Llamarlo de forma síncrona",
+   "contenido": "Importas las piezas del archivo del paso 3 y llamas al agente sin `await`:\n\n```python\nfrom langchain.agents import create_agent\nfrom langchain.messages import HumanMessage\nfrom email_agent import EmailContext, AuthenticatedState, authenticate, dynamic_tool_call\n\nagent = create_agent(\n    \"gpt-5-nano\",\n    tools=[authenticate],\n    middleware=[dynamic_tool_call],\n    context_schema=EmailContext,\n    state_schema=AuthenticatedState,\n)\nagent.invoke({\"messages\": [HumanMessage(content=\"hi\")]}, context=EmailContext())\n```\n\n¿Qué pasa?",
+   "respuesta": "Falla: `NotImplementedError: Synchronous implementation of wrap_model_call is not available...` (salida real), porque en el `.py` `dynamic_tool_call` está definido con `async def`.\nUn middleware async solo funciona con `ainvoke`/`astream`. `langgraph dev` corre los grafos de forma asíncrona, por eso el archivo lo define así; el notebook usa la versión síncrona (`def` y `handler(request)`) para poder llamar `agent.invoke`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: garantizar que no se use una tool",
+   "contenido": "Tu agente de correo **nunca** debe poder llamar a `send_email` antes de que el usuario se autentique, aunque el usuario insista. ¿Qué diseño lo garantiza?\n\nA) Escribir en el `system_prompt`: \"No mandes correos antes de autenticar\"\nB) Un `@wrap_model_call` que, si `request.state.get(\"authenticated\")` no es verdadero, llame a `handler(request.override(tools=[authenticate]))`\nC) Solo `HumanInTheLoopMiddleware` con `\"send_email\": True`\nD) Quitar `send_email` de `create_agent(tools=...)` y agregarla desde el middleware cuando el usuario se autentique",
+   "respuesta": "**B.** Si el modelo no recibe la tool, no puede pedirla: el control está en el código, no en la obediencia del modelo.\nA: un prompt se puede ignorar.\nC: una persona tendría que rechazar cada intento; el modelo sigue viendo y proponiendo la tool.\nD: el middleware no puede agregar tools que el agente no registró: lanza `ValueError` (lo viste en 3.D). Hay que registrarlas todas y filtrar."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El Email Assistant combina **context** (credenciales), **state** (`authenticated`, escrito con `Command`), **tools y prompt dinámicos** (leen el state en cada llamada) y **HITL** (aprobar `send_email`).\n- Filtrar tools según el state es un control real: el modelo no puede llamar lo que no ve.\n- El archivo para `langgraph dev` no lleva checkpointer (lo pone el servidor) y usa middleware async, así que se llama con `ainvoke`.\n- Fuera de `langgraph dev`, agrega un checkpointer para que la pausa se pueda retomar.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Middleware* (custom: `wrap_model_call`, `dynamic_prompt`), *Human-in-the-loop* y *Runtime*."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-3/3.5_email_agent.ipynb",
+  "notebooks/module-3/3.5_email_agent.py",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "En el Email Assistant, ¿por qué las credenciales van en el context y `authenticated` en el state?",
+   "reverso": "Las credenciales las conoce la app y no deben llegar al modelo; authenticated cambia en la conversación y debe recordarse por thread."
+  },
+  {
+   "frente": "¿Por qué el filtro de tools por `authenticated` funciona dentro del mismo turno en que el usuario se autentica?",
+   "reverso": "authenticate escribe el state con Command y el wrap_model_call corre antes de la siguiente llamada al modelo, leyendo el valor nuevo."
+  },
+  {
+   "frente": "¿Por qué 3.5_email_agent.py no tiene checkpointer?",
+   "reverso": "Es para langgraph dev / Agent Server, que pone su propia persistencia. Fuera de ahí, agrégalo para poder retomar las pausas."
+  },
+  {
+   "frente": "Tu middleware usa `async def` y `await handler(request)`. ¿Cómo debes invocar al agente?",
+   "reverso": "Con ainvoke/astream. Con invoke da NotImplementedError: no hay versión síncrona del hook."
+  },
+  {
+   "frente": "¿Por qué ocultar una tool es más seguro que prohibirla en el prompt?",
+   "reverso": "Si el modelo no recibe la tool, no puede pedirla; una instrucción en el prompt se puede ignorar."
+  }
+ ]
+}

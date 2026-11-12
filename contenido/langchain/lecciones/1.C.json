@@ -1,0 +1,103 @@
+{
+ "mision_id": "1.C",
+ "titulo": "Memoria de corto plazo: checkpointer y thread_id",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En la lección de modelos viste que cada `invoke` es independiente: el modelo solo ve lo que le mandas en esa llamada. Un chat necesita lo contrario: que el agente se acuerde de lo que dijiste hace tres mensajes.\n\nPodrías guardar tú la lista de mensajes y mandarla entera cada vez, pero eso se complica rápido (varios usuarios, varias conversaciones). La **memoria de corto plazo** de LangChain lo hace por ti. La clave: la memoria **no está en el modelo**. Está en un **checkpointer** que guarda el state del agente por conversación."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Sin memoria",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", [m.content for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([\n    AIMessage(\"Nice to meet you, Sam! Green is a great colour.\"),\n    AIMessage(\"I don't know your favourite colour.\"),\n]))\n\nagent = create_agent(model)   # sin checkpointer\n\nagent.invoke({\"messages\": [HumanMessage(\"Hello my name is Sam and my favourite colour is green\")]})\nresponse = agent.invoke({\"messages\": [HumanMessage(\"What's my favourite colour?\")]})\n\nprint(\"Mensajes devueltos:\", len(response[\"messages\"]))",
+   "notas": "`FakeModel` hace de LLM: imprime lo que recibe, así ves qué le llega al modelo sin gastar tokens. En el notebook va `\"gpt-5-nano\"`.\nSalida real:\n`El modelo recibe: ['Hello my name is Sam and my favourite colour is green']`\n`El modelo recibe: [\"What's my favourite colour?\"]` · `Mensajes devueltos: 2`\nLa segunda llamada empieza de cero: el modelo nunca vio el color.",
+   "resaltar": [
+    18,
+    21
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Con checkpointer y thread_id",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", [m.content for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([\n    AIMessage(\"Nice to meet you, Sam! Green is a great colour.\"),\n    AIMessage(\"Your favourite colour is green.\"),\n]))\n\nagent = create_agent(model, checkpointer=InMemorySaver())\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\nagent.invoke({\"messages\": [HumanMessage(\"Hello my name is Sam and my favourite colour is green\")]}, config)\nresponse = agent.invoke({\"messages\": [HumanMessage(\"What's my favourite colour?\")]}, config)\n\nprint(\"Mensajes devueltos:\", len(response[\"messages\"]))\nprint(response[\"messages\"][-1].content)",
+   "notas": "`FakeModel` hace de LLM: imprime lo que recibe, así ves qué le llega al modelo sin gastar tokens. En el notebook va `\"gpt-5-nano\"`.\nSalida real:\n`El modelo recibe: ['Hello my name is Sam and my favourite colour is green']`\n`El modelo recibe: ['Hello my name...', 'Nice to meet you, Sam!...', \"What's my favourite colour?\"]`\n`Mensajes devueltos: 4` · `Your favourite colour is green.`\nSolo mandaste la pregunta nueva; el agente **cargó** los dos mensajes anteriores del hilo `\"1\"`.",
+   "resaltar": [
+    19,
+    21,
+    23
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Dónde vive la memoria",
+   "contenido": "graph LR\n  U[invoke con thread_id] --> A[agente]\n  CP[(checkpointer)] -->|carga los mensajes del hilo| A\n  A -->|mensajes| M[modelo]\n  A -->|guarda el state nuevo| CP\n  class CP clave",
+   "notas": "En cada `invoke` el agente busca en el checkpointer el state guardado bajo ese `thread_id`, le agrega tu mensaje nuevo y se lo manda **todo** al modelo.\nAl terminar guarda el state actualizado. El modelo sigue sin memoria: solo recibe una lista más larga."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un hilo por conversación",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", len(messages), \"mensajes\")\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([AIMessage(\"ok 1\"), AIMessage(\"ok 2\"), AIMessage(\"ok 3\")]))\nagent = create_agent(model, checkpointer=InMemorySaver())\n\nhilo_1 = {\"configurable\": {\"thread_id\": \"1\"}}\nhilo_2 = {\"configurable\": {\"thread_id\": \"2\"}}\n\nagent.invoke({\"messages\": [HumanMessage(\"My favourite colour is green\")]}, hilo_1)\nagent.invoke({\"messages\": [HumanMessage(\"What's my favourite colour?\")]}, hilo_1)\nagent.invoke({\"messages\": [HumanMessage(\"What's my favourite colour?\")]}, hilo_2)\n\nprint(\"Hilo 1 guarda:\", len(agent.get_state(hilo_1).values[\"messages\"]), \"mensajes\")\nprint(\"Hilo 2 guarda:\", len(agent.get_state(hilo_2).values[\"messages\"]), \"mensajes\")",
+   "notas": "`FakeModel` hace de LLM: imprime lo que recibe, así ves qué le llega al modelo sin gastar tokens. En el notebook va `\"gpt-5-nano\"`.\nSalida real:\n`El modelo recibe: 1 mensajes` → `3 mensajes` → `1 mensajes`\n`Hilo 1 guarda: 4 mensajes` · `Hilo 2 guarda: 2 mensajes`\nEl hilo `\"2\"` empieza vacío aunque use el mismo agente y el mismo checkpointer. `agent.get_state(config)` te deja ver lo guardado.",
+   "resaltar": [
+    18,
+    24
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "InMemorySaver vive en la RAM",
+   "contenido": "`InMemorySaver` guarda los hilos en un diccionario **dentro de tu proceso**. Sirve para notebooks y pruebas, pero se pierde si reinicias el kernel, y no lo comparten dos procesos.\n\nEn producción usas un checkpointer con base de datos (SQLite, Postgres). Y cuando corres el agente con `langgraph dev` o en un Agent Server, la plataforma pone su propia persistencia: por eso el `.py` del proyecto Personal Chef no crea checkpointer.\n\nEs el mismo checkpointer que existe en LangGraph: `create_agent` arma un grafo de LangGraph y le pasa el tuyo al compilarlo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: dos hilos intercalados",
+   "contenido": "Con el mismo `FakeModel` del paso 5 (imprime cuántos mensajes recibe):\n\n```python\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", len(messages), \"mensajes\")\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([AIMessage(\"ok 1\"), AIMessage(\"ok 2\"), AIMessage(\"ok 3\")]))\nagent = create_agent(model, checkpointer=InMemorySaver())\n\nagent.invoke({\"messages\": [HumanMessage(\"My name is Sam\")]}, {\"configurable\": {\"thread_id\": \"a\"}})\nagent.invoke({\"messages\": [HumanMessage(\"My name is Alex\")]}, {\"configurable\": {\"thread_id\": \"b\"}})\nagent.invoke({\"messages\": [HumanMessage(\"What's my name?\")]}, {\"configurable\": {\"thread_id\": \"a\"}})\n```\n\n¿Qué número imprime cada una de las tres llamadas? ¿Qué nombre \"conoce\" el modelo en la tercera?",
+   "respuesta": "Imprime `1`, `1` y `3`.\nLa tercera llamada es del hilo `\"a\"`: carga los 2 mensajes de ese hilo (\"My name is Sam\" y su respuesta) y agrega la pregunta. El hilo `\"b\"` (Alex) está separado y no se mezcla, aunque haya ocurrido en medio.\nEl modelo ve \"Sam\", y nada de \"Alex\"."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: checkpointer sin thread_id",
+   "contenido": "Un compañero copia este código y lo corre:\n\n```python\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", len(messages), \"mensajes\")\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([AIMessage(\"ok 1\")]))\nagent = create_agent(model, checkpointer=InMemorySaver())\n\nagent.invoke({\"messages\": [HumanMessage(\"Hi, I'm Sam\")]})   # sin config\n```\n\n¿Qué pasa?\n\nA) Funciona; el agente usa el hilo `\"default\"`.\nB) Funciona, pero sin memoria.\nC) Lanza `ValueError`: con checkpointer, la config necesita `thread_id` en `configurable`.\nD) Lanza un error del proveedor del modelo.",
+   "respuesta": "**C.** Salida real: `ValueError: Checkpointer requires one or more of the following 'configurable' keys: thread_id, checkpoint_ns, checkpoint_id`.\nSi hay checkpointer, el agente necesita saber **en qué hilo** guardar; no inventa uno (A falsa) ni sigue sin memoria (B falsa). El error sale antes de llamar al modelo (D falsa)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: reiniciar y volver a crear el agente",
+   "contenido": "Simula reiniciar el kernel: después de la primera conversación vuelves a correr la celda que crea el agente con un `InMemorySaver()` nuevo y usas el mismo `thread_id`:\n\n```python\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", len(messages), \"mensajes\")\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\nmodel = FakeModel(messages=iter([AIMessage(\"ok 1\"), AIMessage(\"ok 2\")]))\nagent = create_agent(model, checkpointer=InMemorySaver())\nagent.invoke({\"messages\": [HumanMessage(\"My favourite colour is green\")]}, config)\n\n# Como si reiniciaras el kernel y volvieras a correr la celda que crea el agente\nmodel = FakeModel(messages=iter([AIMessage(\"ok 3\")]))\nagent = create_agent(model, checkpointer=InMemorySaver())\nagent.invoke({\"messages\": [HumanMessage(\"What's my favourite colour?\")]}, config)\n```\n\n¿Cuántos mensajes recibe el modelo en la segunda llamada? ¿Sabe el color?",
+   "respuesta": "Recibe **1** mensaje: no sabe el color.\nEl hilo `\"1\"` vivía en el `InMemorySaver` **viejo**. El nuevo está vacío; el `thread_id` es solo una etiqueta para buscar dentro de **ese** checkpointer. Para sobrevivir reinicios necesitas un checkpointer con base de datos, o la persistencia de `langgraph dev` / Agent Server."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- La memoria de corto plazo **no está en el modelo**: está en el **checkpointer**, que guarda el state (los mensajes) por `thread_id`.\n- Con checkpointer mandas solo el mensaje nuevo; el agente carga el resto del hilo y se lo pasa entero al modelo.\n- Un `thread_id` = una conversación. Hilos distintos no se mezclan.\n- Con checkpointer, `thread_id` es obligatorio (`ValueError` si falta).\n- `InMemorySaver` vive en la RAM del proceso; en producción, base de datos o la persistencia del Agent Server.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain (Python) → *Short-term memory*; y LangGraph → *Persistence* para los checkpointers."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-1/1.3_memory.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Un agente con checkpointer \"recuerda\" tu nombre. ¿Dónde está guardado ese recuerdo?",
+   "reverso": "En el checkpointer, como parte del state del hilo (`thread_id`). El modelo no guarda nada: en cada llamada recibe el historial completo que el agente cargó."
+  },
+  {
+   "frente": "Con checkpointer, ¿qué mandas en el segundo `invoke` de una conversación y por qué?",
+   "reverso": "Solo el mensaje nuevo. El agente carga los mensajes anteriores de ese `thread_id` y les agrega el tuyo."
+  },
+  {
+   "frente": "¿Qué pasa si invocas un agente con checkpointer sin `thread_id` en la config?",
+   "reverso": "`ValueError`: el checkpointer necesita saber en qué hilo guardar. No hay hilo por defecto."
+  },
+  {
+   "frente": "Reinicias el kernel y vuelves a crear el agente con `InMemorySaver()` y el mismo `thread_id`. ¿Recuerda la conversación?",
+   "reverso": "No. `InMemorySaver` vive en la RAM del proceso: el nuevo está vacío. Para persistir, un checkpointer con base de datos o la persistencia del Agent Server."
+  },
+  {
+   "frente": "¿Por qué dos usuarios con el mismo agente y el mismo checkpointer no ven los mensajes del otro?",
+   "reverso": "Cada uno usa su propio `thread_id`; el checkpointer guarda y carga el state por hilo."
+  }
+ ]
+}

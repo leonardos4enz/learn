@@ -1,0 +1,108 @@
+{
+ "mision_id": "3.F",
+ "titulo": "Agent Chat UI y cierre del curso",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora hablas con tu agente desde un notebook: `invoke`, `pprint`, leer `__interrupt__` a mano. Un usuario real necesita un **chat**: ver los mensajes en streaming, las tool calls y, si hay human in the loop, botones para aprobar, editar o rechazar.\n\n**Agent Chat UI** es una app de Next.js (de LangChain) que hace eso para **cualquier** servidor de LangGraph cuyo state tenga la clave `messages`. Tu agente de `create_agent` cumple: su state es un `AgentState`.\n\nPara conectarla necesitas dos cosas: el agente corriendo como **servidor** (`langgraph dev`) y saber **cómo se llama** el grafo dentro de ese servidor."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "langgraph.json: qué grafo sirve el servidor",
+   "contenido": "{\n  \"dependencies\": [\".\"],\n  \"graphs\": {\n      \"agent\": \"./3.5_email_agent.py:agent\"\n  },\n  \"env\": \"../../.env\"\n}",
+   "notas": "`graphs` asocia un **id** (`\"agent\"`) con `archivo:variable` (`./3.5_email_agent.py:agent`, el agente de 3.E).\n`dependencies: [\".\"]` instala la carpeta actual; `env` apunta al `.env` de la raíz del repo, dos niveles arriba.\nVerificado: el JSON carga y `3.5_email_agent.py` define `agent` (lo importé con keys falsas, sin llamar al modelo).",
+   "resaltar": [
+    4
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Correr el servidor y la UI",
+   "contenido": "# Terminal 1: el servidor del agente (desde notebooks/module-3, donde está langgraph.json)\ncd notebooks/module-3\nuv run langgraph dev\n# -> API en http://127.0.0.1:2024 (puerto por defecto) y enlace a LangSmith Studio\n\n# Terminal 2: la interfaz (Next.js)\ncd notebooks/module-3/agent-chat-ui\npnpm install\npnpm dev\n# -> abre http://localhost:3000 y llena el formulario:\n#    Deployment URL:     http://localhost:2024\n#    Assistant/Graph ID: agent\n#    LangSmith API Key:  vacío (solo hace falta para un deployment en la nube)",
+   "notas": "`langgraph dev` lee `langgraph.json` y levanta el Agent Server local; el puerto por defecto es 2024 (verificado en `langgraph-cli`).\nLa UI necesita Node y pnpm. Si no quieres instalarla, el README ofrece una versión ya desplegada (agentchat.vercel.app) que se conecta igual a tu servidor local.\nNo lo corrí: requiere `pnpm install` (descarga de paquetes) y una key de OpenAI para el modelo.",
+   "resaltar": [
+    3,
+    12
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Quién habla con quién",
+   "contenido": "graph LR\n  B[Navegador<br/>Agent Chat UI :3000] -->|HTTP + streaming| S[Agent Server<br/>langgraph dev :2024]\n  S -->|graph id: agent| G[3.5_email_agent.py:agent]\n  S --- P[(persistencia del servidor:<br/>threads y checkpoints)]\n  G -->|__interrupt__ de send_email| S\n  S -->|muestra aprobar / editar / rechazar| B\n  class S clave",
+   "notas": "La UI no importa tu código Python: habla por HTTP con el servidor, usando el id del grafo.\nEl servidor guarda los threads y checkpoints; por eso el `.py` no necesita `checkpointer` y aun así las pausas de HITL se pueden retomar desde la UI."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Saltarte el formulario con variables de entorno",
+   "contenido": "# agent-chat-ui/.env  (sustituye al formulario inicial)\nNEXT_PUBLIC_API_URL=http://localhost:2024\nNEXT_PUBLIC_ASSISTANT_ID=agent",
+   "notas": "Con estas dos variables la UI arranca conectada, sin pedir URL ni id.\nEl prefijo `NEXT_PUBLIC_` hace que Next.js incluya la variable en el código que corre **en el navegador**: cualquiera la puede ver. Aquí no importa porque no son secretos.",
+   "resaltar": [
+    3
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Ir a producción sin exponer la key",
+   "contenido": "En local, la UI habla directo con el servidor desde el navegador. Con un deployment en la nube, eso obligaría a que cada usuario tuviera su propia LangSmith API key.\n\nEl README ofrece dos salidas:\n\n1. **API passthrough** (rápida): la app de Next.js trae un proxy en `/api`. El navegador habla con tu sitio; el proxy reenvía al deployment y agrega la key **en el servidor**.\n2. **Custom auth** en el deployment (avanzada): el servidor del agente autentica a tus usuarios con tokens propios y controla el acceso.\n\nTambién explica cómo ocultar mensajes: la etiqueta `langsmith:nostream` evita el streaming de un modelo, y un `id` que empieza con `do-not-render-` hace que la UI nunca muestre ese mensaje."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Variables del passthrough",
+   "contenido": "# agent-chat-ui en producción con el API passthrough (variables del servidor Next.js)\nNEXT_PUBLIC_ASSISTANT_ID=\"agent\"\n# URL del deployment de tu agente (no se expone al navegador)\nLANGGRAPH_API_URL=\"https://my-agent.example.langgraph.app\"\n# URL de tu sitio + /api: el navegador habla con este proxy\nNEXT_PUBLIC_API_URL=\"https://my-website.example.com/api\"\n# secreto: el proxy lo inyecta en cada request al deployment\nLANGSMITH_API_KEY=\"<tu key, solo en el servidor>\"",
+   "notas": "`LANGGRAPH_API_URL` y `LANGSMITH_API_KEY` **no** llevan `NEXT_PUBLIC_`: solo existen en el servidor de Next.js.\n`NEXT_PUBLIC_API_URL` apunta a tu propio `/api`, no al deployment.\nLas URLs son de ejemplo; adaptado del README de `agent-chat-ui`.",
+   "resaltar": [
+    8,
+    6
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué Assistant ID escribes?",
+   "contenido": "Con el `langgraph.json` del paso 2, abres la UI y te pide **Assistant/Graph ID**. ¿Qué escribes: `3.5_email_agent`, `3.5_email_agent.py:agent` o `agent`? ¿Por qué?",
+   "respuesta": "`agent`: es la **clave** dentro de `graphs`. El valor `./3.5_email_agent.py:agent` solo le dice al servidor dónde encontrar el objeto; la UI (y el SDK) identifican el grafo por su id. Si en `langgraph.json` lo hubieras llamado `\"email\"`, escribirías `email`.",
+   "ref": 2
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Por qué la pausa funciona sin checkpointer?",
+   "contenido": "En 3.C, `Command(resume=...)` falló con `RuntimeError: Cannot use Command(resume=...) without checkpointer`. El archivo `3.5_email_agent.py` (3.E) **no** tiene checkpointer, pero desde la UI puedes aprobar el `send_email` y el agente sigue. ¿Por qué no falla?",
+   "respuesta": "Porque el grafo lo corre el **Agent Server** de `langgraph dev`, que agrega su propia persistencia: guarda cada thread y sus checkpoints. La UI crea un thread, el servidor guarda la pausa y, cuando apruebas, retoma ese thread. El checkpointer sigue siendo necesario; solo que lo pone el servidor. En un script propio tienes que ponerlo tú."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: la variable que no debe ser pública",
+   "contenido": "Vas a publicar Agent Chat UI conectada a tu deployment con el API passthrough. ¿Cuál de estas variables **no** debe llevar el prefijo `NEXT_PUBLIC_`?\n\nA) La URL de tu sitio + `/api` (`API_URL`)\nB) El id del grafo (`ASSISTANT_ID`)\nC) La LangSmith API key (`LANGSMITH_API_KEY`)\nD) Ninguna: todas deben ser públicas para que el navegador pueda conectarse",
+   "respuesta": "**C.** `NEXT_PUBLIC_` incluye el valor en el código del navegador, y la key es un secreto: debe quedarse en el servidor, donde el proxy la inyecta en cada request al deployment.\nA y B no son secretos y el navegador los necesita (llevan `NEXT_PUBLIC_`).\nD: publicar la key dejaría a cualquiera usar tu deployment y tu cuenta."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen y cierre del curso",
+   "contenido": "- Agent Chat UI conecta un chat con cualquier servidor de LangGraph con `messages`: necesita la **URL** del servidor y el **id del grafo** (la clave en `graphs` de `langgraph.json`).\n- `langgraph dev` sirve el grafo en `localhost:2024` y aporta la persistencia; por eso el HITL funciona sin checkpointer en el `.py`.\n- En producción, los secretos no llevan `NEXT_PUBLIC_`: usa el API passthrough o custom auth.\n\nEl curso completo: `create_agent` es un loop ReAct (LangGraph) al que le das tools (propias o MCP), memoria (checkpointer + `thread_id`), context y state, subagentes y middleware.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Agent Chat UI* (`/oss/python/langchain/ui`) y LangSmith → *Local server* (`langgraph dev`, `langgraph.json`)."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-3/agent-chat-ui/README.md",
+  "notebooks/module-3/langgraph.json",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "En Agent Chat UI, ¿qué va en Assistant/Graph ID?",
+   "reverso": "La clave del grafo en `graphs` de langgraph.json (p. ej. \"agent\"), no el nombre del archivo."
+  },
+  {
+   "frente": "¿Por qué un agente servido con `langgraph dev` puede pausar y retomar HITL sin checkpointer en su código?",
+   "reverso": "El Agent Server agrega su propia persistencia (threads y checkpoints)."
+  },
+  {
+   "frente": "¿Qué significa el prefijo `NEXT_PUBLIC_` y por qué la LangSmith key no debe llevarlo?",
+   "reverso": "La variable se incluye en el código del navegador, visible para todos. La key es un secreto: solo en el servidor (proxy)."
+  },
+  {
+   "frente": "¿Qué requisito de state pide Agent Chat UI a un grafo?",
+   "reverso": "Que tenga la clave `messages` (un create_agent la tiene por AgentState)."
+  }
+ ]
+}

@@ -38,7 +38,7 @@ Cada persona tiene **su propia app** (su progreso y sus tarjetas son suyos). Par
    tu app. Define la variable de entorno `MI_TUTOR_TOKEN` con el mismo valor que tu `MCP_TOKEN`.
 3. **Carga el contenido** en tu app:
    `MI_TUTOR_TOKEN=... .venv/Scripts/python tools/tutor_mcp.py importar contenido`
-   (árbol de cursos, Ruta LCAE, planes, misiones con links a LangChain Academy y 76 lecciones).
+   (árbol de cursos, Ruta LCAE, planes, misiones con links a LangChain Academy y 92 lecciones).
 4. **Inscríbete gratis** en los cursos de [LangChain Academy](https://academy.langchain.com) y clona sus repos
    (cada plan y la lección 0.A de cada curso dicen cuál). Para cada curso, pon su carpeta en `carpeta_local` del árbol
    (pídeselo al tutor).
@@ -51,7 +51,7 @@ cualquier rama o curso.
 ### Contenido (`contenido/`)
 
 Copia curada y sin datos personales de los cursos de la ruta hacia la certificación **LangChain Certified Agent
-Engineer** (Deep Agents, Building Reliable Agents, Monitoring Production Agents, LangSmith Deployment y el examen) y de
+Engineer** (Introduction to LangChain, Deep Agents, Building Reliable Agents, Monitoring Production Agents, LangSmith Deployment y el examen) y de
 Introduction to LangGraph. Las lecciones son explicaciones propias en español, con código verificado, basadas en los
 cursos gratuitos de LangChain Academy (código de ejemplo con licencia MIT); cada una enlaza su material oficial.
 

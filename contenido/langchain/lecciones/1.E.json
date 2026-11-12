@@ -1,0 +1,107 @@
+{
+ "mision_id": "1.E",
+ "titulo": "Proyecto Personal Chef: tools + memoria + langgraph dev",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Ya tienes las piezas por separado: un modelo con **system prompt** (1.A), una **tool** de búsqueda web (1.B) y **memoria** por `thread_id` (1.C). El proyecto Personal Chef las junta en un agente útil: le dices qué te sobró en la cocina, busca recetas en la web y, si le pides una, te da las instrucciones recordando lo que hablaron.\n\nAdemás, el proyecto trae un `.py` y un `langgraph.json` para abrir el agente en **Studio** con `langgraph dev`. Ahí aparece una diferencia que confunde: el `.py` **no tiene checkpointer** y aun así recuerda la conversación."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente completo (1.5_personal_chef.py)",
+   "contenido": "from dotenv import load_dotenv\n\nload_dotenv()\n\nfrom langchain.tools import tool\nfrom typing import Dict, Any\nfrom tavily import TavilyClient\n\ntavily_client = TavilyClient()\n\n@tool\ndef web_search(query: str) -> Dict[str, Any]:\n\n    \"\"\"Search the web for information\"\"\"\n\n    return tavily_client.search(query)\n\nsystem_prompt = \"\"\"\n\nYou are a personal chef. The user will give you a list of ingredients they have left over in their house.\n\nUsing the web search tool, search the web for recipes that can be made with the ingredients they have.\n\nReturn recipe suggestions and eventually the recipe instructions to the user, if requested.\n\n\"\"\"\n\nfrom langchain.agents import create_agent\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[web_search],\n    system_prompt=system_prompt\n)",
+   "notas": "Es el archivo oficial tal cual. Las tres piezas: `tools=[web_search]`, `system_prompt` (rol + instrucción de usar la búsqueda) y el modelo.\n`agent` es una variable a nivel de módulo: `langgraph.json` la busca por ese nombre.\nComprobado cargándolo con keys falsas: `CompiledStateGraph`, nodes `['__start__', 'model', 'tools', '__end__']`, `checkpointer: None`.",
+   "resaltar": [
+    9,
+    30,
+    32
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "langgraph.json: cómo lo encuentra el servidor",
+   "contenido": "{\n    \"dependencies\": [\".\"],\n    \"graphs\": {\n        \"agent\": \"./1.5_personal_chef.py:agent\"\n    },\n    \"env\": \"../../.env\"\n  }",
+   "notas": "`graphs`: el nombre `\"agent\"` apunta a `archivo.py:variable`.\n`env`: el `.env` que carga el servidor (dos carpetas arriba: la raíz del repo).\n`dependencies`: `\".\"` instala la carpeta actual como paquete.\nNo es Python, es configuración: no se \"corre\".",
+   "resaltar": [
+    4,
+    6
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Correrlo en Studio",
+   "contenido": "Desde la carpeta `notebooks/module-1` corres `uv run langgraph dev`. El comando lee `langgraph.json`, importa `agent` desde el `.py`, carga el `.env` de la raíz y levanta un **servidor local** con Studio en el navegador. Ahí chateas con el agente y ves cada node (`model`, `tools`) y cada mensaje. Necesita tus keys reales, así que aquí no se corre.\n\nEl servidor **pone su propia persistencia**: cada conversación de Studio es un thread, guardado por la plataforma. Por eso el `.py` no crea checkpointer. En el notebook no hay servidor, y por eso ahí sí se agrega `checkpointer=InMemorySaver()`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La versión del notebook, simulada sin keys",
+   "contenido": "from typing import Dict, Any\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langchain.tools import tool\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"  modelo recibe:\", [type(m).__name__ for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nclass FakeTavily:\n    \"\"\"Hace de TavilyClient: devuelve resultados de ejemplo.\"\"\"\n    def search(self, query):\n        print(f\"  >> web_search({query!r})\")\n        return {\"results\": [{\"title\": \"Chicken fried rice\", \"content\": \"Fry rice, chicken, egg, soy sauce.\"},\n                            {\"title\": \"Chicken and rice soup\", \"content\": \"Simmer chicken, rice, broth, carrots.\"}]}\n\ntavily_client = FakeTavily()\n\n@tool\ndef web_search(query: str) -> Dict[str, Any]:\n    \"\"\"Search the web for information\"\"\"\n    return tavily_client.search(query)\n\nsystem_prompt = \"\"\"\nYou are a personal chef. The user will give you a list of ingredients they have left over in their house.\nUsing the web search tool, search the web for recipes that can be made with the ingredients they have.\nReturn recipe suggestions and eventually the recipe instructions to the user, if requested.\n\"\"\"\n\nmodel = FakeModel(messages=iter([\n    AIMessage(\"\", tool_calls=[{\"name\": \"web_search\", \"args\": {\"query\": \"recipes with chicken and rice\"}, \"id\": \"c1\"}]),\n    AIMessage(\"You could make 1) chicken fried rice or 2) chicken and rice soup.\"),\n    AIMessage(\"Chicken fried rice: fry the rice, add the chicken, an egg and soy sauce.\"),\n]))\n\nagent = create_agent(model=model, tools=[web_search], system_prompt=system_prompt,\n                     checkpointer=InMemorySaver())\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\nprint(\"Turno 1\")\nr = agent.invoke({\"messages\": [HumanMessage(\"I have some leftover chicken and rice. What can I make?\")]}, config)\nprint(r[\"messages\"][-1].content)\n\nprint(\"Turno 2\")\nr = agent.invoke({\"messages\": [HumanMessage(\"Give me the recipe for the first one\")]}, config)\nprint(r[\"messages\"][-1].content)\nprint(\"El hilo guarda\", len(r[\"messages\"]), \"mensajes\")",
+   "notas": "Igual que el notebook (con `InMemorySaver`), pero con `FakeModel` y `FakeTavily` para no gastar tokens ni usar red. Salida real:\nTurno 1: `modelo recibe: ['SystemMessage', 'HumanMessage']` → `>> web_search('recipes with chicken and rice')` → `modelo recibe: [..., 'AIMessage', 'ToolMessage']` → `You could make 1) chicken fried rice or 2) chicken and rice soup.`\nTurno 2: `modelo recibe: ['SystemMessage', 'HumanMessage', 'AIMessage', 'ToolMessage', 'AIMessage', 'HumanMessage']` → la receta · `El hilo guarda 6 mensajes`",
+   "resaltar": [
+    43,
+    52
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "El agente del proyecto",
+   "contenido": "graph LR\n  S([START]) --> M[model + system prompt]\n  M -->|tool_calls| T[tools: web_search]\n  T -->|ToolMessage| M\n  M --> E([END])\n  CP[(checkpointer o persistencia del servidor)] -.->|historial del thread| M\n  class CP clave",
+   "notas": "El grafo es el mismo de la lección de tools. Lo nuevo es de dónde sale el historial: en el notebook, `InMemorySaver`; en `langgraph dev`, la persistencia del servidor.\nEn el turno 2 \"the first one\" solo tiene sentido porque el modelo recibe el turno 1 completo, incluido el `ToolMessage` con las recetas."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: el turno 2 en otro hilo",
+   "contenido": "Misma simulación, pero el turno 2 va con `thread_id` `\"2\"`:\n\n```python\nfrom typing import Dict, Any\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom langchain.tools import tool\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"  modelo recibe:\", [type(m).__name__ for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nclass FakeTavily:\n    \"\"\"Hace de TavilyClient: devuelve resultados de ejemplo.\"\"\"\n    def search(self, query):\n        print(f\"  >> web_search({query!r})\")\n        return {\"results\": [{\"title\": \"Chicken fried rice\", \"content\": \"Fry rice, chicken, egg, soy sauce.\"},\n                            {\"title\": \"Chicken and rice soup\", \"content\": \"Simmer chicken, rice, broth, carrots.\"}]}\n\ntavily_client = FakeTavily()\n\n@tool\ndef web_search(query: str) -> Dict[str, Any]:\n    \"\"\"Search the web for information\"\"\"\n    return tavily_client.search(query)\n\nsystem_prompt = \"\"\"\nYou are a personal chef. The user will give you a list of ingredients they have left over in their house.\nUsing the web search tool, search the web for recipes that can be made with the ingredients they have.\nReturn recipe suggestions and eventually the recipe instructions to the user, if requested.\n\"\"\"\n\nmodel = FakeModel(messages=iter([\n    AIMessage(\"\", tool_calls=[{\"name\": \"web_search\", \"args\": {\"query\": \"recipes with chicken and rice\"}, \"id\": \"c1\"}]),\n    AIMessage(\"You could make 1) chicken fried rice or 2) chicken and rice soup.\"),\n    AIMessage(\"Which recipe do you mean? Tell me your ingredients.\"),\n]))\n\nagent = create_agent(model=model, tools=[web_search], system_prompt=system_prompt,\n                     checkpointer=InMemorySaver())\n\nprint(\"Turno 1\")\nagent.invoke({\"messages\": [HumanMessage(\"I have some leftover chicken and rice. What can I make?\")]},\n             {\"configurable\": {\"thread_id\": \"1\"}})\n\nprint(\"Turno 2\")\nr = agent.invoke({\"messages\": [HumanMessage(\"Give me the recipe for the first one\")]},\n                 {\"configurable\": {\"thread_id\": \"2\"}})\nprint(r[\"messages\"][-1].content)\n```\n\n¿Qué lista imprime `modelo recibe:` en el turno 2? Con un LLM real, ¿podría dar la receta?",
+   "respuesta": "Turno 2: `modelo recibe: ['SystemMessage', 'HumanMessage']`.\nEl hilo `\"2\"` está vacío: el modelo solo ve \"Give me the recipe for the first one\", sin las recetas ni los ingredientes. Un LLM real tendría que preguntar a cuál te refieres (o buscar a ciegas). El historial depende del `thread_id`, no del agente."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: qué significa langgraph.json",
+   "contenido": "En el `langgraph.json` del paso 3, ¿qué indica `\"agent\": \"./1.5_personal_chef.py:agent\"`?\n\nA) Que el servidor ejecute el archivo como script y use lo que imprima.\nB) Que exponga el grafo guardado en la variable `agent` de ese archivo, con el nombre `agent`.\nC) Que cree un agente nuevo llamado `agent` con valores por defecto.\nD) Que use el notebook `1.5_personal_chef.ipynb`.",
+   "respuesta": "**B.** El formato es `ruta/archivo.py:variable`; la clave (`\"agent\"`) es el nombre con que el servidor y Studio lo muestran.\nA: importa el módulo y toma la variable, no lee lo que imprime. C: usa el agente que **tú** definiste. D: el servidor no lee notebooks.",
+   "ref": 3
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: falta la key de Tavily",
+   "contenido": "Corres `uv run langgraph dev` pero tu `.env` no tiene `TAVILY_API_KEY`. Mira el `.py` del paso 2: `tavily_client = TavilyClient()` está a nivel de módulo. ¿Cuándo aparece el error?\n\nA) Cuando el modelo pide `web_search` por primera vez.\nB) Al cargar el archivo: `TavilyClient()` lanza `MissingAPIKeyError` y el grafo no se puede cargar.\nC) Nunca: Tavily funciona sin key en el plan gratis.\nD) Solo cuando cierras Studio.",
+   "respuesta": "**B.** El código a nivel de módulo corre al **importar** el archivo, y `TavilyClient()` sin key falla al crearse. Salida real: `MissingAPIKeyError -> API key is required. Set TAVILY_API_KEY environment variable or pass api_key parameter`.\nA sería cierto si el cliente se creara dentro de la tool. C: el plan gratis también usa key. D no tiene sentido.",
+   "ref": 2
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un agente útil = **modelo + system prompt + tools + memoria**. `create_agent` las junta en un parámetro cada una.\n- `langgraph.json` le dice a `langgraph dev` qué grafo exponer (`archivo.py:variable`) y qué `.env` cargar.\n- Con `langgraph dev` o un Agent Server, la **persistencia la pone la plataforma**: el `.py` no necesita checkpointer. En un notebook sí (`InMemorySaver`).\n- El historial depende del `thread_id`: otro hilo, conversación nueva.\n- El código a nivel de módulo (como `TavilyClient()`) corre al cargar el grafo: si falta una key, falla antes de la primera pregunta.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain (Python) → *Studio* y *Run a local server* (LangSmith → *Application structure* para `langgraph.json`)."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-1/1.5_personal_chef.ipynb",
+  "notebooks/module-1/1.5_personal_chef.py",
+  "notebooks/module-1/langgraph.json",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué el `.py` del Personal Chef no crea checkpointer y aun así recuerda la conversación en Studio?",
+   "reverso": "`langgraph dev` (y un Agent Server) ponen su propia persistencia por thread. El checkpointer solo hace falta cuando corres el agente tú mismo, como en el notebook."
+  },
+  {
+   "frente": "¿Qué dice `\"agent\": \"./1.5_personal_chef.py:agent\"` en `langgraph.json`?",
+   "reverso": "Expón, con el nombre `agent`, el grafo guardado en la variable `agent` de ese archivo. El servidor importa el módulo y toma la variable."
+  },
+  {
+   "frente": "En el Personal Chef, ¿por qué \"dame la receta de la primera\" funciona en el mismo thread y no en uno nuevo?",
+   "reverso": "En el mismo thread el modelo recibe el turno anterior (incluido el `ToolMessage` con las recetas). En un thread nuevo solo ve esa frase."
+  },
+  {
+   "frente": "Falta `TAVILY_API_KEY` y `TavilyClient()` está a nivel de módulo. ¿Cuándo falla?",
+   "reverso": "Al cargar el archivo (`MissingAPIKeyError`), antes de cualquier pregunta: el código a nivel de módulo corre al importar."
+  },
+  {
+   "frente": "¿Qué cuatro piezas junta `create_agent` en el Personal Chef?",
+   "reverso": "Modelo (`gpt-5-nano`), `system_prompt` (rol de chef), `tools=[web_search]` y memoria (checkpointer en el notebook, persistencia del servidor en `langgraph dev`)."
+  }
+ ]
+}

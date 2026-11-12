@@ -1,0 +1,98 @@
+{
+ "mision_id": "3.C",
+ "titulo": "Human in the loop: pausar, decidir y retomar",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hay tools que no quieres que el agente ejecute solo: mandar un correo, borrar un registro, pagar. Quieres que el agente **proponga** la acción y que una persona decida: aprobar, editar los argumentos o rechazar.\n\nEso exige **pausar** el run a la mitad y retomarlo después, quizá minutos u horas más tarde, desde otro proceso. Para retomar, el estado de la pausa tiene que estar guardado en algún lado: ese lugar es el **checkpointer**, el mismo de la memoria de corto plazo (1.C), con su `thread_id`.\n\nEn LangChain esto lo hace un middleware ya hecho: `HumanInTheLoopMiddleware`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente con aprobación (3.3_hitl.ipynb)",
+   "contenido": "from langchain.tools import tool, ToolRuntime\nfrom langchain.agents import create_agent, AgentState\nfrom langchain.agents.middleware import HumanInTheLoopMiddleware\nfrom langchain.messages import HumanMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\n\n@tool\ndef read_email(runtime: ToolRuntime) -> str:\n    \"\"\"Read an email from the given address.\"\"\"\n    # take email from state\n    return runtime.state[\"email\"]\n\n\n@tool\ndef send_email(body: str) -> str:\n    \"\"\"Send an email to the given address with the given subject and body.\"\"\"\n    # fake email sending\n    return f\"Email sent\"\n\n\nclass EmailState(AgentState):\n    email: str\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[read_email, send_email],\n    state_schema=EmailState,\n    checkpointer=InMemorySaver(),\n    middleware=[\n        HumanInTheLoopMiddleware(\n            interrupt_on={\n                \"read_email\": False,\n                \"send_email\": True,\n            },\n            description_prefix=\"Tool execution requires approval\",\n        ),\n    ],\n)\n\nconfig = {\"configurable\": {\"thread_id\": \"1\"}}\n\nresponse = agent.invoke(\n    {\n        \"messages\": [HumanMessage(content=\"Please read my email and send a response immediately.\")],\n        \"email\": \"Hi Sam, I am going to be late for our meeting tomorrow. Can we reschedule? Best, Alex.\",\n    },\n    config=config,\n)\n\nprint(response[\"__interrupt__\"])\nprint(response[\"__interrupt__\"][0].value[\"action_requests\"][0][\"args\"][\"body\"])",
+   "notas": "`interrupt_on` dice qué tools pausan: `True` pide aprobación; `False` se ejecuta sin preguntar.\nEl `checkpointer` es obligatorio para poder retomar.\nLa respuesta trae una clave nueva, `__interrupt__`, con lo que hay que revisar. `send_email` **todavía no se ejecutó**.\nCambié los nombres del correo del notebook por nombres genéricos.",
+   "resaltar": [
+    33,
+    35,
+    30
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué trae la pausa (salida real)",
+   "contenido": "Con un modelo falso que primero pide `read_email` y luego `send_email`:\n\n```\nKEYS: ['messages', 'email', '__interrupt__']\n[Interrupt(value={'action_requests': [{'name': 'send_email',\n     'args': {'body': \"Hi Alex, no problem, let's reschedule. Best, Sam\"},\n     'description': 'Tool execution requires approval\\n\\nTool: send_email\\nArgs: {...}'}],\n   'review_configs': [{'action_name': 'send_email',\n     'allowed_decisions': ['approve', 'edit', 'reject', 'respond']}]})]\nNEXT: ('HumanInTheLoopMiddleware.after_model',)\n```\n\n`read_email` corrió sin pausa. El último mensaje del state es el `AIMessage` con la tool call a `send_email`: el middleware revisa **después del modelo** (`after_model`) y **antes** de las tools. `allowed_decisions` muestra qué decisiones acepta (en langchain 1.3 incluye también `respond`)."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "Pausa y reanudación",
+   "contenido": "sequenceDiagram\n  participant App as Tu código\n  participant A as Agente\n  participant CP as Checkpointer (thread 1)\n  App->>A: invoke(mensaje, thread 1)\n  A->>A: modelo propone send_email\n  A->>CP: guarda el state y la pausa\n  A-->>App: __interrupt__ (action_requests)\n  App->>A: invoke(Command(resume=decisions), thread 1)\n  CP-->>A: recupera el state pausado\n  A->>A: aplica la decisión y sigue el loop",
+   "notas": "Entre las dos llamadas no queda nada \"esperando\" en memoria: la pausa vive en el checkpointer.\nPor eso el `invoke` de reanudación lleva el **mismo `thread_id`**: así encuentra el state pausado."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Reanudar con una decisión",
+   "contenido": "from langgraph.types import Command\n\n# Elige UNA decisión para la acción pendiente:\napprove = {\"type\": \"approve\"}\n\nedit = {\n    \"type\": \"edit\",\n    \"edited_action\": {\n        \"name\": \"send_email\",                 # normalmente la misma tool\n        \"args\": {\"body\": \"Edited body\"},      # los argumentos que se usarán\n    },\n}\n\nreject = {\n    \"type\": \"reject\",\n    \"message\": \"No, please sign off with your name.\",  # el modelo lo recibe como ToolMessage\n}\n\nresponse = agent.invoke(\n    Command(resume={\"decisions\": [approve]}),\n    config=config,  # mismo thread_id: retoma la pausa guardada\n)\n\nprint(response[\"messages\"][-1].content)",
+   "notas": "Para retomar no mandas mensajes: mandas `Command(resume={\"decisions\": [...]})`, con una decisión por cada acción pendiente, en orden.\n`edit` reemplaza nombre y argumentos de la tool call; `reject` no ejecuta la tool y le manda tu `message` al modelo.\n`config=config` lleva el mismo `thread_id: \"1\"`.",
+   "resaltar": [
+    20,
+    21
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué hace cada decisión (salida real)",
+   "contenido": "Probé cada decisión en un thread distinto, con un modelo falso:\n\n- **approve**: `AIMessage` (tool call) → `ToolMessage 'Email sent'` → `AIMessage 'Done, I replied.'`\n- **edit**: el `AIMessage` queda con los argumentos editados, `[('send_email', {'body': 'Edited body'})]`; luego `ToolMessage 'Email sent'` y la respuesta final.\n- **reject**: la tool **no** corre. Aparece un `ToolMessage` con tu texto, `'No, please sign off with your name.'`; el modelo lo lee y, en mi guion, propone otro `send_email`, así que hay **otra pausa** (`__interrupt__` de nuevo).\n\nRechazar no termina el run: le da al modelo la razón para que lo intente distinto."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Sin checkpointer",
+   "contenido": "Creas el mismo agente del paso 2 pero **sin** `checkpointer`:\n\n```python\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[read_email, send_email],\n    state_schema=EmailState,\n    middleware=[HumanInTheLoopMiddleware(interrupt_on={\"read_email\": False, \"send_email\": True})],\n)\n\nresponse = agent.invoke({\n    \"messages\": [HumanMessage(content=\"Please read my email and send a response immediately.\")],\n    \"email\": \"Hi Sam, I am going to be late for our meeting tomorrow. Can we reschedule? Best, Alex.\",\n})\nprint(list(response.keys()))\n\nagent.invoke(Command(resume={\"decisions\": [{\"type\": \"approve\"}]}))\n```\n\n¿Qué imprime el primer `invoke`? ¿Qué pasa en el segundo?",
+   "respuesta": "El primero **sí** se pausa: imprime `['messages', 'email', '__interrupt__']`.\nEl segundo falla: `RuntimeError: Cannot use Command(resume=...) without checkpointer` (salida real).\nPausar es fácil; **retomar** necesita el state guardado de la pausa, y sin checkpointer no hay dónde buscarlo. El correo nunca se manda."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Una decisión no permitida",
+   "contenido": "Configuras la aprobación así, y cuando llega la pausa intentas editar:\n\n```python\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[send_email],\n    checkpointer=InMemorySaver(),\n    middleware=[HumanInTheLoopMiddleware(\n        interrupt_on={\"send_email\": {\"allowed_decisions\": [\"approve\", \"reject\"]}},\n    )],\n)\ncfg = {\"configurable\": {\"thread_id\": \"1\"}}\nr = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"manda un correo que diga hola\"}]}, cfg)\n\nagent.invoke(Command(resume={\"decisions\": [\n    {\"type\": \"edit\", \"edited_action\": {\"name\": \"send_email\", \"args\": {\"body\": \"x\"}}}\n]}), cfg)\n```\n\n¿Qué pasa?",
+   "respuesta": "Falla: `ValueError: Unexpected human decision ... Decision type 'edit' is not allowed for tool 'send_email'. Expected one of ['approve', 'reject']` (salida real).\nEn vez de `True`, `interrupt_on` acepta un dict de configuración; `allowed_decisions` limita lo que el revisor puede hacer, y la pausa lo anuncia en `review_configs`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: aprobar solo lo peligroso",
+   "contenido": "Tu agente tiene dos tools: `search_docs` (solo lectura) y `delete_record`. Quieres que `delete_record` pida aprobación y que el revisor solo pueda aprobar o rechazar, nunca cambiar los argumentos. `search_docs` debe correr sin pausa. ¿Qué configuración es correcta?\n\nA) `HumanInTheLoopMiddleware(interrupt_on={\"delete_record\": True})`, sin checkpointer, porque la pausa vive en la respuesta\nB) `HumanInTheLoopMiddleware(interrupt_on={\"search_docs\": False, \"delete_record\": {\"allowed_decisions\": [\"approve\", \"reject\"]}})`, más un `checkpointer` y un `thread_id` en el config\nC) Un `@wrap_tool_call` que llame a `input()` antes de `delete_record`\nD) Escribir en el `system_prompt` que pida permiso antes de borrar",
+   "respuesta": "**B.** `interrupt_on` por tool con `allowed_decisions` restringe las decisiones; el checkpointer y el `thread_id` permiten retomar con `Command(resume=...)`.\nA: `True` permite también `edit`, y sin checkpointer no se puede retomar.\nC: `input()` bloquea el proceso y no funciona en un servidor ni en una UI; tampoco guarda la pausa.\nD: el prompt no garantiza nada; el modelo puede llamar la tool igual."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `HumanInTheLoopMiddleware(interrupt_on={...})`: `True` pausa, `False` no, o un dict con `allowed_decisions`.\n- Revisa **después del modelo** y **antes** de las tools: la tool no se ejecuta hasta que decides.\n- La respuesta trae `__interrupt__` con `action_requests` (tool y args) y `review_configs`.\n- Retomas con `agent.invoke(Command(resume={\"decisions\": [...]}), config)` y el **mismo `thread_id`**: `approve`, `edit` (cambia args) o `reject` (el modelo recibe tu mensaje).\n- Sin checkpointer se puede pausar, pero **no retomar**: la pausa vive en el checkpointer.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Human-in-the-loop* (`/oss/python/langchain/human-in-the-loop`); y en LangGraph, *Interrupts*."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-3/3.3_hitl.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué HumanInTheLoopMiddleware necesita checkpointer?",
+   "reverso": "Para retomar: la pausa y el state se guardan en el checkpointer del thread. Sin él, Command(resume=...) falla."
+  },
+  {
+   "frente": "Cuando llega `__interrupt__` por `send_email`, ¿ya se mandó el correo?",
+   "reverso": "No. El middleware revisa después del modelo y antes de las tools; la tool corre solo si apruebas o editas."
+  },
+  {
+   "frente": "¿Qué pasa si rechazas (`reject`) una tool call con un mensaje?",
+   "reverso": "La tool no corre; el modelo recibe tu mensaje como ToolMessage y puede proponer otra acción (y otra pausa)."
+  },
+  {
+   "frente": "¿Cómo retomas un agente pausado?",
+   "reverso": "agent.invoke(Command(resume={\"decisions\": [...]}), config) con el mismo thread_id de la pausa."
+  },
+  {
+   "frente": "¿Cómo impides que el revisor edite los argumentos de una tool?",
+   "reverso": "interrupt_on={\"tool\": {\"allowed_decisions\": [\"approve\", \"reject\"]}}. Un edit da ValueError."
+  }
+ ]
+}

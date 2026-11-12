@@ -1,0 +1,122 @@
+{
+ "mision_id": "1.D",
+ "titulo": "Mensajes multimodales: content blocks",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Hasta ahora `HumanMessage(content=\"...\")` llevaba solo texto. Pero muchos modelos aceptan también imágenes, audio o PDFs: puedes preguntar \"¿qué ciudad es esta?\" junto con una foto.\n\nPara eso el `content` deja de ser un string y pasa a ser una **lista de content blocks**, cada uno con su `type`. Y aparece una trampa: que LangChain te deje **armar** un mensaje con audio no significa que el modelo lo **acepte**. Cada modelo soporta ciertos tipos de entrada, y tienes que comprobarlo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El content como lista de bloques",
+   "contenido": "from langchain.messages import HumanMessage\n\nquestion = HumanMessage(content=[\n    {\"type\": \"text\", \"text\": \"What is the capital of The Moon?\"}\n])\n\nprint(type(question.content).__name__, len(question.content))\nprint(question.content_blocks)",
+   "notas": "Un mensaje de solo texto también se puede escribir como lista de bloques. Salida real:\n`list 1`\n`[{'type': 'text', 'text': 'What is the capital of The Moon?'}]`\n`content_blocks` te da siempre la versión estándar en bloques, aunque hayas escrito un string.",
+   "resaltar": [
+    4,
+    8
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Mini repaso de Python: bytes y base64",
+   "contenido": "Una imagen o un audio son **bytes**, no texto. Para meterlos en un mensaje (que viaja como JSON) se codifican en **base64**: una forma de escribir bytes usando solo letras, números, `+`, `/` y `=`.\n\nOjo con los tipos: `base64.b64encode` recibe bytes y devuelve **bytes** (`b'...'`). Para ponerlo en el mensaje necesitas un **str**, por eso el notebook hace `.decode(\"utf-8\")` al final. El paso siguiente lo muestra con 4 bytes."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "bytes → base64 → str",
+   "contenido": "import base64\n\ndatos = bytes([137, 80, 78, 71])          # los 4 primeros bytes de todo PNG\ntexto = base64.b64encode(datos)            # bytes -> bytes en base64\nprint(texto)\nprint(texto.decode(\"utf-8\"))               # bytes -> str (lo que va en el mensaje)\nprint(base64.b64decode(texto))             # y de vuelta",
+   "notas": "Salida real:\n`b'iVBORw=='` (bytes en base64)\n`iVBORw==` (ya es str)\n`b'\\x89PNG'` (decodificado de vuelta)\nTodo PNG empieza con esos bytes, por eso todo PNG en base64 empieza con `iVBOR`.",
+   "resaltar": [
+    4,
+    6
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Un mensaje con imagen",
+   "contenido": "import base64\nfrom langchain.messages import HumanMessage\n\n# El notebook sube la imagen con un widget; aquí la leemos del disco (misma idea)\nwith open(\"resources/moon.png\", \"rb\") as f:\n    img_bytes = f.read()\n\nimg_b64 = base64.b64encode(img_bytes).decode(\"utf-8\")\n\nmultimodal_question = HumanMessage(content=[\n    {\"type\": \"text\", \"text\": \"Tell me about this capital\"},\n    {\"type\": \"image\", \"base64\": img_b64, \"mime_type\": \"image/png\"},\n])\n\nprint(\"bytes:\", len(img_bytes), \"| base64:\", len(img_b64), \"caracteres\")\nprint(\"empieza con:\", img_b64[:12])\nfor block in multimodal_question.content_blocks:\n    print(block[\"type\"], \"|\", block.get(\"mime_type\", \"-\"))",
+   "notas": "Córrelo desde `notebooks/module-1` (ahí está `resources/moon.png`). El notebook sube la imagen con un widget (`FileUpload`) y convierte `memoryview → bytes → base64`; aquí la leemos del disco. Salida real:\n`bytes: 358916 | base64: 478556 caracteres` · `empieza con: iVBORw0KGgoA`\n`text | -` · `image | image/png`\nEl bloque `image` lleva `base64` y `mime_type`. Base64 ocupa ~33 % más que los bytes.",
+   "resaltar": [
+    8,
+    12
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "LangChain traduce el bloque para cada proveedor",
+   "contenido": "import os\nos.environ.setdefault(\"OPENAI_API_KEY\", \"sk-falsa\")   # no se manda nada: solo armamos el payload\n\nfrom langchain_openai import ChatOpenAI\nfrom langchain.messages import HumanMessage\n\nmsg = HumanMessage(content=[\n    {\"type\": \"text\", \"text\": \"Tell me about this capital\"},\n    {\"type\": \"image\", \"base64\": \"iVBORw0KGgo=\", \"mime_type\": \"image/png\"},\n])\n\npayload = ChatOpenAI(model=\"gpt-5-nano\")._get_request_payload([msg])\nprint(payload[\"messages\"][0][\"content\"])",
+   "notas": "`_get_request_payload` (método interno, solo para mirar) muestra lo que se mandaría a OpenAI, sin mandarlo. Salida real:\n`[{'type': 'text', ...}, {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,iVBORw0KGgo='}}]`\nTú escribes el bloque **estándar** (`type: image`); LangChain lo convierte al formato de cada proveedor. Con Claude o Gemini usas el mismo bloque.",
+   "resaltar": [
+    9,
+    12
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Audio en el notebook",
+   "contenido": "La última parte de `1.4_multimodal_messages` graba 5 segundos del micrófono con `sounddevice`, los guarda como WAV en memoria, los pasa a base64 y manda este bloque:\n\n`{\"type\": \"audio\", \"base64\": aud_b64, \"mime_type\": \"audio/wav\"}`\n\nPero cambia el modelo: usa `create_agent(model='gpt-audio')` en vez de `gpt-5-nano`. No es casualidad: `gpt-5-nano` no acepta audio. Necesita micrófono y una key real, así que aquí no se corre; el paso siguiente muestra cómo saber qué acepta cada modelo **antes** de mandar nada."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Qué acepta cada modelo: el profile",
+   "contenido": "import os\n# Keys falsas: solo construimos los objetos, no se llama a ninguna API\nfor var in [\"OPENAI_API_KEY\", \"ANTHROPIC_API_KEY\", \"GOOGLE_API_KEY\"]:\n    os.environ.setdefault(var, \"falsa\")\n\nfrom langchain.chat_models import init_chat_model\n\nfor name in [\"openai:gpt-5-nano\", \"anthropic:claude-sonnet-4-6\",\n             \"google_genai:gemini-2.5-flash\", \"openai:gpt-audio\"]:\n    p = init_chat_model(name).profile\n    if not p:\n        print(f\"{name:30} sin profile: revisa la doc del proveedor\")\n    else:\n        print(f\"{name:30} image={p['image_inputs']} audio={p['audio_inputs']}\")",
+   "notas": "`profile` viene del paquete `langchain-model-profiles`: datos de cada modelo, sin llamar a la API. Salida real:\n`openai:gpt-5-nano  image=True audio=False`\n`anthropic:claude-sonnet-4-6  image=True audio=False`\n`google_genai:gemini-2.5-flash  image=True audio=True`\n`openai:gpt-audio  sin profile: revisa la doc del proveedor`\nNo todos los modelos tienen profile: si es `None`, la fuente es la doc del proveedor.",
+   "resaltar": [
+    10,
+    11
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: audio a un modelo que no lo acepta",
+   "contenido": "Armas un mensaje con un bloque de audio y lo preparas para `gpt-5-nano`:\n\n```python\nimport os\nos.environ.setdefault(\"OPENAI_API_KEY\", \"sk-falsa\")   # no se manda nada: solo armamos el payload\n\nfrom langchain_openai import ChatOpenAI\nfrom langchain.messages import HumanMessage\n\nmsg = HumanMessage(content=[\n    {\"type\": \"text\", \"text\": \"Tell me about this audio file\"},\n    {\"type\": \"audio\", \"base64\": \"UklGRiQAAABXQVZF\", \"mime_type\": \"audio/wav\"},\n])\n\nmodel = ChatOpenAI(model=\"gpt-5-nano\")\nprint(\"audio_inputs:\", model.profile[\"audio_inputs\"])\n\npayload = model._get_request_payload([msg])\nprint(payload[\"messages\"][0][\"content\"][1][\"type\"])\n```\n\n¿Qué imprime? ¿LangChain te frena antes de mandar la petición?",
+   "respuesta": "Imprime `audio_inputs: False` y después `input_audio`.\nLangChain **no te frena**: traduce el bloque al formato de OpenAI aunque el profile diga que no acepta audio. Si hicieras `invoke` de verdad, el rechazo vendría de la API del proveedor, como error de la petición. Revisar el `profile` (o la doc) es trabajo tuyo, antes de elegir el modelo."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: el bloque correcto",
+   "contenido": "Quieres mandarle a un agente una foto PNG que ya tienes en `img_b64` (un str en base64) junto con la pregunta \"¿Qué ciudad es esta?\". ¿Qué `HumanMessage` usa el formato estándar de LangChain?\n\nA) `HumanMessage(content=\"¿Qué ciudad es esta? \" + img_b64)`\nB) `HumanMessage(content=[{\"type\": \"text\", \"text\": \"¿Qué ciudad es esta?\"}, {\"type\": \"image\", \"base64\": img_b64, \"mime_type\": \"image/png\"}])`\nC) `HumanMessage(content={\"image\": img_b64, \"text\": \"¿Qué ciudad es esta?\"})`\nD) `HumanMessage(content=\"¿Qué ciudad es esta?\", image=img_b64)`",
+   "respuesta": "**B.** El content es una **lista** de bloques, cada uno con `type`; el de imagen lleva `base64` y `mime_type`.\nA mete el base64 como texto: el modelo vería letras, no una imagen. C usa un dict suelto, no una lista de bloques. D: `HumanMessage` no tiene un parámetro `image`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: qué cambia en el agente",
+   "contenido": "Tienes un agente de texto hecho con `create_agent(model=\"gpt-5-nano\", system_prompt=...)`. Ahora quieres que también reciba imágenes. ¿Qué tienes que cambiar?\n\nA) Crear el agente con un parámetro `multimodal=True`.\nB) Nada en el agente: solo el `content` del `HumanMessage` pasa a ser una lista con un bloque `image` (el modelo ya acepta imágenes).\nC) Subir la imagen a una URL pública; base64 no se acepta.\nD) Cambiar a un modelo de audio como `gpt-audio`.",
+   "respuesta": "**B.** El agente pasa los mensajes tal cual al modelo; lo multimodal está en el **mensaje**. `gpt-5-nano` tiene `image_inputs: True`.\nA: ese parámetro no existe. C: base64 sí se acepta (y también URLs). D: cambiarías a un modelo de **audio**, que no es lo que necesitas; el modelo se elige por lo que acepta."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Un mensaje multimodal tiene `content` = **lista de content blocks** (`text`, `image`, `audio`, `file`...), cada uno con su `type`.\n- Los datos binarios van en base64 (str, con `.decode(\"utf-8\")`) más su `mime_type`.\n- Escribes el bloque **estándar** y LangChain lo traduce a cada proveedor.\n- **No todo modelo acepta todo**: revisa `model.profile` (`image_inputs`, `audio_inputs`) o la doc. LangChain no te frena; el proveedor rechaza.\n- El agente no cambia: lo multimodal vive en el mensaje y en la elección del modelo.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain (Python) → *Messages* (sección *Multimodal* y *Content blocks*) y *Models* (sección de profiles)."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-1/1.4_multimodal_messages.ipynb",
+  "notebooks/module-1/resources/moon.png",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Cómo mandas texto e imagen en el mismo `HumanMessage`?",
+   "reverso": "`content` como lista de bloques: `{\"type\": \"text\", ...}` y `{\"type\": \"image\", \"base64\": ..., \"mime_type\": \"image/png\"}`."
+  },
+  {
+   "frente": "¿Por qué el notebook hace `base64.b64encode(...).decode(\"utf-8\")` y no solo `b64encode`?",
+   "reverso": "`b64encode` devuelve bytes; el bloque necesita un str. `.decode(\"utf-8\")` convierte esos bytes (que ya son solo caracteres seguros) a str."
+  },
+  {
+   "frente": "Mandas un bloque de audio a `gpt-5-nano`. ¿Quién te avisa que no lo acepta?",
+   "reverso": "LangChain no: arma el payload igual. Lo rechaza la API del proveedor. Antes, revisa `model.profile[\"audio_inputs\"]` o la doc."
+  },
+  {
+   "frente": "¿Por qué el notebook cambia a `gpt-audio` para la parte de audio?",
+   "reverso": "Porque `gpt-5-nano` no acepta audio de entrada (`audio_inputs: False`). El modelo se elige según los tipos de entrada que soporta."
+  },
+  {
+   "frente": "Si cambias de OpenAI a Gemini, ¿tienes que reescribir tus bloques de imagen?",
+   "reverso": "No: escribes el bloque estándar de LangChain y cada integración lo traduce al formato de su proveedor."
+  }
+ ]
+}

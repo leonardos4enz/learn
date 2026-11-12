@@ -1,0 +1,111 @@
+{
+ "mision_id": "3.D",
+ "titulo": "Agentes dinámicos: modelo, prompt y tools por request",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "En `create_agent(model=..., system_prompt=..., tools=...)` fijas valores **por defecto**. Pero a veces la elección correcta depende del momento:\n\n- **Modelo**: uno barato para charlas cortas, uno con más contexto cuando la conversación crece.\n- **Prompt**: responder en el idioma del usuario.\n- **Tools**: un usuario externo no debería poder consultar la base de datos interna.\n\nComo el middleware corre **en cada llamada al modelo** (3.A), puede cambiar esas tres cosas justo antes de cada llamada. Nada queda fijado al crear el agente."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Modelo dinámico (3.4_dynamic_models.ipynb)",
+   "contenido": "from typing import Callable\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResponse\nfrom langchain.chat_models import init_chat_model\nfrom langchain.messages import HumanMessage\n\nlarge_model = init_chat_model(\"claude-sonnet-4-6\")\nstandard_model = init_chat_model(\"gpt-5-nano\")\n\n\n@wrap_model_call\ndef state_based_model(request: ModelRequest,\n                      handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:\n    \"\"\"Select model based on State conversation length.\"\"\"\n    # request.messages is a shortcut for request.state[\"messages\"]\n    message_count = len(request.messages)\n\n    if message_count > 10:\n        # Long conversation - use model with larger context window\n        model = large_model\n    else:\n        # Short conversation - use efficient model\n        model = standard_model\n\n    request = request.override(model=model)\n\n    return handler(request)\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    middleware=[state_based_model],\n    system_prompt=\"You are roleplaying a real life helpful office intern.\",\n)\n\nresponse = agent.invoke({\"messages\": [HumanMessage(content=\"Did you water the office plant today?\")]})\nprint(response[\"messages\"][-1].response_metadata[\"model_name\"])",
+   "notas": "`request.messages` son los mensajes del state (sin el system prompt).\n`request.override(model=model)` devuelve un request nuevo con otro modelo; `handler(request)` hace la llamada con él.\nEl `model=\"gpt-5-nano\"` de `create_agent` es solo el valor por defecto: el middleware lo reemplaza siempre.",
+   "resaltar": [
+    16,
+    25,
+    27
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué modelo respondió (salida real)",
+   "contenido": "Lo corrí con dos modelos falsos llamados `gpt-5-nano` y `claude-sonnet-4-6` (el notebook necesita las keys de OpenAI y Anthropic):\n\n```\n1 msg   -> gpt-5-nano\n11 msgs -> claude-sonnet-4-6\n10 msgs -> gpt-5-nano\n```\n\nLa condición es `> 10`: con exactamente 10 mensajes sigue el modelo estándar. El modelo de `create_agent` no se usó ni una vez.\n\nEl notebook lo comprueba con `response[\"messages\"][-1].response_metadata[\"model_name\"]`, que dice qué modelo escribió el último mensaje."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Prompt dinámico (3.4_dynamic_prompts.ipynb)",
+   "contenido": "from dataclasses import dataclass\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import dynamic_prompt, ModelRequest\nfrom langchain.messages import HumanMessage\n\n\n@dataclass\nclass LanguageContext:\n    user_language: str = \"English\"\n\n\n@dynamic_prompt\ndef user_language_prompt(request: ModelRequest) -> str:\n    \"\"\"Generate system prompt based on user role.\"\"\"\n    user_language = request.runtime.context.user_language\n    base_prompt = \"You are a helpful assistant.\"\n\n    if user_language != \"English\":\n        return f\"{base_prompt} only respond in {user_language}.\"\n    elif user_language == \"English\":\n        return base_prompt\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    context_schema=LanguageContext,\n    middleware=[user_language_prompt],\n)\n\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"Hello, how are you?\")]},\n    context=LanguageContext(user_language=\"Irish\"),\n)\nprint(response[\"messages\"][-1].content)",
+   "notas": "`@dynamic_prompt` es un atajo de middleware: tu función recibe el request y **devuelve el system prompt** como string.\nLee `request.runtime.context`: el idioma llega en el context de cada `invoke` (2.B).",
+   "resaltar": [
+    12,
+    15,
+    32
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué system prompt recibió el modelo (salida real)",
+   "contenido": "Con un modelo falso que guarda los mensajes que recibe:\n\n```\nIrish   -> 'You are a helpful assistant. only respond in Irish.'\nEnglish -> 'You are a helpful assistant.'\ndefault -> 'You are a helpful assistant.'      # LanguageContext() usa \"English\"\n```\n\nSi además pasas `system_prompt=\"FIXED PROMPT\"` a `create_agent`, el modelo recibe solo el prompt dinámico (`'You are a helpful assistant. only respond in Spanish.'`): `@dynamic_prompt` **reemplaza** el system prompt fijo."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Tools dinámicas (3.4_dynamic_tools.ipynb)",
+   "contenido": "from dataclasses import dataclass\nfrom typing import Callable, Dict, Any\nfrom tavily import TavilyClient\nfrom langchain.tools import tool\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import wrap_model_call, ModelRequest, ModelResponse\nfrom langchain.messages import HumanMessage\nfrom langchain_community.utilities import SQLDatabase\n\ntavily_client = TavilyClient()\ndb = SQLDatabase.from_uri(\"sqlite:///resources/Chinook.db\")\n\n\n@tool\ndef web_search(query: str) -> Dict[str, Any]:\n    \"\"\"Search the web for information\"\"\"\n    return tavily_client.search(query)\n\n\n@tool\ndef sql_query(query: str) -> str:\n    \"\"\"Obtain information from the database using SQL queries\"\"\"\n    try:\n        return db.run(query)\n    except Exception as e:\n        return f\"Error: {e}\"\n\n\n@dataclass\nclass UserRole:\n    user_role: str = \"external\"\n\n\n@wrap_model_call\ndef dynamic_tool_call(request: ModelRequest,\n                      handler: Callable[[ModelRequest], ModelResponse]) -> ModelResponse:\n    \"\"\"Dynamically call tools based on the runtime context\"\"\"\n    user_role = request.runtime.context.user_role\n\n    if user_role == \"internal\":\n        pass  # internal users get access to all tools\n    else:\n        tools = [web_search]  # external users only get access to web search\n        request = request.override(tools=tools)\n\n    return handler(request)\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[web_search, sql_query],\n    middleware=[dynamic_tool_call],\n    context_schema=UserRole,\n)\n\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"How many artists are in the database?\")]},\n    context={\"user_role\": \"external\"},\n)\nprint(response[\"messages\"][-1].content)",
+   "notas": "Las dos tools se registran en `create_agent(tools=[...])`; el middleware decide cuáles **ve** el modelo en cada llamada.\n`request.override(tools=[web_search])` deja al usuario externo sin `sql_query`.\n`context={\"user_role\": \"external\"}`: el context también se puede pasar como dict.",
+   "resaltar": [
+    44,
+    51,
+    58
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué tools vio el modelo (salida real)",
+   "contenido": "```\nexternal -> tools: ['web_search']\ninternal -> tools: ['web_search', 'sql_query']\n```\n\nEl usuario externo pregunta por la base de datos, pero el modelo ni siquiera sabe que existe `sql_query`: no puede llamarla.\n\nResumen de las tres palancas, todas desde un middleware:\n\n| Qué cambias | Cómo |\n|---|---|\n| modelo | `handler(request.override(model=...))` |\n| system prompt | `@dynamic_prompt` que devuelve el texto |\n| tools | `handler(request.override(tools=[...]))` |\n\nLa decisión puede salir del **state** (`request.state`, `request.messages`: cambia durante el run) o del **context** (`request.runtime.context`: fijo por run)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Cambia a mitad del run?",
+   "contenido": "Usas el `state_based_model` del paso 2, pero ahora el agente tiene una tool y entra con 9 mensajes:\n\n```python\n@tool\ndef check_soil(plant: str) -> str:\n    \"\"\"Check the soil moisture of a plant\"\"\"\n    return \"dry\"\n\nagent = create_agent(model=\"gpt-5-nano\", tools=[check_soil], middleware=[state_based_model])\n\nhistory = []\nfor i in range(4):\n    history += [HumanMessage(content=f\"q{i}\"), AIMessage(content=f\"a{i}\")]\nhistory.append(HumanMessage(content=\"Should I water the ficus?\"))   # 9 mensajes\n\nresponse = agent.invoke({\"messages\": history})\n```\n\nEn la primera llamada, el modelo pide `check_soil`; en la segunda, responde. ¿Qué modelo escribe cada `AIMessage` nuevo?",
+   "respuesta": "Salida real:\n```\nAIMessage   gpt-5-nano          ''   (pide check_soil)\nToolMessage -                   'dry'\nAIMessage   claude-sonnet-4-6   'Water it today.'\n```\nLa primera llamada ve 9 mensajes (estándar). Después se agregan el `AIMessage` y el `ToolMessage`: 11 mensajes, y la segunda llamada usa el modelo grande. El middleware decide **en cada llamada**, incluso dentro del mismo `invoke`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Una tool que el agente no conoce",
+   "contenido": "Este middleware agrega una tool que **no** se pasó a `create_agent`:\n\n```python\n@tool\ndef secret_tool(q: str) -> str:\n    \"\"\"secret\"\"\"\n    return \"s\"\n\n@wrap_model_call\ndef add_unregistered(request, handler):\n    return handler(request.override(tools=[web_search, secret_tool]))\n\nagent = create_agent(model=\"gpt-5-nano\", tools=[web_search], middleware=[add_unregistered])\nagent.invoke({\"messages\": [HumanMessage(content=\"hi\")]})\n```\n\n¿Qué pasa?",
+   "respuesta": "Falla: `ValueError: Middleware added tools that the agent doesn't know how to execute. Unknown tools: ['secret_tool'] Registered tools: ['web_search']` (salida real).\nEl nodo `tools` solo sabe ejecutar las tools registradas en `create_agent`. Con `override(tools=...)` puedes **filtrar** ese conjunto por request, no inventar tools nuevas. Registra todas y deja que el middleware elija."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: plan gratis y premium",
+   "contenido": "Tienes un SaaS. Los usuarios del plan gratis deben usar un modelo pequeño; los premium, uno grande. El plan llega en el runtime context de cada `invoke`. Quieres un solo agente. ¿Qué haces?\n\nA) Nada: `create_agent(model=...)` fija el modelo al crearlo, así que necesitas dos agentes\nB) Un `@wrap_model_call` que lea `request.runtime.context` y llame a `handler(request.override(model=...))`\nC) Un `@dynamic_prompt` que devuelva el nombre del modelo a usar\nD) Guardar el nombre del modelo en el state para que el modelo lo lea en sus mensajes",
+   "respuesta": "**B.** `wrap_model_call` corre antes de cada llamada y puede cambiar el modelo con `override` según el context.\nA: dos agentes funcionan, pero no hace falta: el modelo de `create_agent` es solo el valor por defecto.\nC: `@dynamic_prompt` solo cambia el texto del system prompt; escribir un nombre de modelo ahí no cambia qué modelo se llama.\nD: el modelo no se elige a sí mismo leyendo mensajes; quien llama al modelo es el agente."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- El middleware corre en **cada** llamada al modelo, así que modelo, prompt y tools pueden cambiar por request, e incluso a mitad de un run.\n- Modelo: `@wrap_model_call` + `request.override(model=...)`. Tools: `request.override(tools=[...])`. Prompt: `@dynamic_prompt` (reemplaza el `system_prompt` fijo).\n- Decide con `request.state` / `request.messages` (cambian en el run) o con `request.runtime.context` (fijo por run, 2.B).\n- `override(tools=...)` solo puede elegir entre tools **registradas** en `create_agent`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Agents* (secciones dynamic model, dynamic system prompt y dynamic tools, `/oss/python/langchain/agents`) y *Middleware → Custom middleware* (`wrap_model_call`, `dynamic_prompt`)."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-3/3.4_dynamic_models.ipynb",
+  "notebooks/module-3/3.4_dynamic_prompts.ipynb",
+  "notebooks/module-3/3.4_dynamic_tools.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿Por qué un agente puede cambiar de modelo a mitad de un mismo `invoke`?",
+   "reverso": "wrap_model_call corre antes de cada llamada al modelo; si su condición depende del state (que crece), la elección cambia entre llamadas."
+  },
+  {
+   "frente": "Pasas `system_prompt=\"FIXED\"` y además un `@dynamic_prompt`. ¿Qué system prompt recibe el modelo?",
+   "reverso": "El que devuelve @dynamic_prompt: reemplaza al fijo."
+  },
+  {
+   "frente": "¿Puede un middleware darle al modelo una tool que no está en `create_agent(tools=...)`?",
+   "reverso": "No: lanza ValueError (unknown tools). override(tools=...) solo filtra las registradas."
+  },
+  {
+   "frente": "¿Cuándo decides con `request.state` y cuándo con `request.runtime.context`?",
+   "reverso": "state: lo que cambia en la conversación (largo, autenticación). context: lo fijo del run (rol, plan, idioma)."
+  },
+  {
+   "frente": "¿Para qué sirve `request.override(...)` en un wrap_model_call?",
+   "reverso": "Crea un request modificado (model, tools, messages…) solo para esa llamada; se pasa a handler()."
+  }
+ ]
+}

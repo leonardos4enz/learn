@@ -1,0 +1,136 @@
+{
+ "mision_id": "1.A",
+ "titulo": "Modelos, agentes y prompting",
+ "modulo": "1",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Quieres hablar con un LLM desde Python, poder cambiar de proveedor sin reescribir todo, darle un rol y recibir respuestas con una forma fija.\n\nHay una idea que confunde a casi todos al principio: **el modelo no recuerda nada entre llamadas**. Cada `invoke` es una petición nueva. Si una respuesta parece \"recordar\", es porque tú (o el agente) le mandaste el historial en esa misma llamada. Esta lección te muestra exactamente qué mensajes recibe el modelo en cada caso."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "init_chat_model: un modelo de cualquier proveedor",
+   "contenido": "import os\nos.environ.setdefault(\"OPENAI_API_KEY\", \"sk-falsa\")     # solo para construir el objeto\nos.environ.setdefault(\"ANTHROPIC_API_KEY\", \"falsa\")\n\nfrom langchain.chat_models import init_chat_model\n\ngpt = init_chat_model(model=\"gpt-5-nano\", use_responses_api=True)\nclaude = init_chat_model(model=\"claude-sonnet-4-6\")\n\nprint(type(gpt).__name__, \"->\", gpt.model_name)\nprint(type(claude).__name__, \"->\", claude.model)\nprint(\"temperature?\", gpt.profile[\"temperature\"])",
+   "notas": "`init_chat_model` deduce el proveedor del nombre y te da el objeto correcto. Salida real:\n`ChatOpenAI -> gpt-5-nano` · `ChatAnthropic -> claude-sonnet-4-6` · `temperature? False`\nNo se llama a ninguna API: crear el objeto no gasta tokens; `invoke` sí.\n`profile` dice qué soporta el modelo: `gpt-5-nano` no acepta cambiar `temperature`.",
+   "resaltar": [
+    7,
+    8
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "invoke devuelve un AIMessage",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.messages import AIMessage\n\n# Modelo falso: devuelve respuestas fijas, en orden, sin llamar a ninguna API\nmodel = GenericFakeChatModel(messages=iter([\n    AIMessage(\"The Moon has no capital; nobody lives there permanently.\"),\n]))\n\nresponse = model.invoke(\"What's the capital of the Moon?\")\n\nprint(type(response).__name__)\nprint(response.content)",
+   "notas": "`GenericFakeChatModel` es un modelo falso de `langchain_core` con la misma interfaz que uno real. Salida real:\n`AIMessage`\n`The Moon has no capital; nobody lives there permanently.`\nCon un modelo real, `response.response_metadata` trae además el modelo usado y los tokens.",
+   "resaltar": [
+    9,
+    12
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Del modelo al agente",
+   "contenido": "`create_agent(model)` envuelve el modelo en un **loop** (por ahora sin tools, así que da una sola vuelta). Cambian dos cosas:\n\n- **Entrada:** un dict `{\"messages\": [...]}`, no un string.\n- **Salida:** otro dict con `messages`: tus mensajes **más** los que generó el agente. El texto final está en `response[\"messages\"][-1].content`.\n\n`model` puede ser un string (`\"gpt-5-nano\"`, `\"claude-sonnet-4-6\"`) o un objeto ya creado con `init_chat_model`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El agente no recuerda entre llamadas",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", [type(m).__name__ for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([\n    AIMessage(\"Luna City is a fictional capital.\"),\n    AIMessage(\"I don't know your name.\"),\n]))\n\nagent = create_agent(model=model)\n\n# Llamada 1\nresponse = agent.invoke({\"messages\": [HumanMessage(\"Hi, I'm Ana. What's the capital of the Moon?\")]})\nprint(\"Llamada 1 devuelve:\", [type(m).__name__ for m in response[\"messages\"]])\nprint(\"Texto final:\", response[\"messages\"][-1].content)\n\n# Llamada 2: una invocación NUEVA, sin el historial\nresponse = agent.invoke({\"messages\": [HumanMessage(\"What's my name?\")]})\nprint(\"Llamada 2 devuelve:\", [type(m).__name__ for m in response[\"messages\"]])\nprint(\"Texto final:\", response[\"messages\"][-1].content)",
+   "notas": "`FakeModel` hace de LLM: devuelve respuestas fijas e imprime lo que recibe, así ves qué le llega al modelo sin gastar tokens. En el notebook va `\"gpt-5-nano\"`; la lógica es la misma.\nSalida real: las dos veces `El modelo recibe: ['HumanMessage']`, y cada llamada devuelve `['HumanMessage', 'AIMessage']`.\nEn la llamada 2 el modelo **nunca vio** el nombre: no hay memoria.",
+   "resaltar": [
+    18,
+    26
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El historial lo mandas tú, y el system prompt va primero",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", [type(m).__name__ for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([AIMessage(\"Luna City has domes and a spaceport.\")]))\n\nagent = create_agent(model=model, system_prompt=\"You are a science fiction writer.\")\n\nresponse = agent.invoke(\n    {\"messages\": [HumanMessage(content=\"What's the capital of the Moon?\"),\n                  AIMessage(content=\"The capital of the Moon is Luna City.\"),\n                  HumanMessage(content=\"Interesting, tell me more about Luna City\")]}\n)\n\nprint(\"Devuelve:\", len(response[\"messages\"]), \"mensajes\")\nprint(response[\"messages\"][-1].content)",
+   "notas": "`FakeModel` hace de LLM: devuelve respuestas fijas e imprime lo que recibe, así ves qué le llega al modelo sin gastar tokens. En el notebook va `\"gpt-5-nano\"`; la lógica es la misma.\nSalida real: `El modelo recibe: ['SystemMessage', 'HumanMessage', 'AIMessage', 'HumanMessage']` · `Devuelve: 4 mensajes`.\nEl `system_prompt` se antepone en **cada** llamada al modelo, pero no se guarda en `messages`.\nEl `AIMessage` del medio lo escribiste tú: el modelo lo toma como si lo hubiera dicho.",
+   "resaltar": [
+    15,
+    19
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Prompting: rol, ejemplos y estructura",
+   "contenido": "El notebook `1.1_prompting` prueba tres técnicas, todas dentro del `system_prompt` (texto):\n\n- **Rol:** \"You are a science fiction writer, create a capital city at the users request.\"\n- **Few-shot:** ejemplos de preguntas y respuestas (\"What is the capital of mars? → Marsialis\") para que imite el estilo.\n- **Estructura en texto:** \"Name: … Location: … Vibe: … Economy: …\".\n\nLas tres **piden**; ninguna **garantiza**. El modelo puede saltarse la estructura y tú recibes un string que tendrías que parsear. Para garantizar campos usas *structured output*."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Structured output con response_format",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\nfrom pydantic import BaseModel\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n\nclass CapitalInfo(BaseModel):\n    name: str\n    location: str\n    vibe: str\n    economy: str\n\n# Un LLM real \"rellena\" CapitalInfo llamando a una tool con ese nombre; aquí lo fingimos\nmodel = FakeModel(messages=iter([\n    AIMessage(content=\"\", tool_calls=[{\n        \"name\": \"CapitalInfo\",\n        \"args\": {\"name\": \"Selenopolis\", \"location\": \"Shackleton crater\",\n                 \"vibe\": \"quiet, icy\", \"economy\": \"helium-3 mining\"},\n        \"id\": \"call_1\",\n    }]),\n]))\n\nagent = create_agent(\n    model=model,\n    system_prompt=\"You are a science fiction writer, create a capital city at the users request.\",\n    response_format=CapitalInfo,\n)\n\nresponse = agent.invoke({\"messages\": [HumanMessage(\"What is the capital of The Moon?\")]})\n\ncapital_info = response[\"structured_response\"]\nprint(type(capital_info).__name__)\nprint(f\"{capital_info.name} is a city located at {capital_info.location}\")\nprint(\"Mensajes:\", [type(m).__name__ for m in response[\"messages\"]])",
+   "notas": "Con `response_format=CapitalInfo` el agente devuelve un objeto Pydantic en `response[\"structured_response\"]`. Salida real:\n`CapitalInfo` · `Selenopolis is a city located at Shackleton crater` · `Mensajes: ['HumanMessage', 'AIMessage', 'ToolMessage']`\nEl modelo falso \"llama\" a una tool con el nombre del schema: así lo hace la estrategia por tools. Con `gpt-5-nano` (su `profile` dice `structured_output: True`), LangChain usa el structured output nativo del proveedor.",
+   "resaltar": [
+    30,
+    35
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Streaming: el texto llega por pedazos",
+   "contenido": "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: devuelve respuestas fijas (y las 'streamea' palabra por palabra).\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n\nmodel = FakeModel(messages=iter([AIMessage(\"Luna City sits under glass domes.\")]))\nagent = create_agent(model=model)\n\nfor token, metadata in agent.stream(\n    {\"messages\": [HumanMessage(content=\"Tell me all about Luna City, the capital of the Moon\")]},\n    stream_mode=\"messages\",\n):\n    if token.content:\n        print(repr(token.content), \"<- node:\", metadata[\"langgraph_node\"])",
+   "notas": "`stream_mode=\"messages\"` entrega **tokens** (pedazos de mensaje) mientras el modelo escribe, con metadata de qué node los produjo. Salida real:\n`'Luna' <- node: model`, `' ' <- node: model`, `'City' <- node: model`, … hasta `'domes.'`\nEl modelo falso parte por espacios; uno real parte por tokens. En el notebook se imprimen con `end=\"\"` para ver el texto corrido.",
+   "resaltar": [
+    15,
+    18
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: ahora sí le paso el historial",
+   "contenido": "Este agente usa el `FakeModel` del paso 5. En la segunda llamada le pasas lo que devolvió la primera más una pregunta nueva:\n\n```python\nfrom langchain_core.language_models.fake_chat_models import GenericFakeChatModel\nfrom langchain.agents import create_agent\nfrom langchain.messages import AIMessage, HumanMessage\n\nclass FakeModel(GenericFakeChatModel):\n    \"\"\"Hace de LLM: imprime los mensajes que recibe y devuelve respuestas fijas.\"\"\"\n    def bind_tools(self, tools, **kwargs):\n        return self\n    def _generate(self, messages, stop=None, run_manager=None, **kwargs):\n        print(\"El modelo recibe:\", [type(m).__name__ for m in messages])\n        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)\n\nmodel = FakeModel(messages=iter([\n    AIMessage(\"Luna City is a fictional capital.\"),\n    AIMessage(\"Your name is Ana.\"),\n]))\n\nagent = create_agent(model=model, system_prompt=\"You are a science fiction writer.\")\n\nresponse = agent.invoke({\"messages\": [HumanMessage(\"Hi, I'm Ana. What's the capital of the Moon?\")]})\n\n# Llamada 2: esta vez le paso lo que devolvió la llamada 1 + la pregunta nueva\nhistorial = response[\"messages\"] + [HumanMessage(\"What's my name?\")]\nresponse = agent.invoke({\"messages\": historial})\n\nprint(\"Devuelve:\", len(response[\"messages\"]), \"mensajes\")\n```\n\n¿Qué lista imprime `El modelo recibe:` en la segunda llamada? ¿Cuántos mensajes devuelve al final?",
+   "respuesta": "Segunda llamada: `['SystemMessage', 'HumanMessage', 'AIMessage', 'HumanMessage']`. Devuelve **4** mensajes (Human, AI, Human, AI).\nAhora el modelo sí \"sabe\" el nombre porque **tú** le mandaste el historial en esa llamada. El `SystemMessage` no se cuenta: se agrega en cada llamada y no se guarda en `messages`.\nGuardar ese historial por ti es justo lo que hará el checkpointer (lección 1.C)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: el texto final del agente",
+   "contenido": "Tienes `agent = create_agent(\"gpt-5-nano\", tools=[calculadora])` y haces `response = agent.invoke({\"messages\": [HumanMessage(\"¿Cuánto es 3**5?\")]})`. El modelo usa la tool una vez. ¿Qué expresión te da siempre la respuesta final en texto?\n\nA) `response.content`\nB) `response[\"messages\"][-1].content`\nC) `response[\"messages\"][1].content`\nD) `response[\"structured_response\"]`",
+   "respuesta": "**B.** El agente devuelve un dict; el último mensaje es la respuesta final del modelo.\nA falla: el dict no tiene `.content` (eso es de un `AIMessage`, lo que devuelve `model.invoke`). C funciona solo si no hubo tools: aquí `[1]` es el `AIMessage` que **pide** la tool, normalmente con texto vacío. D solo existe si pasaste `response_format`."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: cambiar de proveedor",
+   "contenido": "Tu agente usa `create_agent(model=\"gpt-5-nano\", system_prompt=prompt)` y quieres probar Claude. Ya instalaste `langchain-anthropic` y pusiste `ANTHROPIC_API_KEY` en el `.env`. ¿Qué cambio mínimo necesitas?\n\nA) Reescribir los mensajes al formato de la API de Anthropic.\nB) Cambiar el string del modelo, p. ej. `model=\"claude-sonnet-4-6\"`.\nC) Crear un `StateGraph` nuevo para Claude.\nD) Ninguno: el agente elige el proveedor según qué key encuentre.",
+   "respuesta": "**B.** `init_chat_model` (que `create_agent` usa con strings) deduce el proveedor del nombre; los `HumanMessage`/`AIMessage` son los mismos para todos.\nA: LangChain traduce los mensajes por ti. C: el loop no depende del proveedor. D: el proveedor sale del nombre del modelo, no de las keys."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `init_chat_model(\"nombre\")` te da el modelo del proveedor correcto; `model.invoke` devuelve un `AIMessage`.\n- `create_agent` recibe y devuelve `{\"messages\": [...]}`; el texto final está en `[\"messages\"][-1].content`.\n- **El modelo no recuerda:** solo ve lo que le mandas en esa llamada. El `system_prompt` se antepone cada vez y no se guarda.\n- Rol, few-shot y estructura en texto **piden**; `response_format` **garantiza** campos (`structured_response`).\n- `stream_mode=\"messages\"` da tokens mientras se generan.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain (Python) → *Models*, *Messages*, *Agents*, *Structured output* y *Streaming*."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-1/1.1_foundational_models.ipynb",
+  "notebooks/module-1/1.1_prompting.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Llamas dos veces a `agent.invoke` (sin checkpointer); en la segunda preguntas algo que dijiste en la primera. ¿Por qué el modelo no lo sabe?",
+   "reverso": "Cada llamada es independiente: el modelo solo ve los mensajes de esa llamada. Para que \"recuerde\" tienes que mandarle el historial o usar un checkpointer."
+  },
+  {
+   "frente": "¿Por qué el `system_prompt` de `create_agent` no aparece en `response[\"messages\"]`?",
+   "reverso": "El agente lo antepone en cada llamada al modelo, pero no lo guarda en el state. Lo que devuelve son solo los mensajes de la conversación."
+  },
+  {
+   "frente": "¿Por qué `response[\"messages\"][1].content` no es una forma segura de leer la respuesta de un agente?",
+   "reverso": "Solo funciona si no hubo tools. Si el modelo pidió una tool, `[1]` es el `AIMessage` con `tool_calls` (texto vacío). La final siempre es `[-1]`."
+  },
+  {
+   "frente": "¿Cuándo usarías `response_format` en vez de pedir la estructura en el system prompt?",
+   "reverso": "Cuando tu código necesita campos garantizados: `response_format` devuelve un objeto validado en `structured_response`; un prompt solo lo pide y te da texto."
+  },
+  {
+   "frente": "¿Qué decide el proveedor cuando haces `create_agent(model=\"claude-sonnet-4-6\")`?",
+   "reverso": "`init_chat_model` lo deduce del nombre del modelo y crea `ChatAnthropic`. Los mensajes son los mismos para todos los proveedores."
+  },
+  {
+   "frente": "¿Qué te da `agent.stream(..., stream_mode=\"messages\")` que no te da `invoke`?",
+   "reverso": "Los tokens a medida que el modelo los genera (con metadata del node), para mostrarlos en vivo. `invoke` espera al final y devuelve el state completo."
+  }
+ ]
+}

@@ -1,0 +1,357 @@
+{
+ "nombre": "01 Introduction to LangChain",
+ "siguiente": "0.A",
+ "modulos": [
+  {
+   "n": 0,
+   "nombre": "Bienvenida"
+  },
+  {
+   "n": 1,
+   "nombre": "Create Agent"
+  },
+  {
+   "n": 2,
+   "nombre": "Agente avanzado"
+  },
+  {
+   "n": 3,
+   "nombre": "Agente para producción"
+  }
+ ],
+ "misiones": [
+  {
+   "id": "0.A",
+   "modulo": 0,
+   "titulo": "Bienvenida y setup",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Course overview",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234843-course-overview",
+     "min": 3
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Getting set up text",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/texts/71234844-getting-set-up-text"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Getting set up video",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71702418-getting-set-up-video",
+     "min": 4
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 0 resources",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/texts/71234846-module-0-resources"
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.A",
+   "modulo": 1,
+   "titulo": "Modelos y prompting",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 1 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234848-module-1-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 1 resources",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/texts/71234849-module-1-resources"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Lesson 1 foundational models",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234850-lesson-1-foundational-models",
+     "min": 7
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.B",
+   "modulo": 1,
+   "titulo": "Tools y búsqueda web",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 2 tools",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234851-lesson-2-tools",
+     "min": 6
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.C",
+   "modulo": 1,
+   "titulo": "Memoria de corto plazo",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 3 short term memory",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234852-lesson-3-short-term-memory",
+     "min": 3
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.D",
+   "modulo": 1,
+   "titulo": "Mensajes multimodales",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 4 multimodal messages",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234853-lesson-4-multimodal-messages",
+     "min": 3
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "1.E",
+   "modulo": 1,
+   "titulo": "Proyecto: Personal Chef",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 5 personal chef project",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71244421-lesson-5-personal-chef-project",
+     "min": 4
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.A",
+   "modulo": 2,
+   "titulo": "MCP",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 2 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234859-module-2-introduction",
+     "min": 1
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 2 resources",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/texts/71234860-module-2-resources"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Lesson 1 model context protocol mcp",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234861-lesson-1-model-context-protocol-mcp",
+     "min": 6
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.B",
+   "modulo": 2,
+   "titulo": "Runtime context y state",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 2 context and state",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234862-lesson-2-context-and-state",
+     "min": 5
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.C",
+   "modulo": 2,
+   "titulo": "Sistemas multiagente",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 3 multi agent systems",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234863-lesson-3-multi-agent-systems",
+     "min": 3
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "2.D",
+   "modulo": 2,
+   "titulo": "Proyecto: Wedding Planner",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 4 wedding planner project",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234864-lesson-4-wedding-planner-project",
+     "min": 4
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.A",
+   "modulo": 3,
+   "titulo": "Qué es el middleware",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Module 3 introduction",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234868-module-3-introduction",
+     "min": 2
+    },
+    {
+     "tipo": "lectura",
+     "titulo": "Module 3 resources",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/texts/71234869-module-3-resources"
+    },
+    {
+     "tipo": "video",
+     "titulo": "Lesson 1 what is middleware",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234870-lesson-1-what-is-middleware",
+     "min": 2
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.B",
+   "modulo": 3,
+   "titulo": "Conversaciones largas",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 2 managing long conversations",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234871-lesson-2-managing-long-conversations",
+     "min": 5
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.C",
+   "modulo": 3,
+   "titulo": "Human in the loop",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 3 human in the loop",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234872-lesson-3-human-in-the-loop",
+     "min": 6
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.D",
+   "modulo": 3,
+   "titulo": "Agentes dinámicos: modelo, prompt y tools",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 4 dynamic agents",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234873-lesson-4-dynamic-agents",
+     "min": 7
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.E",
+   "modulo": 3,
+   "titulo": "Proyecto: Email Assistant",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 5 email assistant project",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71234874-lesson-5-email-assistant-project",
+     "min": 5
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  },
+  {
+   "id": "3.F",
+   "modulo": 3,
+   "titulo": "Agent Chat UI y cierre",
+   "material": "LangChain Academy",
+   "links": [
+    {
+     "tipo": "video",
+     "titulo": "Lesson 6 agent chat ui bonus",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71245417-lesson-6-agent-chat-ui-bonus",
+     "min": 5
+    },
+    {
+     "tipo": "video",
+     "titulo": "Conclusion",
+     "url": "https://academy.langchain.com/courses/take/foundation-introduction-to-langchain-python/lessons/71242114-conclusion",
+     "min": 1
+    }
+   ],
+   "estado": "pendiente",
+   "fecha": null,
+   "nota": ""
+  }
+ ],
+ "proyecto": null,
+ "hilos": [],
+ "sesiones": [],
+ "hojas": {},
+ "banco": [],
+ "examenes": []
+}

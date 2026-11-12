@@ -1,0 +1,124 @@
+{
+ "mision_id": "0.A",
+ "titulo": "Bienvenida y setup: el Python correcto y tus keys",
+ "modulo": "0",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Antes de construir agentes necesitas tres cosas en su lugar: el **código del curso**, un **Python con las librerías correctas** y tus **API keys**.\n\nCasi todos los errores del primer día no vienen de LangChain, sino de una de estas tres: el notebook corre con otro Python (que no tiene `langchain`), o la key no llegó al entorno. Si sabes **qué Python corre tu código** y **de dónde salen tus keys**, diagnosticas esos errores en un minuto en vez de culpar al código."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Qué trae el repo",
+   "contenido": "El repo `lca-lc-foundations` tiene:\n\n- `notebooks/module-1`, `module-2`, `module-3`: un notebook por lección. Los proyectos (Personal Chef, Wedding Planner, Email Assistant) traen además un `.py` y un `langgraph.json` para abrirlos en Studio.\n- `pyproject.toml` y `uv.lock`: las dependencias exactas y la versión de Python permitida (`>=3.12,<3.14`).\n- `example.env`: la plantilla de tus keys.\n- `env_utils.py`: revisa tu Python, tus paquetes y tus keys.\n\nLa herramienta recomendada es **`uv`**: lee `pyproject.toml`, baja un Python compatible si no lo tienes y crea el `.venv` del proyecto."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El setup completo (terminal)",
+   "contenido": "# 1. Bajar el repo del curso y entrar a su carpeta\ngit clone --depth 1 https://github.com/langchain-ai/lca-lc-foundations.git\ncd lca-lc-foundations\n\n# 2. Crear tu .env a partir de la plantilla (después lo editas con tus keys)\ncp example.env .env\n\n# 3. Crear el .venv con el Python correcto e instalar las dependencias\nuv sync\n\n# 4. Verificar el entorno (Python, paquetes y keys)\nuv run python env_utils.py\n\n# 5. Abrir los notebooks con el Python del .venv\nuv run jupyter lab",
+   "notas": "Esto va en la **terminal**, no en Python. `uv sync` crea `.venv/` dentro del repo con el Python y las versiones del `uv.lock`.\n`uv run <comando>` corre el comando **con el Python del `.venv`**, sin activarlo.\nCon pip: `python -m venv .venv`, actívalo y `pip install -r requirements.txt`.",
+   "resaltar": [
+    6,
+    9,
+    15
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "La plantilla example.env",
+   "contenido": "# Required\nOPENAI_API_KEY='your_openai_api_key_here'\nTAVILY_API_KEY='your_tavily_api_key_here'\n\n# optional, only used in Module 1, Lesson 1 once\nANTHROPIC_API_KEY='your_anthropic_api_key_here'\nGOOGLE_API_KEY='your_google_api_key_here'\n\n# Optional for evaluation and tracing\nLANGSMITH_API_KEY='your_langsmith_api_key_here'\n# uncomment to set tracing to true when you set up your LangSmith account\n# LANGSMITH_TRACING=true\nLANGSMITH_AGENT_ID=lca-lc-foundations\nLANGSMITH_AGENT_ENVIRONMENT=local",
+   "notas": "Obligatorias: `OPENAI_API_KEY` (el modelo por defecto es `gpt-5-nano`) y `TAVILY_API_KEY` (búsqueda web, desde la lección de tools).\nAnthropic y Google solo se usan una vez en la lección de modelos: son opcionales.\nLangSmith es opcional (trazas): `LANGSMITH_TRACING` va comentado hasta que tengas cuenta y key.\nEl `.env` es tuyo: nunca lo subas a git ni lo pegues en un chat.",
+   "resaltar": [
+    2,
+    3,
+    12
+   ]
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "De dónde sale cada cosa",
+   "contenido": "graph LR\n  NB[notebook] --> K[kernel]\n  K --> PY[python del .venv]\n  PY --> SP[librerías instaladas]\n  ENV[archivo .env] --> LD[load_dotenv]\n  LD --> OS[os.environ]\n  OS --> PY\n  class K clave",
+   "notas": "El **kernel** decide qué Python ejecuta tus celdas, y ese Python decide qué librerías hay.\nLas keys no viajan solas: `load_dotenv()` (primera celda de cada notebook) copia el `.env` a `os.environ`, donde las leen `ChatOpenAI` o `TavilyClient`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Comprobar qué Python y qué keys tienes",
+   "contenido": "import os, sys\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\nprint(\"Python:\", sys.version.split()[0])\nprint(\"¿Es el del .venv?\", \".venv\" in sys.executable)\nfor var in [\"OPENAI_API_KEY\", \"TAVILY_API_KEY\", \"LANGSMITH_API_KEY\"]:\n    print(f\"{var:18}\", \"configurada\" if os.getenv(var) else \"<not set>\")",
+   "notas": "Córrelo desde la carpeta del repo con `uv run python check.py` (o pégalo en una celda).\nSalida real con un `.env` de prueba que solo tenía OpenAI y Tavily:\n`Python: 3.12.16` · `¿Es el del .venv? True`\n`OPENAI_API_KEY configurada` · `TAVILY_API_KEY configurada` · `LANGSMITH_API_KEY <not set>`\nNunca imprimas el **valor** de una key: solo si existe.",
+   "resaltar": [
+    4,
+    7,
+    9
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El error típico: otro Python",
+   "contenido": "En tu máquina suele haber varios Python: el del sistema y el del `.venv`. Si el notebook corre con el del sistema (kernel equivocado, o el botón de correr del editor apuntando a otro intérprete), la primera celda falla así (salida real con un Python 3.13 del sistema):\n\n```\nModuleNotFoundError: No module named 'dotenv'\n```\n\nEl código está bien; ese Python no tiene las librerías. Arreglo:\n\n- En Jupyter o VS Code, elige el kernel **`.venv`** del repo.\n- En la terminal, usa `uv run ...` desde la carpeta del repo.\n- `env_utils.py` te dice qué ejecutable usas y si es el del `.venv`."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Si la key ya está en tu sistema",
+   "contenido": "import os\nfrom dotenv import load_dotenv\n\nos.environ[\"OPENAI_API_KEY\"] = \"valor-de-la-shell\"   # como si ya estuviera en tu sistema\n\nload_dotenv()\nprint(\"load_dotenv():              \", os.environ[\"OPENAI_API_KEY\"])\n\nload_dotenv(override=True)\nprint(\"load_dotenv(override=True): \", os.environ[\"OPENAI_API_KEY\"])",
+   "notas": "Simula una key vieja en las variables del sistema y otra en el `.env`. Salida real:\n`load_dotenv():               valor-de-la-shell`\n`load_dotenv(override=True):  valor-del-env`\nPor defecto `load_dotenv()` **no pisa** lo que ya existe. `env_utils.py` avisa de estos conflictos.",
+   "resaltar": [
+    6,
+    9
+   ]
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: uv sync salió bien, pero...",
+   "contenido": "Corriste `uv sync` sin errores en la carpeta del repo. Abres `1.1_foundational_models.ipynb` en tu editor, ejecutas la primera celda (`from dotenv import load_dotenv`) y ves:\n\n```\nModuleNotFoundError: No module named 'dotenv'\n```\n\n¿Qué está pasando y qué revisas primero?",
+   "respuesta": "El notebook corre con **otro Python**: el kernel no es el `.venv`. `uv sync` instaló `python-dotenv` dentro de `.venv/`, no en el Python del sistema.\nRevisa el selector de kernel y elige el `.venv` del repo, o abre Jupyter con `uv run jupyter lab`. Reinstalar paquetes no arregla nada si sigues en el kernel equivocado."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: ¿qué key se usa?",
+   "contenido": "Hace meses definiste `OPENAI_API_KEY` en las variables de entorno de tu sistema con una key que ya revocaste. Ahora pones una key nueva en el `.env` del repo y el notebook hace `load_dotenv()` (sin argumentos). Las llamadas al modelo fallan con error de autenticación. ¿Por qué?\n\nA) `load_dotenv()` solo lee archivos llamados `example.env`.\nB) `load_dotenv()` no sobreescribe variables que ya existen, así que se usa la key vieja del sistema.\nC) `init_chat_model` ignora `os.environ` y lee el `.env` directamente.\nD) Hay que reiniciar la computadora para que el `.env` cuente.",
+   "respuesta": "**B.** Por defecto `load_dotenv()` deja intactas las variables que ya existen (el paso 8 lo muestra). Arreglo: borra la variable vieja del sistema o usa `load_dotenv(override=True)`.\nA: lee `.env`, no la plantilla. C: los clientes leen `os.environ`. D: basta con reiniciar el **kernel** después de cambiar el entorno.",
+   "ref": 8
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Predice: ¿sin LangSmith funciona el curso?",
+   "contenido": "Tienes `OPENAI_API_KEY` y `TAVILY_API_KEY` en tu `.env`, dejaste `LANGSMITH_API_KEY` con el texto de la plantilla y `# LANGSMITH_TRACING=true` sigue comentado. ¿Corren los notebooks del módulo 1? ¿Qué cambia si quitas el `#` sin poner una key real?",
+   "respuesta": "Sí corren: LangSmith es **opcional** y, con `LANGSMITH_TRACING` comentado, no se manda ninguna traza.\nSi activas `LANGSMITH_TRACING=true` con la key de ejemplo, `env_utils.py` te avisa y las trazas no se pueden subir. Actívalo solo con cuenta y key reales, y reinicia el kernel."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- `uv sync` crea el `.venv` con el Python y las versiones exactas; `uv run` corre cosas con ese Python.\n- El **kernel** decide qué Python corre el notebook. `ModuleNotFoundError` casi siempre es kernel equivocado, no código roto.\n- `load_dotenv()` copia el `.env` a `os.environ`, pero **no pisa** variables que ya existen (`override=True` sí).\n- Obligatorias: OpenAI y Tavily. LangSmith es opcional.\n- En el proyecto del módulo, `langgraph dev` lee el `.env` que indique su `langgraph.json`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain (Python) → *Install*; y *Integrations → Chat models* para la key de cada proveedor."
+  }
+ ],
+ "fuentes": [
+  "README.md",
+  "example.env",
+  "pyproject.toml",
+  "env_utils.py",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "Un notebook falla con `ModuleNotFoundError: No module named 'langchain'` aunque `uv sync` salió bien. ¿Qué revisas primero y por qué?",
+   "reverso": "El kernel: corre con otro Python. `uv sync` instaló todo en el `.venv` del repo; elige ese kernel o abre Jupyter con `uv run jupyter lab`."
+  },
+  {
+   "frente": "¿Por qué `load_dotenv()` puede dejarte usando una key vieja?",
+   "reverso": "No sobreescribe variables que ya existen en el entorno. Si la key ya está en tu sistema, gana esa; con `load_dotenv(override=True)` gana el `.env`."
+  },
+  {
+   "frente": "¿Qué hace `uv run python archivo.py` que no hace `python archivo.py`?",
+   "reverso": "Usa el Python del `.venv` del proyecto (con sus librerías), sin activar nada. `python` a secas usa el primero del PATH, que puede ser el del sistema."
+  },
+  {
+   "frente": "¿Qué keys necesitas sí o sí en el módulo 1 del curso, y cuál es opcional?",
+   "reverso": "Obligatorias: `OPENAI_API_KEY` (modelo) y `TAVILY_API_KEY` (búsqueda web). LangSmith es opcional: sin `LANGSMITH_TRACING=true` no se mandan trazas."
+  },
+  {
+   "frente": "¿Cómo compruebas que una key está configurada sin exponerla?",
+   "reverso": "Imprime solo si existe (`'configurada' if os.getenv(var) else '<not set>'`), nunca el valor. Y nunca la pegues en un chat ni la subas a git."
+  }
+ ]
+}

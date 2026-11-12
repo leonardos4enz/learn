@@ -1,0 +1,117 @@
+{
+ "mision_id": "2.D",
+ "titulo": "Proyecto: Wedding Planner",
+ "modulo": "2",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "El proyecto del módulo junta todo lo del módulo 2 en un **planificador de bodas**: un **coordinador** y tres especialistas.\n\n- **Vuelos**: un servidor MCP remoto (Kiwi), como en 2.A.\n- **Venues**: búsqueda web con Tavily.\n- **Playlist**: consultas SQL a la base `Chinook.db`.\n\nHay dos problemas nuevos. Primero, los especialistas necesitan datos del usuario (origen, destino, invitados, género) sin depender de que el coordinador los copie bien en cada mensaje. Segundo, las tools externas fallan o se alargan: hay que poner límites y reintentos. El notebook es para Jupyter (usa `await` suelto)."
+  },
+  {
+   "tipo": "mermaid",
+   "titulo": "La arquitectura",
+   "contenido": "graph TD\n  U[usuario] --> C[coordinator<br/>state: origin, destination,<br/>guest_count, genre]\n  C -->|1. update_state| ST[(WeddingState)]\n  C -->|2. search_flights| T[travel_agent + MCP Kiwi]\n  C -->|2. search_venues| V[venue_agent + web_search]\n  C -->|2. suggest_playlist| P[playlist_agent + SQL]\n  ST -.runtime.state.-> T\n  ST -.runtime.state.-> V\n  ST -.runtime.state.-> P\n  class ST clave",
+   "notas": "El coordinador primero **escribe** los datos en su state (`update_state`) y después delega.\nLas tools de delegación **leen** del state con `runtime.state`; el modelo no les pasa argumentos.\nCada especialista es un `create_agent` envuelto en una tool, como en 2.C."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Las tools: MCP con reintentos, búsqueda con límite y SQL",
+   "contenido": "import asyncio\nfrom typing import Dict, Any\n\nfrom langchain_mcp_adapters.client import MultiServerMCPClient\nfrom mcp.shared.exceptions import McpError\nfrom mcp.types import CallToolResult, TextContent\nfrom tavily import TavilyClient\nfrom langchain.tools import tool\nfrom langchain_community.utilities import SQLDatabase\n\nRETRYABLE_MCP_CODES = {-32603}\n\n\nclass RetryMCPInterceptor:\n    \"\"\"Intercept MCP tool calls: retry transient failures, surface all errors gracefully.\"\"\"\n\n    def __init__(self, max_retries: int = 3):\n        self.max_retries = max_retries\n\n    async def __call__(self, request, handler):\n        last_error = None\n        for attempt in range(self.max_retries):\n            try:\n                return await handler(request)\n            except McpError as exc:\n                last_error = exc\n                print(f\"[MCP interceptor] {type(exc).__name__} on {request.name} \"\n                      f\"(code {exc.error.code}, attempt {attempt+1}/{self.max_retries}): {exc}\")\n                if exc.error.code not in RETRYABLE_MCP_CODES:\n                    return CallToolResult(\n                        content=[TextContent(type=\"text\", text=f\"Tool call failed (non-retryable): {exc}\")],\n                        isError=False,\n                    )\n            except Exception as exc:\n                last_error = exc\n                print(f\"[MCP interceptor] {type(exc).__name__} on {request.name} \"\n                      f\"(attempt {attempt+1}/{self.max_retries}): {exc}\")\n\n            if attempt < self.max_retries - 1:\n                await asyncio.sleep(2 ** attempt)\n\n        print(f\"[MCP interceptor] all {self.max_retries} retries exhausted for {request.name}\")\n        return CallToolResult(\n            content=[TextContent(type=\"text\", text=f\"Tool call failed after {self.max_retries} attempts: {last_error}\")],\n            isError=False,\n        )\n\n\n# 1) vuelos: servidor MCP remoto, con el interceptor\nclient = MultiServerMCPClient(\n    {\"travel_server\": {\"transport\": \"streamable_http\", \"url\": \"https://mcp.kiwi.com\"}},\n    tool_interceptors=[RetryMCPInterceptor()],\n)\ntools = await client.get_tools()\n\n# 2) venues: búsqueda web con un límite de búsquedas\ntavily_client = TavilyClient()\n\n\n@tool\ndef web_search(query: str, search_number: int, max_search_number: int) -> Dict[str, Any]:\n    \"\"\"Search the web for information. You must track your search count by providing\n    search_number (starting at 1) and max_search_number on every call.\n    Queries must use only plain text characters. Do not use accented or special characters\n      (e.g., use 'capacite' instead of 'capacité').\n    \"\"\"\n    if search_number > max_search_number:\n        return {\"message\": \"Search limit reached. Please summarize your findings and provide your final answer.\"}\n    try:\n        return tavily_client.search(query)\n    except Exception as e:\n        return {\"error\": str(e)}\n\n\n# 3) playlist: base de datos SQLite local\ndb = SQLDatabase.from_uri(\"sqlite:///resources/Chinook.db\")\n\n\n@tool\ndef query_playlist_db(query: str) -> str:\n    \"\"\"Query the database for playlist information\"\"\"\n    try:\n        return db.run(query)\n    except Exception as e:\n        return f\"Error querying database: {e}\"",
+   "notas": "`RetryMCPInterceptor` se registra con `tool_interceptors=[...]`: envuelve **cada** llamada a una tool MCP. `handler(request)` hace la llamada real.\nSi falla, en vez de lanzar la excepción devuelve un `CallToolResult` con el error en texto: así el modelo lo lee y puede reintentar con otros argumentos.\n`web_search` lleva la cuenta en sus argumentos: el modelo pasa `search_number` y, pasado el máximo, la tool le pide que resuma.",
+   "resaltar": [
+    52,
+    67,
+    85
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "El interceptor en acción (salida real)",
+   "contenido": "Probé el interceptor con un `handler` falso que falla dos veces con el código `-32603` (reintentable) y luego responde, y con otro que falla con `-32602` (argumentos inválidos):\n\n```\n[MCP interceptor] McpError on search-flight (code -32603, attempt 1/3): Internal error\n[MCP interceptor] McpError on search-flight (code -32603, attempt 2/3): Internal error\nRESULT: 3 flights found | calls: 3\n[MCP interceptor] McpError on search-flight (code -32602, attempt 1/3): Invalid params\nRESULT: Tool call failed (non-retryable): Invalid params\n```\n\nPython: `__call__` hace que la instancia se pueda llamar como función (`interceptor(request, handler)`). `2 ** attempt` da esperas de 1 s y 2 s entre intentos.\n\nTambién verifiqué la base: `Chinook.db` tiene 11 tablas (`Album`, `Artist`, `Genre`, `Track`…) y 130 tracks de Jazz."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El state y los especialistas",
+   "contenido": "from langchain.agents import AgentState, create_agent\n\n\nclass WeddingState(AgentState):\n    origin: str\n    destination: str\n    guest_count: str\n    genre: str\n\n\ntravel_agent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=tools,\n    system_prompt=\"\"\"\n    You are a travel agent. Search for flights to the desired destination wedding location.\n    You are not allowed to ask any more follow up questions, you must find the best flight options based on the following criteria:\n    - Price (lowest, economy class)\n    - Duration (shortest)\n    - Date (time of year which you believe is best for a wedding at this location)\n    To make things easy, only look for one ticket, one way.\n    You may need to make multiple searches to iteratively find the best options.\n    You will be given no extra information, only the origin and destination. It is your job to think critically about the best options.\n    If the MCP tool fails, returns malformed output, or does not give you usable flight results, try the tool again.\n    Once you have found the best options, let the user know your shortlist of options.\n    \"\"\",\n)\n\nvenue_agent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[web_search],\n    system_prompt=\"\"\"\n    You are a venue specialist. Search for venues in the desired location, and with the desired capacity.\n    You are not allowed to ask any more follow up questions, you must find the best venue options based on the following criteria:\n    - Price (lowest)\n    - Capacity (exact match)\n    - Reviews (highest)\n    You may need to make multiple searches to iteratively find the best options.\n    You have a suggested limit of 12 web searches. Count every web_search call you make.\n    After 12 searches, you should stop searching and summarize the best options you have\n    found so far.\n    \"\"\",\n)\n\nplaylist_agent = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[query_playlist_db],\n    system_prompt=\"\"\"\n    You are a playlist specialist. Query the sql database and curate the perfect playlist for a wedding given a genre.\n    Once you have your playlist, calculate the total duration and cost of the playlist, each song has an associated price.\n    If you run into errors when querying the database, try to fix them by making changes to the query.\n    Do not come back empty handed, keep trying to query the db until you find a list of songs.\n\n    This is a SQLite database. Before writing any data queries, first discover the schema.\n    \"\"\",\n)",
+   "notas": "`WeddingState` agrega cuatro claves al state del coordinador (todas `str`).\nCada especialista tiene **sus** tools y un prompt que fija criterios y prohíbe preguntas de seguimiento: nadie va a contestarle, porque quien lo llama es una tool.\n`tools` es la lista que devolvió el cliente MCP del paso 3.",
+   "resaltar": [
+    4,
+    30,
+    46
+   ]
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "El coordinador",
+   "contenido": "from langchain.tools import tool, ToolRuntime\nfrom langchain.messages import HumanMessage, ToolMessage\nfrom langchain.agents import create_agent\nfrom langgraph.types import Command\n\n\n@tool\nasync def search_flights(runtime: ToolRuntime) -> str:\n    \"\"\"Travel agent searches for flights to the desired destination wedding location.\"\"\"\n    origin = runtime.state[\"origin\"]\n    destination = runtime.state[\"destination\"]\n    response = await travel_agent.ainvoke({\"messages\": [HumanMessage(content=f\"Find flights from {origin} to {destination}\")]})\n    return response[\"messages\"][-1].content\n\n\n@tool\ndef search_venues(runtime: ToolRuntime) -> str:\n    \"\"\"Venue agent chooses the best venue for the given location and capacity.\"\"\"\n    destination = runtime.state[\"destination\"]\n    capacity = runtime.state[\"guest_count\"]\n    query = f\"Find wedding venues in {destination} for {capacity} guests\"\n    response = venue_agent.invoke({\"messages\": [HumanMessage(content=query)]})\n    return response[\"messages\"][-1].content\n\n\n@tool\ndef suggest_playlist(runtime: ToolRuntime) -> str:\n    \"\"\"Playlist agent curates the perfect playlist for the given genre.\"\"\"\n    genre = runtime.state[\"genre\"]\n    query = f\"Find {genre} tracks for wedding playlist\"\n    response = playlist_agent.invoke({\"messages\": [HumanMessage(content=query)]})\n    return response[\"messages\"][-1].content\n\n\n@tool\ndef update_state(origin: str, destination: str, guest_count: str, genre: str, runtime: ToolRuntime) -> str:\n    \"\"\"Update the state when you know all of the values: origin, destination, guest_count, genre.\n    This tool must be called alone, without any other tool calls. It must complete and return to make,\n    the information available to other tools.\"\"\"\n    return Command(update={\n        \"origin\": origin,\n        \"destination\": destination,\n        \"guest_count\": guest_count,\n        \"genre\": genre,\n        \"messages\": [ToolMessage(\"Successfully updated state\", tool_call_id=runtime.tool_call_id)]\n    })\n\n\ncoordinator = create_agent(\n    model=\"gpt-5-nano\",\n    tools=[search_flights, search_venues, suggest_playlist, update_state],\n    state_schema=WeddingState,\n    system_prompt=\"\"\"\n    You are a wedding coordinator.\n    First find all the information you need to update the state. When you have the information, update the state.\n    Once that has completed and returned, you can delegate the tasks\n    to your specialists for flights, venues, and playlists.\n    Once you have received their answers, coordinate the perfect wedding for me.\n    \"\"\",\n)\n\nresponse = await coordinator.ainvoke(\n    {\"messages\": [HumanMessage(content=\"I'm from London and I'd like a wedding in Paris for 100 guests, jazz-genre\")]},\n    config={\"tags\": [\"WP\"], \"recursion_limit\": 40},\n)\nprint(response[\"messages\"][-1].content)",
+   "notas": "`update_state` devuelve `Command(update=...)` (como en 2.B) y escribe las cuatro claves.\n`search_flights`, `search_venues` y `suggest_playlist` no tienen argumentos para el modelo: leen `runtime.state`. `search_flights` es `async` porque las tools MCP solo son asíncronas.\n`config={\"recursion_limit\": 40}` fija el máximo de pasos del run: si se pasa, lanza `GraphRecursionError`. Cuando se grabó el curso el valor por defecto era 25; en langgraph 1.2.10 (la versión instalada) es 10007. `tags` marca la traza en LangSmith.",
+   "resaltar": [
+    36,
+    11,
+    64
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que pasó (salida real)",
+   "contenido": "Lo corrí con modelos falsos en vez de `gpt-5-nano` y especialistas falsos (sin red):\n\n```\nSTATE: {'origin': 'London', 'destination': 'Paris', 'guest_count': '100', 'genre': 'jazz'}\n   HumanMessage \"I'm from London and I'd like a wedding in Paris for 100 gue...\"\n   AIMessage    ''  ['update_state']\n   ToolMessage  'Successfully updated state'\n   AIMessage    ''  ['search_flights', 'search_venues', 'suggest_playlist']\n   ToolMessage  'Flight LHR->CDG, 1h15, 89 GBP'\n   ToolMessage  'Venue X, 100 guests'\n   ToolMessage  'Jazz playlist: 20 tracks'\n   AIMessage    'Here is your wedding plan...'\n```\n\nEl notebook oficial (con el modelo real) guarda el mismo state: `destination 'Paris'`, `genre 'jazz'`, `guest_count '100'`, y el primer `AIMessage` llama solo a `update_state`."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Por qué update_state va sola",
+   "contenido": "Cuando un `AIMessage` trae varias tool calls, el agente las ejecuta **en el mismo paso**, en paralelo. Todas leen el state **como estaba al empezar ese paso**; los `Command(update=...)` se aplican **al terminar** el paso.\n\nEs la regla del super-step de LangGraph: nodos que corren en paralelo no ven las escrituras de los otros hasta el paso siguiente.\n\nPor eso el docstring de `update_state` y el prompt del coordinador insisten: primero `update_state` **sola**; cuando vuelve, en otro paso, las tres delegaciones (que sí pueden ir juntas, porque solo leen)."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Todo en el mismo paso",
+   "contenido": "Con el coordinador del paso 6, el modelo se salta la instrucción y su **primer** `AIMessage` trae dos tool calls a la vez:\n\n```python\nAIMessage(content=\"\", tool_calls=[\n    {\"name\": \"update_state\", \"args\": {\"origin\": \"London\", \"destination\": \"Paris\",\n                                      \"guest_count\": \"100\", \"genre\": \"jazz\"}, \"id\": \"u1\", \"type\": \"tool_call\"},\n    {\"name\": \"search_venues\", \"args\": {}, \"id\": \"v1\", \"type\": \"tool_call\"},\n])\n```\n\n¿Qué pasa al ejecutar `search_venues`?",
+   "respuesta": "Falla con `KeyError: 'destination'` (salida real) y el run se corta.\nLas dos tools corren en el mismo paso y leen el state de **antes**: el `Command` de `update_state` todavía no se aplicó, así que `runtime.state[\"destination\"]` no existe. Por eso `update_state` debe ir sola y las delegaciones en el paso siguiente.",
+   "ref": 6
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Qué argumentos pide search_venues?",
+   "contenido": "En el coordinador del paso 6, `search_venues` se define como `def search_venues(runtime: ToolRuntime) -> str`.\n\n¿Qué argumentos ve el modelo del coordinador para esta tool? ¿Por qué es mejor así que `search_venues(destination: str, capacity: str)`?",
+   "respuesta": "Ninguno: sus args son `{}`, porque `runtime` lo inyecta LangChain y no se muestra al modelo (lo viste en 2.B).\nLeer de `runtime.state` hace del state la **única fuente** de esos datos: el modelo los escribe una vez con `update_state` y las tres delegaciones los leen igual. Con argumentos, el modelo tendría que copiarlos en cada llamada y podría escribir mal un dato o mezclarlos.",
+   "ref": 6
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: un run que no termina",
+   "contenido": "Un run del coordinador, invocado con `config={\"recursion_limit\": 40}`, termina con este error:\n\n`GraphRecursionError: Recursion limit of 40 reached without hitting a stop condition.`\n\nEn la traza ves que el agente de venues sigue buscando sin parar y el coordinador nunca llega a su respuesta final. ¿Qué cambio ataca la causa?\n\nA) Quitar `recursion_limit` del config para que el run nunca se corte\nB) Agregar un `checkpointer` al coordinador\nC) Limitar el bucle en la tool (como el contador `search_number`/`max_search_number` de `web_search`) y, si el trabajo de verdad necesita más pasos, subir `recursion_limit` en el config\nD) Cambiar `state_schema=WeddingState` por `AgentState`",
+   "respuesta": "**C.** `recursion_limit` (clave del `config` del run) es un tope de pasos: protege de bucles, no los arregla. La causa es una tool que el modelo llama sin fin, y se corta dándole una señal de parada (el contador de `web_search` devuelve \"Search limit reached...\").\nA: quitarlo deja el bucle correr hasta el límite por defecto (10007 en la versión instalada): más costo, mismo problema.\nB: el checkpointer guarda el state; no cambia cuántos pasos se dan.\nD: el schema no tiene que ver con el número de pasos."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Patrón **coordinador + especialistas**: cada especialista es un `create_agent` envuelto en una tool (2.C).\n- Los datos compartidos viven en el **state** del coordinador: una tool los escribe con `Command(update=...)` y las otras los leen con `runtime.state` (2.B).\n- Las tool calls de un mismo paso leen el state de antes; los updates se aplican al final del paso. La tool que escribe va **sola**.\n- Robustez: un `tool_interceptor` reintenta las tools MCP y devuelve los errores como texto; los límites se ponen en las tools y en `recursion_limit`.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Multi-agent* (subagentes), *Model Context Protocol (MCP)* (sección de interceptors) y *Tools* (ToolRuntime, Command)."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-2/2.4_wedding_planners.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "El modelo llama a `update_state` y a `search_venues` en el mismo AIMessage. ¿Por qué `search_venues` no ve los datos nuevos?",
+   "reverso": "Las tools de un mismo paso leen el state de antes; los Command(update) se aplican al terminar el paso (super-step)."
+  },
+  {
+   "frente": "¿Por qué las tools de delegación del Wedding Planner leen `runtime.state` en vez de recibir argumentos?",
+   "reverso": "El state es la única fuente: el modelo escribe los datos una vez y no tiene que copiarlos (ni equivocarse) en cada llamada."
+  },
+  {
+   "frente": "¿Para qué sirve un `tool_interceptor` en `MultiServerMCPClient`?",
+   "reverso": "Envuelve cada llamada MCP: puede reintentar fallos pasajeros y devolver el error como texto para que el modelo lo corrija."
+  },
+  {
+   "frente": "¿Por qué conviene devolver el error de una tool como texto en vez de lanzar la excepción?",
+   "reverso": "El modelo lo lee y puede reintentar con otros argumentos; una excepción corta el run."
+  },
+  {
+   "frente": "¿Qué hace `config={\"recursion_limit\": 40}` y qué no arregla?",
+   "reverso": "Es un tope de pasos del run: al pasarlo lanza GraphRecursionError. No arregla un bucle; eso se corta en la tool (p. ej. un contador de búsquedas)."
+  }
+ ]
+}

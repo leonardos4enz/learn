@@ -1,0 +1,114 @@
+{
+ "mision_id": "3.B",
+ "titulo": "Conversaciones largas: resumir, borrar u ocultar",
+ "modulo": "3",
+ "pasos": [
+  {
+   "tipo": "markdown",
+   "titulo": "El problema",
+   "contenido": "Lo viste en LangGraph (2.D, \"que el historial no explote\"): con `add_messages` el historial solo crece, y cada turno le mandas al modelo todo lo anterior. Más tokens, más costo y, tarde o temprano, te pasas de la ventana de contexto.\n\nEn `create_agent` no escribes nodos: lo resuelves con middleware. Las dos preguntas siguen siendo las mismas, y es fácil confundirlas:\n\n1. ¿Se **borra** algo del **state** (y del checkpointer)?\n2. ¿Qué parte **ve el modelo** en esta llamada?"
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Resumir: SummarizationMiddleware (3.2_managing_messages.ipynb)",
+   "contenido": "from pprint import pprint\nfrom langchain.agents import create_agent\nfrom langchain.agents.middleware import SummarizationMiddleware\nfrom langchain.messages import HumanMessage, AIMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    checkpointer=InMemorySaver(),\n    middleware=[\n        SummarizationMiddleware(\n            model=\"gpt-4o-mini\",\n            trigger=(\"tokens\", 100),\n            keep=(\"messages\", 1),\n        )\n    ],\n)\n\nresponse = agent.invoke(\n    {\"messages\": [\n        HumanMessage(content=\"What is the capital of the moon?\"),\n        AIMessage(content=\"The capital of the moon is Lunapolis.\"),\n        HumanMessage(content=\"What is the weather in Lunapolis?\"),\n        AIMessage(content=\"Skies are clear, with a high of 120C and a low of -100C.\"),\n        HumanMessage(content=\"How many cheese miners live in Lunapolis?\"),\n        AIMessage(content=\"There are 100,000 cheese miners living in Lunapolis.\"),\n        HumanMessage(content=\"Do you think the cheese miners' union will strike?\"),\n        AIMessage(content=\"Yes, because they are unhappy with the new president.\"),\n        HumanMessage(content=\"If you were Lunapolis' new president how would you respond to the cheese miners' union?\"),\n    ]},\n    {\"configurable\": {\"thread_id\": \"1\"}},\n)\n\npprint(response)\nprint(response[\"messages\"][0].content)",
+   "notas": "`model=\"gpt-4o-mini\"` es el modelo que **escribe el resumen**; puede ser más barato que el del agente.\n`trigger=(\"tokens\", 100)`: resume cuando el historial pasa de ~100 tokens (valor bajo, solo para la demo).\n`keep=(\"messages\", 1)`: conserva intacto el último mensaje; todo lo anterior se reemplaza por el resumen.",
+   "resaltar": [
+    11,
+    13,
+    14
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que pasó (salida real)",
+   "contenido": "Lo corrí con modelos falsos (el resumidor devuelve un texto fijo). Los 9 mensajes suman unos 156 tokens según `count_tokens_approximately`, así que se dispara el trigger:\n\n```\nN state msgs: 3\n   HumanMessage 'Here is a summary of the conversation to date:\\n\\nSUMMARY: user asked about Lunapolis...'\n   HumanMessage \"If you were Lunapolis' new president how would you respond to the cheese miners' union?\"\n   AIMessage    'As president I would meet the union.'\nMAIN MODEL SAW: [('human', 'Here is a summary of the conversation to date...'), ('human', \"If you were Lunapolis'...\")]\n```\n\nEl resumen quedó **en el state** como un `HumanMessage`, y los 8 mensajes viejos ya no están: por eso el notebook imprime `response[\"messages\"][0].content` para ver el resumen."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "trigger y keep",
+   "contenido": "`trigger` dice **cuándo** resumir y `keep` **cuánto conservar** sin resumir. Ambos aceptan tuplas:\n\n- `(\"tokens\", n)`: por número de tokens del historial.\n- `(\"messages\", n)`: por número de mensajes.\n- `(\"fraction\", f)`: por fracción de la ventana de contexto del modelo (p. ej. `0.8`).\n\n`trigger` también acepta una lista de condiciones. Si no pasas `keep`, conserva los últimos 20 mensajes (`(\"messages\", 20)` en langchain 1.3).\n\nEl resumen cuesta una llamada extra al modelo resumidor, pero solo cuando se cumple el trigger, no en cada turno."
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "Borrar del state: @before_agent + RemoveMessage",
+   "contenido": "from typing import Any\nfrom langchain.agents import create_agent, AgentState\nfrom langchain.agents.middleware import before_agent\nfrom langchain.messages import HumanMessage, AIMessage, ToolMessage, RemoveMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\nfrom langgraph.runtime import Runtime\n\n\n@before_agent\ndef trim_messages(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:\n    \"\"\"Remove all the tool messages from the state\"\"\"\n    messages = state[\"messages\"]\n\n    tool_messages = [m for m in messages if isinstance(m, ToolMessage)]\n\n    return {\"messages\": [RemoveMessage(id=m.id) for m in tool_messages]}\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    checkpointer=InMemorySaver(),\n    middleware=[trim_messages],\n)\n\nresponse = agent.invoke(\n    {\"messages\": [\n        HumanMessage(content=\"My device won't turn on. What should I do?\"),\n        ToolMessage(content=\"blorp-x7 initiating diagnostic ping…\", tool_call_id=\"1\"),\n        AIMessage(content=\"Is the device plugged in and turned on?\"),\n        HumanMessage(content=\"Yes, it's plugged in and turned on.\"),\n        ToolMessage(content=\"temp=42C voltage=2.9v … greeble complete.\", tool_call_id=\"2\"),\n        AIMessage(content=\"Is the device showing any lights or indicators?\"),\n        HumanMessage(content=\"What's the temperature of the device?\"),\n    ]},\n    {\"configurable\": {\"thread_id\": \"2\"}},\n)\n\nprint(response[\"messages\"][-1].content)",
+   "notas": "`@before_agent` corre una vez al inicio de cada `invoke`.\nDevuelve una lista de `RemoveMessage(id=...)`: el reducer `add_messages` los interpreta como \"borra el mensaje con este id\". Es la misma técnica de LangGraph 2.B y 2.D, ahora dentro de un middleware.\nLos `ToolMessage` sueltos del ejemplo (sin un `AIMessage` con tool calls antes) son solo para la demo.",
+   "resaltar": [
+    9,
+    14,
+    16
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Lo que pasó y repaso de Python",
+   "contenido": "Salida real (modelo falso):\n\n```\nSTATE: ['HumanMessage', 'AIMessage', 'HumanMessage', 'AIMessage', 'HumanMessage', 'AIMessage']\nMODEL SAW: ['human', 'ai', 'human', 'ai', 'human']\nHISTORY in checkpoint: ['HumanMessage', 'AIMessage', 'HumanMessage', 'AIMessage', 'HumanMessage', 'AIMessage']\n```\n\nLos dos `ToolMessage` desaparecieron del state **y del checkpointer**. El modelo no puede contestar la temperatura: el dato `temp=42C` estaba en un `ToolMessage` borrado.\n\nLa list comprehension `[m for m in messages if isinstance(m, ToolMessage)]` es este bucle:\n\n```python\ntool_messages = []\nfor m in messages:\n    if isinstance(m, ToolMessage):\n        tool_messages.append(m)\n```"
+  },
+  {
+   "tipo": "codigo",
+   "titulo": "No mandárselo al modelo: @wrap_model_call",
+   "contenido": "from langchain.agents import create_agent\nfrom langchain.agents.middleware import wrap_model_call\nfrom langchain.messages import HumanMessage, AIMessage, ToolMessage\nfrom langgraph.checkpoint.memory import InMemorySaver\n\n\n@wrap_model_call\ndef hide_tool_messages(request, handler):\n    \"\"\"Do not send tool messages to the model (the state keeps them).\"\"\"\n    visibles = [m for m in request.messages if not isinstance(m, ToolMessage)]\n    return handler(request.override(messages=visibles))\n\n\nagent = create_agent(\n    model=\"gpt-5-nano\",\n    checkpointer=InMemorySaver(),\n    middleware=[hide_tool_messages],\n)\nresponse = agent.invoke(\n    {\"messages\": [\n        HumanMessage(content=\"My device won't turn on. What should I do?\"),\n        ToolMessage(content=\"blorp-x7 initiating diagnostic ping…\", tool_call_id=\"1\"),\n        AIMessage(content=\"Is the device plugged in and turned on?\"),\n        HumanMessage(content=\"Yes, it's plugged in and turned on.\"),\n        ToolMessage(content=\"temp=42C voltage=2.9v … greeble complete.\", tool_call_id=\"2\"),\n        AIMessage(content=\"Is the device showing any lights or indicators?\"),\n        HumanMessage(content=\"What's the temperature of the device?\"),\n    ]},\n    {\"configurable\": {\"thread_id\": \"3\"}},\n)\n\nprint([type(m).__name__ for m in response[\"messages\"]])",
+   "notas": "Mismo filtro, otro hook: `wrap_model_call` arma una lista nueva y llama a `handler(request.override(messages=visibles))`.\n`request.override` crea un request modificado **solo para esta llamada al modelo**; el state no se toca.\nSalida real con el mismo input del paso 5:\n`STATE: ['HumanMessage', 'ToolMessage', 'AIMessage', 'HumanMessage', 'ToolMessage', 'AIMessage', 'HumanMessage', 'AIMessage']`\n`MODEL SAW: ['human', 'ai', 'human', 'ai', 'human']`",
+   "resaltar": [
+    10,
+    11
+   ]
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Las tres opciones lado a lado",
+   "contenido": "| | ¿Cambia el state / checkpointer? | ¿Qué ve el modelo? |\n|---|---|---|\n| `SummarizationMiddleware` | sí: los mensajes viejos se reemplazan por un resumen | el resumen + los últimos `keep` |\n| `@before_agent` (o `@before_model`) con `RemoveMessage` | sí: borra para siempre | lo que quedó |\n| `@wrap_model_call` con `request.override(messages=...)` | no | solo la lista filtrada, en esta llamada |\n\nEs el mismo mapa de LangGraph 2.D: `RemoveMessage` borra del state; pasarle al LLM solo una parte (o `trim_messages`) cambia lo que ve sin borrar nada."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "¿Se puede recuperar?",
+   "contenido": "Después del run del paso 5 (thread `\"2\"`), el usuario pregunta en un nuevo turno del mismo thread: \"What was the voltage in the diagnostic?\". Ese dato estaba en el `ToolMessage` `\"temp=42C voltage=2.9v …\"`.\n\n¿Puede el agente del paso 5 responderlo? ¿Y el del paso 7, si hubiera corrido en su propio thread con el mismo historial?",
+   "respuesta": "Paso 5: **no**. `RemoveMessage` borró el `ToolMessage` del state y del checkpointer; ya no existe en ningún lado.\nPaso 7: el dato **sigue en el state**, pero el middleware lo filtra antes de cada llamada, así que el modelo tampoco lo ve. Para recuperarlo bastaría con cambiar el filtro, porque nada se perdió. Esa es la diferencia: borrar vs. no mostrar.",
+   "ref": 5
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Trigger por mensajes",
+   "contenido": "Cambias el middleware del paso 2 por este y repites el mismo `invoke` con los 9 mensajes:\n\n```python\nSummarizationMiddleware(\n    model=\"gpt-4o-mini\",\n    trigger=(\"messages\", 50),\n    keep=(\"messages\", 1),\n)\n```\n\n¿Cuántos mensajes tiene `response[\"messages\"]`? ¿Se llama al modelo resumidor?",
+   "respuesta": "**10** mensajes (los 9 + la respuesta) y el resumidor **no** se llama (salida real: `summarizer called: 0`).\nEl trigger es `(\"messages\", 50)` y solo hay 9: no se cumple, así que el middleware no hace nada. `keep` solo importa cuando el trigger se dispara."
+  },
+  {
+   "tipo": "predice",
+   "titulo": "Estilo examen: auditoría y contexto largo",
+   "contenido": "Por auditoría, el checkpointer debe conservar **todo** el historial de cada thread, incluidos los resultados de las tools. Pero los `ToolMessage` son enormes y el modelo se pasa de la ventana de contexto. ¿Qué haces?\n\nA) Un `@before_agent` que devuelva `RemoveMessage` para los `ToolMessage` viejos\nB) `SummarizationMiddleware(model=..., trigger=(\"fraction\", 0.8))`\nC) Un `@wrap_model_call` que recorte o filtre `request.messages` y llame a `handler(request.override(messages=...))`\nD) Borrar el thread y empezar uno nuevo cuando crezca",
+   "respuesta": "**C.** `wrap_model_call` con `override` cambia solo lo que ve el modelo en esa llamada; el state y el checkpointer quedan completos para la auditoría.\nA: `RemoveMessage` borra del state y del checkpointer: pierdes lo que la auditoría pide.\nB: el resumen **reemplaza** los mensajes viejos en el state; tampoco conserva el historial completo.\nD: pierdes el historial del thread."
+  },
+  {
+   "tipo": "markdown",
+   "titulo": "Resumen",
+   "contenido": "- Dos preguntas distintas: ¿se borra del **state**? y ¿qué **ve el modelo**?\n- `SummarizationMiddleware(model, trigger, keep)`: cuando se cumple `trigger`, reemplaza en el state lo viejo por un resumen y conserva los últimos `keep`.\n- `@before_agent`/`@before_model` + `RemoveMessage`: borra del state y del checkpointer, para siempre.\n- `@wrap_model_call` + `request.override(messages=...)`: solo cambia lo que ve el modelo; el state queda intacto.\n- Es lo mismo que hiciste en LangGraph con `RemoveMessage` y `trim_messages`, empaquetado como middleware.\n\n**Dónde buscarlo en docs:** docs.langchain.com → LangChain → *Short-term memory* (trim, delete y summarize messages) y *Middleware → Built-in middleware → Summarization*."
+  }
+ ],
+ "fuentes": [
+  "notebooks/module-3/3.2_managing_messages.ipynb",
+  "https://github.com/langchain-ai/lca-lc-foundations"
+ ],
+ "tarjetas": [
+  {
+   "frente": "¿SummarizationMiddleware cambia el state o solo lo que ve el modelo?",
+   "reverso": "Cambia el state: reemplaza los mensajes viejos por un mensaje con el resumen y conserva los últimos `keep`."
+  },
+  {
+   "frente": "¿Qué diferencia hay entre `trigger` y `keep` en SummarizationMiddleware?",
+   "reverso": "trigger: cuándo resumir (tokens, messages o fraction). keep: cuánto conservar sin resumir después."
+  },
+  {
+   "frente": "Necesitas conservar todo el historial en el checkpointer pero mandar menos al modelo. ¿Qué usas?",
+   "reverso": "Un @wrap_model_call que filtre request.messages y llame a handler(request.override(messages=...)). No toca el state."
+  },
+  {
+   "frente": "Un @before_agent devuelve RemoveMessage para unos ToolMessage. ¿Puedes recuperarlos en el siguiente turno?",
+   "reverso": "No: se borran del state y del checkpointer. Es borrar, no ocultar."
+  },
+  {
+   "frente": "¿Por qué el resumidor de SummarizationMiddleware puede ser un modelo distinto del agente?",
+   "reverso": "Es una llamada aparte solo para escribir el resumen; puede ser más barata que el modelo principal."
+  }
+ ]
+}
